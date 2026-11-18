@@ -1,0 +1,24 @@
+[providers.codex]
+billing = "subscription"
+
+[providers.claude]
+billing = "subscription"
+
+[providers.agy]
+billing = "subscription"
+
+[providers.openrouter]
+billing = "api"
+
+[providers.ollama]
+billing = "api"
+
+[models."gpt-6.1-sol"]
+provider = "codex"
+# context_window do Codex tự báo trong log.
+
+[models."claude-opus-5-5"]
+provider = "claude"
+# context_window để trống, chờ người dùng xác nhận.
+
+# Không đặt giá mặc định; người dùng điền giá cho model api.

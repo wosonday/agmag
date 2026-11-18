@@ -1,3 +1,4 @@
+pub mod actions;
 pub mod config;
 pub mod correlate;
 pub mod daemon;
@@ -7,5 +8,6 @@ pub mod ingest;
 pub mod model;
 pub mod opencode;
 pub mod parse;
+pub mod policy;
 pub mod report;
 pub mod store;

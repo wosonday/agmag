@@ -1,0 +1,7 @@
+{"timestamp":"2026-11-18T00:00:00Z","type":"session_meta","payload":{"id":"session_1","cwd":"D:\\Project\\demo","cli_version":"0.1.0","timestamp":"2026-11-18T00:00:00Z"}}
+{"timestamp":"2026-11-18T00:00:01Z","type":"turn_context","payload":{"model":"gpt-6.1-sol"}}
+{"timestamp":"2026-11-18T00:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}
+{"timestamp":"2026-11-18T00:00:03Z","type":"token_usage_record","payload":{"response_id":"resp_1","usage":{"input_tokens":29000,"cached_input_tokens":13312,"cache_write_input_tokens":0,"output_tokens":285,"reasoning_output_tokens":50}}}
+{"timestamp":"2026-11-18T00:00:04Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":22.0,"window_minutes":300,"resets_at":1794990587},"secondary":{"used_percent":79.0,"window_minutes":10080,"resets_at":1795408985}}}}
+{"timestamp":"2026-11-18T00:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":116029},"model_context_window":475000}}}
+{"type":"brand_new_kind"}

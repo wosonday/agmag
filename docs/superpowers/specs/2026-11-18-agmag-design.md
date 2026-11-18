@@ -206,7 +206,11 @@ Thực thi tự động quy tắc `AGENTS-TUTORIAL.md` §3.4 ("ngữ cảnh đ�
 
 **Model mới:** luôn **cùng model**, phiên mới (ngữ cảnh sạch). Không tự hạ bậc; khi hạn mức gói vượt ngưỡng chỉ gợi ý (mục 5.7).
 
-**Phạm vi:** tự động cho thợ, Audit, Tìm kiếm (terminal có nhãn `agm.role` ∈ {worker, audit, research}). Kiến trúc sư, Reviewer, Codex quản lý chạy cho người dùng → chỉ cảnh báo, không tự xoay. Có lệnh tay `agm rotate <t>` cho mọi terminal.
+**Phạm vi (người dùng chốt 2026-11-18):** tự động xoay vòng/kill **chỉ áp dụng cho thợ cơ khí** (nhãn `agm.role=worker`) **chạy model không phải Codex/Claude** (thực tế là thợ OpenCode).
+- Audit, Tìm kiếm: chỉ cảnh báo (vốn đã sống ngắn theo từng yêu cầu).
+- **Mọi phiên Codex và Claude Code** (Kiến trúc sư, Reviewer, Codex quản lý, kể cả Codex làm thợ bậc Mạnh): agmag **không bao giờ tự kill**, chỉ cảnh báo. Chỉ kill khi **người dùng ra lệnh**.
+
+**"Người dùng ra lệnh" nghĩa là:** phím trong `agm tui` (có hỏi xác nhận), hoặc `agm kill`/`agm rotate` gõ từ một terminal **không** phải agent (không có terminal gọi `caller` là agent, có TTY, và xác nhận y/N). Nếu lệnh kill/rotate nhắm vào phiên Codex/Claude mà xuất phát từ bên trong một terminal agent → **từ chối**, ghi `actions`, đưa vào hộp thư người dùng như một đề nghị. Agent (ví dụ Codex quản lý) vẫn được `agm kill`/`agm rotate` thợ OpenCode.
 
 **Lưu vết:** bảng `rotations` (task, phiên cũ → phiên mới, mức đầy lúc xoay, commit bàn giao, kết quả); TUI hiện chuỗi phiên của mỗi đầu việc.
 
@@ -284,5 +288,6 @@ Mỗi giai đoạn dùng được ngay sau khi xong (P1 đã trả lời đượ
 - Provider của OpenCode mặc định `billing = "api"`.
 - Ngân sách đầu việc tính bằng token; ngân sách gói tính bằng % hạn mức.
 - Ngưỡng cứng của **ngân sách** mặc định chỉ `notify`, không tự ngắt/kill. (Khác với xoay vòng theo ngữ cảnh ở 5.9, nơi người dùng đã chốt là có kill sau khi bàn giao thành công.)
-- Xoay vòng chờ agent rảnh, thời gian chờ bàn giao 10 phút; chỉ tự động với thợ/Audit/Tìm kiếm.
+- Xoay vòng chờ agent rảnh, thời gian chờ bàn giao 10 phút.
+- Cách nhận biết "người dùng ra lệnh" (TTY + không có caller agent + xác nhận y/N) và việc Codex quản lý được phép kill/rotate thợ OpenCode.
 - CSDL lưu tóm tắt lượt + con trỏ tới log gốc, không chép toàn bộ hội thoại.

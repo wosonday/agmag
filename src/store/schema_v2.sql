@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS rotations (
     state TEXT NOT NULL,
     ctx_pct REAL,
     head_before TEXT,
+    turn_before INTEGER,
     commit_sha TEXT,
     detail TEXT,
     requested_ms INTEGER,

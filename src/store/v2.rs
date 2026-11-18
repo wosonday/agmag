@@ -175,6 +175,14 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_terminal_turn(&self, addr: &str, turn: i64, state: Option<&str>, now: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE terminals SET turn = MAX(turn, ?2), status = COALESCE(?3, status), updated_ms = ?4 WHERE address = ?1",
+            params![addr, turn, state, now],
+        )?;
+        Ok(())
+    }
+
     pub fn set_terminal_app(&self, addr: &str, app: &str) -> Result<()> {
         self.conn.execute("UPDATE terminals SET app = ?2 WHERE address = ?1", params![addr, app])?;
         Ok(())

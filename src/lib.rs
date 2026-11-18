@@ -1,4 +1,6 @@
 pub mod config;
+pub mod daemon;
+pub mod hc;
 pub mod hook;
 pub mod ingest;
 pub mod model;

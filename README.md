@@ -21,11 +21,11 @@ Dữ liệu nằm ở `~/.agmag/` (`agm.db`, `providers.toml`). Đổi bằng bi
 | `agm ls` · `agm cost --by model\|day\|source\|cwd` | Phiên hôm nay, token, % ngữ cảnh; tổng token (USD chỉ cho model trả theo API) |
 | `agm log <session>` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc) |
 | `agm daemon` | Chạy nền (để trong một terminal của herdr-core): sự kiện hc, quét log, ghép terminal↔phiên, ngân sách, xoay vòng |
-| `agm tui` | Bảng điều khiển trong một pane; lệnh `r <#> <trả lời>`, `s <t> <LOẠI> <tin>`, `i <t>`, `k <t>`, `p on\|off`, `q` |
-| `agm ps` · `agm inbox` · `agm reply <#> <text>` | Terminal đang sống; hộp thư (agent bị chặn, câu hỏi, đề nghị, cảnh báo); trả lời |
+| `agm tui` | Bảng điều khiển trong một pane (chỉ người dùng ở terminal); lệnh `r <#> <trả lời>`, `d <#>`, `s <t> <LOẠI> <tin>`, `i <t>`, `k <t>`, `p on\|off`, `q` |
+| `agm ps` · `agm inbox` · `agm reply <#> <text>` · `agm done <#>` | Terminal đang sống; hộp thư (agent bị chặn, câu hỏi, đề nghị, cảnh báo); trả lời câu hỏi của agent; đóng mục |
 | `agm send <đích> --type GIAO --task <ID> <tin>` | Gửi tin theo mẫu (GIAO, BÁO CÁO, LỖI, HỎI, CHẶN, ĐẠT, CHƯA ĐẠT); đích `user` → hộp thư |
 | `agm spawn <template> --task <ID> [--cwd …] -- <nhiệm vụ>` | Sinh agent qua `hc run --bg --outlive-parent`, kiểm `max_workers` và ngân sách |
-| `agm kill\|interrupt <t>` | Codex/Claude: **chỉ người dùng**, có hỏi y/N; agent chỉ dừng được thợ OpenCode |
+| `agm kill\|interrupt <t>` | Codex/Claude (và app chưa rõ): **chỉ người dùng**, luôn phải gõ `y` (`--yes` không áp dụng); agent và policy chỉ dừng được thợ OpenCode |
 | `agm rotate <t>` | Xoay vòng một thợ OpenCode ngay (không chờ 70%) |
 | `agm budget set task:<ID> --soft 2000000 --hard 5000000 [--action notify\|interrupt\|kill]` | Ngân sách token cho đầu việc |
 | `agm budget set provider:codex:10080 --soft 80 --hard 95` | Ngân sách % hạn mức gói (cửa sổ tính bằng phút) |
@@ -62,7 +62,17 @@ handoff_timeout_min = 10
 
 Thợ (`agm.role=worker`, app `opencode`) đầy ≥ 70% ngữ cảnh → khi rảnh, agm yêu cầu ghi bàn giao vào `.agents/log/<ID>.md` và commit → khi agent xong lượt, agm kiểm **worktree sạch** và **có commit mới chạm tệp đó** → kill phiên cũ → mở phiên mới cùng template/model/thư mục với nhiệm vụ "đọc tasks/log/git log rồi làm tiếp". Bàn giao không đạt hoặc quá `handoff_timeout_min` → **không kill**, báo vào hộp thư. Codex và Claude không bao giờ bị xoay tự động.
 
+## An toàn (quy tắc của người dùng)
+
+- **Codex và Claude không bao giờ bị dừng tự động.** Agent hoặc policy chỉ dừng được terminal mà `hc get` xác nhận là OpenCode (danh sách trắng); app chưa rõ → từ chối và chuyển đề nghị vào hộp thư.
+- Người gọi được xác định *fail-closed*: có `HC_TERMINAL_ID` mà không đọc được terminal, hoặc terminal là app agent → coi là agent. Không có TTY → agent.
+- `agm policy off` (nút dừng khẩn) chạy được cả khi `providers.toml` hỏng.
+- Xoay vòng kiểm mọi điều kiện mở phiên mới **trước** khi kill; bàn giao chưa xong thì chờ tới `handoff_timeout_min`, quá hạn thì báo và giữ phiên cũ.
+
 ## Giới hạn đã biết (v1)
+
+- Agent chạy trong một terminal có TTY, tự xóa `HC_TERMINAL_ID` rồi tự gõ `y`, về lý thuyết vẫn được coi là người dùng. agm không kiểm cây tiến trình cha.
+- Ngân sách theo provider (`provider:<tên>:<phút>`) chỉ cảnh báo; chưa chặn `spawn` vì agm chưa biết template dùng provider nào.
 
 - Phiên chạy trong HERDR TUI được đo token (qua log), nhưng chỉ terminal của herdr-core mới can thiệp được.
 - Token của agy chỉ đo được qua `agm ask` (agy tương tác không lưu token trên máy).

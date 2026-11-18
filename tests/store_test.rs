@@ -4,6 +4,39 @@ use agmag::model::{
 };
 use agmag::store::{Cursor, Store};
 
+#[test]
+fn writes_inside_outer_transaction() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    store.conn().execute_batch("BEGIN")?;
+    let sid = store.session_id_for_path(Source::Codex, "nested")?;
+    store.upsert_usage(sid, &record(100, 20))?;
+    store.insert_quota(&QuotaSnapshot {
+        provider: "codex".into(),
+        ts_ms: 100,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 12.0,
+            resets_at_s: 200,
+        }],
+    })?;
+    store.insert_turn(
+        sid,
+        &TurnSummary {
+            ts_ms: 100,
+            role: Role::User,
+            summary: "hello".into(),
+            byte_offset: 0,
+        },
+    )?;
+    store.conn().execute_batch("COMMIT")?;
+    let counts: (i64, i64, i64) = store.conn().query_row(
+        "SELECT (SELECT COUNT(*) FROM usage), (SELECT COUNT(*) FROM quota), (SELECT COUNT(*) FROM turns)",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    assert_eq!(counts, (1, 1, 1));
+    Ok(())
+}
+
 fn record(ts_ms: i64, output: u64) -> UsageRecord {
     UsageRecord {
         dedupe_key: "msg_1".into(),

@@ -79,9 +79,9 @@ impl Store {
     }
 
     pub fn upsert_usage(&self, sid: i64, rec: &UsageRecord) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO usage(session, dedupe_key, ts_ms, model, input_uncached,
+        self.with_savepoint(|tx| {
+            tx.execute(
+                "INSERT INTO usage(session, dedupe_key, ts_ms, model, input_uncached,
                                cache_read, cache_write, output, reasoning)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(session, dedupe_key) DO UPDATE SET
@@ -89,41 +89,41 @@ impl Store {
                 input_uncached=excluded.input_uncached, cache_read=excluded.cache_read,
                 cache_write=excluded.cache_write, output=excluded.output,
                 reasoning=excluded.reasoning",
-            params![
-                sid,
-                rec.dedupe_key,
-                rec.ts_ms,
-                rec.model,
-                i64::try_from(rec.usage.input_uncached)?,
-                i64::try_from(rec.usage.cache_read)?,
-                i64::try_from(rec.usage.cache_write)?,
-                i64::try_from(rec.usage.output)?,
-                i64::try_from(rec.usage.reasoning)?
-            ],
-        )?;
-        Self::refresh_last_ms(&tx, sid)?;
-        tx.commit()?;
-        Ok(())
+                params![
+                    sid,
+                    rec.dedupe_key,
+                    rec.ts_ms,
+                    rec.model,
+                    i64::try_from(rec.usage.input_uncached)?,
+                    i64::try_from(rec.usage.cache_read)?,
+                    i64::try_from(rec.usage.cache_write)?,
+                    i64::try_from(rec.usage.output)?,
+                    i64::try_from(rec.usage.reasoning)?
+                ],
+            )?;
+            Self::refresh_last_ms(tx, sid)?;
+            Ok(())
+        })
     }
 
     pub fn insert_quota(&self, snap: &QuotaSnapshot) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        for window in &snap.windows {
-            tx.execute(
-                "INSERT INTO quota(provider, ts_ms, window_minutes, used_percent, resets_at_s)
+        self.with_savepoint(|tx| {
+            for window in &snap.windows {
+                tx.execute(
+                    "INSERT INTO quota(provider, ts_ms, window_minutes, used_percent, resets_at_s)
                  VALUES (?1, ?2, ?3, ?4, ?5)
                  ON CONFLICT(provider, ts_ms, window_minutes) DO NOTHING",
-                params![
-                    snap.provider,
-                    snap.ts_ms,
-                    window.window_minutes,
-                    window.used_percent,
-                    window.resets_at_s
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+                    params![
+                        snap.provider,
+                        snap.ts_ms,
+                        window.window_minutes,
+                        window.used_percent,
+                        window.resets_at_s
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     pub fn set_context(&self, sid: i64, ctx: &ContextSnapshot) -> Result<()> {
@@ -147,16 +147,31 @@ impl Store {
             Role::Tool => "tool",
         };
         let summary: String = t.summary.chars().take(200).collect();
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO turns(session, byte_offset, ts_ms, role, summary)
+        self.with_savepoint(|tx| {
+            tx.execute(
+                "INSERT INTO turns(session, byte_offset, ts_ms, role, summary)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(session, byte_offset) DO NOTHING",
-            params![sid, i64::try_from(t.byte_offset)?, t.ts_ms, role, summary],
-        )?;
-        Self::refresh_last_ms(&tx, sid)?;
-        tx.commit()?;
-        Ok(())
+                params![sid, i64::try_from(t.byte_offset)?, t.ts_ms, role, summary],
+            )?;
+            Self::refresh_last_ms(tx, sid)?;
+            Ok(())
+        })
+    }
+
+    fn with_savepoint(&self, write: impl FnOnce(&Connection) -> Result<()>) -> Result<()> {
+        self.conn.execute_batch("SAVEPOINT agm_w")?;
+        match write(&self.conn) {
+            Ok(()) => {
+                self.conn.execute_batch("RELEASE agm_w")?;
+                Ok(())
+            }
+            Err(error) => {
+                self.conn
+                    .execute_batch("ROLLBACK TO agm_w; RELEASE agm_w")?;
+                Err(error)
+            }
+        }
     }
 
     fn refresh_last_ms(conn: &Connection, sid: i64) -> Result<()> {

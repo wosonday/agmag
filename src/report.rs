@@ -41,7 +41,7 @@ pub struct CostRow {
     pub cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QuotaRow {
     pub provider: String,
     pub window_minutes: u32,

@@ -3,6 +3,7 @@ pub mod ask;
 pub mod config;
 pub mod correlate;
 pub mod daemon;
+pub mod dashboard;
 pub mod git;
 pub mod hc;
 pub mod hook;

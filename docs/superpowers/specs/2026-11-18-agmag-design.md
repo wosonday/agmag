@@ -186,6 +186,30 @@ Tất cả in JSON khi đi qua đường ống, văn bản bảng khi ra màn h�
 - **Gợi ý bậc model** (chỉ gợi ý): ví dụ thợ bậc Mạnh mà lượt gần nhất ngắn và không lỗi → gợi ý hạ; thợ CHƯA ĐẠT 2 lần → gợi ý nâng. Luật cụ thể là đề xuất, người làm có thể đơn giản hóa.
 - Mọi hành động tự động có công tắc tắt toàn cục (`agm policy off`) — "nút dừng khẩn".
 
+### 5.9. Xoay vòng phiên theo mức đầy ngữ cảnh (người dùng chốt 2026-11-18)
+
+Thực thi tự động quy tắc `AGENTS-TUTORIAL.md` §3.4 ("ngữ cảnh đầy quá nửa → thay thợ").
+
+**Đo mức đầy ngữ cảnh** (theo lượt cuối của phiên):
+- Codex — đã kiểm: `token_count` có `info.last_token_usage.input_tokens` và `info.model_context_window` (ví dụ 116029 / 475000 = 24%).
+- Claude Code: `input + cache_read_input + cache_creation_input` của lượt cuối ÷ kích thước cửa sổ của model (khai trong `providers.toml`, theo bí danh model).
+- OpenCode / agy: theo P0; không đo được → không xoay tự động, chỉ hiện "?".
+
+**Ngưỡng** (cấu hình được, theo vai hoặc template): cảnh báo mặc định **50%**, xoay vòng mặc định **70%**.
+
+**Quy trình xoay vòng** (máy trạng thái, mỗi bước ghi `actions`):
+1. Vượt ngưỡng xoay → đánh dấu `rotation_pending`. **Không cắt ngang** khi agent `working`; chờ `idle`/`done`.
+2. Gửi yêu cầu bàn giao (`terminal.send`): ghi vào `.agents/log/<ID>.md` mục bàn giao (đã làm, còn lại, lỗi nguyên văn, quyết định đã chốt), commit tất cả, rồi báo xong.
+3. Chờ agent về `idle`/`done` (có thời gian chờ, mặc định 10 phút). Kiểm: worktree sạch (`git status`) **và** có commit mới kể từ bước 2 chạm `.agents/log/<ID>.md`.
+4. Đạt → `kill` phiên cũ → `spawn` phiên mới **cùng template, cùng model, cùng cwd/worktree, cùng nhãn task**, nhiệm vụ: "Đọc `.agents/tasks/<ID>.md`, `.agents/log/<ID>.md`, `git log` của nhánh, rồi làm tiếp." Tên mới tăng số (`w-login-7-1` → `w-login-7-2`).
+5. Không đạt (hết giờ, không commit, worktree bẩn, agent blocked) → **không kill**; đưa vào hộp thư người dùng với lý do.
+
+**Model mới:** luôn **cùng model**, phiên mới (ngữ cảnh sạch). Không tự hạ bậc; khi hạn mức gói vượt ngưỡng chỉ gợi ý (mục 5.7).
+
+**Phạm vi:** tự động cho thợ, Audit, Tìm kiếm (terminal có nhãn `agm.role` ∈ {worker, audit, research}). Kiến trúc sư, Reviewer, Codex quản lý chạy cho người dùng → chỉ cảnh báo, không tự xoay. Có lệnh tay `agm rotate <t>` cho mọi terminal.
+
+**Lưu vết:** bảng `rotations` (task, phiên cũ → phiên mới, mức đầy lúc xoay, commit bàn giao, kết quả); TUI hiện chuỗi phiên của mỗi đầu việc.
+
 ### 5.8. TUI
 
 ```
@@ -223,7 +247,7 @@ Giai đoạn đề xuất (người lập kế hoạch có thể chia nhỏ hơn
 - **P1 — Lõi đo**: store + bộ đọc Codex và Claude + pricing + `agm ls`, `agm cost`, `agm log`.
 - **P2 — Daemon + hc**: kết nối events, correlator, inbox từ trạng thái blocked.
 - **P3 — TUI**.
-- **P4 — Can thiệp**: `send`, `reply`, `spawn`, `interrupt/kill`, budgets, policy, `ask`.
+- **P4 — Can thiệp**: `send`, `reply`, `spawn`, `interrupt/kill`, budgets, policy, `ask`, xoay vòng phiên (5.9).
 - **P5 — OpenCode, agy tương tác** (nếu P0 cho thấy đọc được), `daemon --install`.
 
 Mỗi giai đoạn dùng được ngay sau khi xong (P1 đã trả lời được "hôm nay tốn bao nhiêu").
@@ -259,5 +283,6 @@ Mỗi giai đoạn dùng được ngay sau khi xong (P1 đã trả lời đượ
 - Cảnh báo mặc định vào hộp thư người dùng; chỉ gửi cho terminal quản lý khi đã cấu hình tên.
 - Provider của OpenCode mặc định `billing = "api"`.
 - Ngân sách đầu việc tính bằng token; ngân sách gói tính bằng % hạn mức.
-- Ngưỡng cứng mặc định chỉ `notify`, không tự ngắt/kill.
+- Ngưỡng cứng của **ngân sách** mặc định chỉ `notify`, không tự ngắt/kill. (Khác với xoay vòng theo ngữ cảnh ở 5.9, nơi người dùng đã chốt là có kill sau khi bàn giao thành công.)
+- Xoay vòng chờ agent rảnh, thời gian chờ bàn giao 10 phút; chỉ tự động với thợ/Audit/Tìm kiếm.
 - CSDL lưu tóm tắt lượt + con trỏ tới log gốc, không chép toàn bộ hội thoại.

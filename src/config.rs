@@ -83,7 +83,7 @@ impl Config {
 /// Chỉ được gọi cho provider `billing = "api"` có giá (report bỏ qua gói tháng).
 // TODO(human): viết thân hàm (khoảng 5 dòng). Test: tests/config_test.rs::cost_basic.
 pub fn cost_usd(_u: &Usage, _p: &Price) -> f64 {
-    todo!("TODO(human)")
+    todo!("cost_usd chưa được viết")
 }
 
 pub fn context_pct(used: u64, window: Option<u64>) -> Option<f64> {

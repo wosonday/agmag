@@ -54,11 +54,10 @@ pub fn budget_value(store: &Store, b: &BudgetRow) -> Result<Option<f64>> {
 pub fn spawn_blocked_by_budget(store: &Store, task: &str) -> Result<Option<String>> {
     let scope = format!("task:{task}");
     for b in store.budgets()?.into_iter().filter(|b| b.scope == scope) {
-        if let Some(v) = budget_value(store, &b)? {
-            if v >= b.hard {
+        if let Some(v) = budget_value(store, &b)?
+            && v >= b.hard {
                 return Ok(Some(format!("ngân sách {scope} đã vượt ngưỡng cứng: {v:.0} / {:.0} {}", b.hard, b.unit)));
             }
-        }
     }
     Ok(None)
 }
@@ -76,12 +75,11 @@ pub fn session_context_pct(store: &Store, cfg: &Config, sid: i64) -> Result<Opti
 
 fn notify(store: &Store, cfg: &Config, hc: &dyn Hc, level: &str, task: Option<&str>, text: &str, now: i64) -> Result<bool> {
     let opened = store.open_inbox(None, "budget", Some(level), text, now)?.is_some();
-    if opened {
-        if let Some(mgr) = &cfg.policy.manager {
+    if opened
+        && let Some(mgr) = &cfg.policy.manager {
             // Lỗi gửi đã được ghi trong bảng messages; không làm hỏng vòng policy.
             let _ = actions::send(store, hc, POLICY_ACTOR, mgr, "LỖI", task, text, now);
         }
-    }
     Ok(opened)
 }
 
@@ -96,8 +94,8 @@ fn budgets_tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()
         if v >= b.hard {
             let text = format!("Ngân sách {} đã vượt ngưỡng cứng ({:.0} {})", b.scope, b.hard, b.unit);
             // Chỉ hành động khi vừa vượt (mục hộp thư mới mở), không lặp mỗi vòng.
-            if notify(store, cfg, hc, "hard", task, &text, now)? {
-                if let (Some(task), "kill" | "interrupt") = (task, b.action.as_str()) {
+            if notify(store, cfg, hc, "hard", task, &text, now)?
+                && let (Some(task), "kill" | "interrupt") = (task, b.action.as_str()) {
                     let caller = Caller::Agent(Some(POLICY_ACTOR.into()));
                     for t in task_terminals(store, task)? {
                         // actions:: từ chối Codex/Claude và chuyển đề nghị cho người dùng.
@@ -108,7 +106,6 @@ fn budgets_tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()
                         };
                     }
                 }
-            }
         } else if v >= b.soft {
             let text = format!("Ngân sách {} đã vượt ngưỡng mềm ({:.0} {})", b.scope, b.soft, b.unit);
             notify(store, cfg, hc, "soft", task, &text, now)?;

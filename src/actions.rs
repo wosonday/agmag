@@ -44,6 +44,7 @@ pub fn format_message(from: &str, kind: &str, task: Option<&str>, text: &str, to
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Gửi một tin theo mẫu §3.2. Đích `user` → hộp thư. Tin luôn được ghi lại, kể cả khi gửi thất bại.
 pub fn send(store: &Store, hc: &dyn Hc, from: &str, to: &str, kind: &str, task: Option<&str>, text: &str, now: i64) -> Result<MessageRow> {
     if !KINDS.contains(&kind) {

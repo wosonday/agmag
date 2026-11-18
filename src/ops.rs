@@ -29,15 +29,14 @@ pub fn caller(store: &Store, yes: bool, needs_confirm: Option<&str>) -> Result<C
     };
     let tty = std::io::stdin().is_terminal();
     let mut confirmed = yes;
-    if tty && !is_agent && !yes {
-        if let Some(question) = needs_confirm {
+    if tty && !is_agent && !yes
+        && let Some(question) = needs_confirm {
             eprint!("{question} [y/N] ");
             std::io::stderr().flush()?;
             let mut line = String::new();
             std::io::stdin().read_line(&mut line)?;
             confirmed = matches!(line.trim(), "y" | "Y" | "yes" | "có");
         }
-    }
     Ok(classify_caller(term.as_deref(), is_agent, tty, confirmed))
 }
 
@@ -88,11 +87,10 @@ pub fn daemon_loop(store: &Store, cfg: &Config, interval: u64, mut periodic: imp
         let wait = Duration::from_secs(interval).saturating_sub(last.elapsed());
         match rx.recv_timeout(wait) {
             Ok(line) => {
-                if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                    if let Err(e) = daemon::apply_event(store, &v, crate::now_ms()) {
+                if let Ok(v) = serde_json::from_str::<Value>(&line)
+                    && let Err(e) = daemon::apply_event(store, &v, crate::now_ms()) {
                         eprintln!("agm daemon: sự kiện lỗi: {e:#}");
                     }
-                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => bail!("luồng sự kiện hc đã dừng"),

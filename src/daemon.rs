@@ -48,14 +48,13 @@ pub fn apply_event(store: &Store, line: &Value, now: i64) -> Result<()> {
             store.set_terminal_labels(addr, &labels)?;
         }
         "foreground" => {
-            if let Some(t) = store.terminal(addr)? {
-                if !t.reported {
+            if let Some(t) = store.terminal(addr)?
+                && !t.reported {
                     let argv: Vec<String> = data["argv"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
                     if let Some(app) = app_from_argv(&argv) {
                         store.set_terminal_app(addr, &app)?;
                     }
                 }
-            }
         }
         _ => {}
     }

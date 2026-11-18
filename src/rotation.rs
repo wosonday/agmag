@@ -103,11 +103,10 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
     // 1. Phát hiện thợ OpenCode vượt ngưỡng xoay vòng.
     for t in store.terminals(true)?.iter().filter(|t| rotatable(t)) {
         let Some(sid) = t.session else { continue };
-        if let Some(pct) = session_context_pct(store, cfg, sid)? {
-            if pct >= cfg.policy.ctx_rotate {
+        if let Some(pct) = session_context_pct(store, cfg, sid)?
+            && pct >= cfg.policy.ctx_rotate {
                 start(store, &t.address, Some(pct), now)?;
             }
-        }
     }
     // 2. Tiến từng vòng đang chạy.
     let timeout = cfg.policy.handoff_timeout_min as i64 * 60_000;

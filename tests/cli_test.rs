@@ -184,10 +184,11 @@ fn cli_tui_with_piped_stdin_cannot_kill_codex() {
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"k t1q\ny\nq\n").unwrap();
-    assert!(child.wait_with_output().unwrap().status.success());
-    let inbox = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]));
-    assert!(inbox.as_array().unwrap().iter().any(|i| i["source"] == "request"), "{inbox}");
+    child.stdin.take().unwrap().write_all(b"p off\nk t1q\ny\nq\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // Không lệnh nào được thực hiện: policy vẫn bật.
+    assert_eq!(json(&agm_env(tmp.path(), &["policy", "status", "--json"], &[]))["enabled"], true);
 }
 
 #[test]
@@ -205,4 +206,15 @@ fn cli_done_dismisses_inbox_item() {
     let id = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]))[0]["id"].as_i64().unwrap();
     assert!(agm_env(tmp.path(), &["done", &id.to_string()], &[]).status.success());
     assert!(json(&agm_env(tmp.path(), &["inbox", "--json"], &[])).as_array().unwrap().is_empty());
+}
+
+#[test]
+fn cli_rotate_refuses_unknown_app_and_budget_rejects_nan() {
+    let tmp = sandbox(None);
+    let events = tmp.path().join("ev.jsonl");
+    fs::write(&events, "{\"channel\":null,\"seq\":1,\"terminals\":[{\"address\":\"t7\",\"argv\":[],\"created_ms\":1,\"labels\":{\"agm.task\":\"a\",\"agm.role\":\"worker\"},\"state\":\"live\"}]}\n").unwrap();
+    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
+    assert_eq!(agm_env(tmp.path(), &["rotate", "t7"], &[]).status.code(), Some(1));
+    assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "NaN", "--hard", "5"], &[]).status.success());
+    assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "-1", "--hard", "5"], &[]).status.success());
 }

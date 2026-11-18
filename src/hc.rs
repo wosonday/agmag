@@ -126,7 +126,7 @@ impl Hc for HcCli {
 
 /// Đoán app từ argv khi chương trình chưa tự báo trạng thái 7501.
 pub fn app_from_argv(argv: &[String]) -> Option<String> {
-    let first = argv.first()?;
+    let first = argv.first().filter(|a| !a.trim().is_empty())?;
     let base = first.rsplit(['\\', '/']).next().unwrap_or(first).to_lowercase();
     // Shim của npm/pnpm/bun trên Windows: claude.cmd, codex.ps1, …
     let base = [".exe", ".cmd", ".bat", ".ps1"].iter().find_map(|ext| base.strip_suffix(ext)).unwrap_or(&base);
@@ -146,7 +146,7 @@ pub fn terminal_row_from(v: &Value) -> TerminalRow {
         .map(|o| o.iter().filter_map(|(k, x)| x.as_str().map(|x| (k.clone(), x.to_string()))).collect())
         .unwrap_or_default();
     // `hc ls` cho `status` là chuỗi + `agent`; `hc get`/sự kiện cho `status` là đối tượng.
-    let reported_app = v["status"]["app"].as_str().map(String::from).or_else(|| {
+    let reported_app = v["status"]["app"].as_str().filter(|a| !a.trim().is_empty()).map(String::from).or_else(|| {
         v["agent"].as_str().and_then(|a| app_from_argv(&[a.to_string()]))
     });
     TerminalRow {

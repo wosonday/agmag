@@ -136,7 +136,8 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
             continue;
         };
         match r.state.as_str() {
-            "pending" if idle(&t) => {
+            // Chỉ gửi khi đang idle (và kèm `--if idle`): `done` có thể vừa chuyển sang lượt mới.
+            "pending" if t.status.as_deref() == Some("idle") => {
                 let head = match git.head(&cwd) {
                     Ok(h) => h,
                     Err(e) => {
@@ -144,9 +145,7 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
                         continue;
                     }
                 };
-                // `--if idle` chỉ khi đang idle; trạng thái `done` cũng là đã xong lượt.
-                let if_idle = t.status.as_deref() == Some("idle");
-                match hc.send(&t.address, &handoff_text(&task), if_idle, false) {
+                match hc.send(&t.address, &handoff_text(&task), true, false) {
                     Ok(_) => {
                         store.conn().execute(
                             "UPDATE rotations SET state = 'requested', head_before = ?2, turn_before = ?3, requested_ms = ?4, updated_ms = ?4
@@ -159,9 +158,10 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
                 }
             }
             "requested" => {
+                let timed_out = now - r.requested_ms.unwrap_or(now) > timeout;
                 if t.turn > r.turn_before && idle(&t) {
-                    verify_and_respawn(store, cfg, hc, git, &r, &t, now)?;
-                } else if now - r.requested_ms.unwrap_or(now) > timeout {
+                    verify_and_respawn(store, cfg, hc, git, &r, &t, timed_out, now)?;
+                } else if timed_out {
                     fail(store, &r, &format!("không bàn giao trong {} phút", cfg.policy.handoff_timeout_min), now)?;
                 }
             }
@@ -171,16 +171,28 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
     Ok(())
 }
 
-fn verify_and_respawn(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r: &Rotation, t: &TerminalRow, now: i64) -> Result<()> {
+/// Bàn giao chưa xong (worktree bẩn, chưa có commit) → chờ tiếp tới hết hạn rồi mới báo thất bại.
+#[allow(clippy::too_many_arguments)]
+fn verify_and_respawn(
+    store: &Store,
+    cfg: &Config,
+    hc: &dyn Hc,
+    git: &dyn Git,
+    r: &Rotation,
+    t: &TerminalRow,
+    timed_out: bool,
+    now: i64,
+) -> Result<()> {
     let task = r.task.clone().unwrap_or_default();
     let cwd = t.cwd.clone().unwrap_or_default();
     let Some(template) = t.template.clone() else { return fail(store, r, "không biết template để mở phiên mới", now) };
     let Some(base) = r.head_before.clone() else { return fail(store, r, "không đọc được HEAD lúc yêu cầu bàn giao", now) };
+    let wait_or_fail = |reason: &str| if timed_out { fail(store, r, reason, now) } else { Ok(()) };
     if !git.is_clean(&cwd).unwrap_or(false) {
-        return fail(store, r, "worktree còn thay đổi chưa commit", now);
+        return wait_or_fail("worktree còn thay đổi chưa commit");
     }
     let Some(commit) = git.touched_since(&cwd, &base, &format!(".agents/log/{task}.md")).unwrap_or(None) else {
-        return fail(store, r, &format!("không có commit mới chạm .agents/log/{task}.md"), now);
+        return wait_or_fail(&format!("không có commit mới chạm .agents/log/{task}.md"));
     };
     store.conn().execute("UPDATE rotations SET commit_sha = ?2 WHERE id = ?1", params![r.id, commit])?;
     let req = SpawnReq {
@@ -198,12 +210,17 @@ fn verify_and_respawn(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r
     if let Err(e) = actions::kill(store, hc, &Caller::Agent(Some(POLICY_ACTOR.into())), &t.address, now) {
         return fail(store, r, &format!("kill phiên cũ lỗi: {e:#}"), now);
     }
+    // Đã kill: từ đây không được dừng giữa chừng vì lỗi CSDL — phải thử mở phiên mới.
     // Đánh dấu ngay (không chờ sự kiện hc) để max_workers và vòng sau không còn tính phiên cũ.
-    store.finish_terminal(&t.address, None, now)?;
+    if let Err(e) = store.finish_terminal(&t.address, None, now) {
+        let _ = store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("đánh dấu kết thúc lỗi: {e:#}"), false, now);
+    }
     match actions::spawn(store, hc, cfg, &req, now) {
         Ok(addr) => {
-            store.conn().execute("UPDATE rotations SET new_terminal = ?2 WHERE id = ?1", params![r.id, addr])?;
-            set_state(store, r.id, "done", Some(&format!("{} → {addr} (commit {commit})", t.address)), now)?;
+            store.conn().execute(
+                "UPDATE rotations SET new_terminal = ?2, state = 'done', detail = ?3, updated_ms = ?4 WHERE id = ?1",
+                params![r.id, addr, format!("{} → {addr} (commit {commit})", t.address), now],
+            )?;
             store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("→ {addr}"), true, now)?;
             Ok(())
         }

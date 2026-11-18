@@ -80,9 +80,9 @@ pub fn daemon_loop(store: &Store, cfg: &Config, interval: u64, mut periodic: imp
     let hc = HcCli::default();
     let git = GitCli;
     eprintln!("agm daemon: đang theo dõi (chu kỳ {interval}s). Ctrl+C để dừng.");
-    let mut last = std::time::Instant::now() - Duration::from_secs(interval);
+    let mut last: Option<std::time::Instant> = None;
     loop {
-        let wait = Duration::from_secs(interval).saturating_sub(last.elapsed());
+        let wait = last.map_or(Duration::ZERO, |l| Duration::from_secs(interval).saturating_sub(l.elapsed()));
         match rx.recv_timeout(wait) {
             Ok(line) => {
                 if let Ok(v) = serde_json::from_str::<Value>(&line)
@@ -93,19 +93,25 @@ pub fn daemon_loop(store: &Store, cfg: &Config, interval: u64, mut periodic: imp
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => bail!("luồng sự kiện hc đã dừng"),
         }
-        if last.elapsed() >= Duration::from_secs(interval) {
-            last = std::time::Instant::now();
-            let now = crate::now_ms();
-            let mut step = || -> Result<()> {
-                periodic(store)?;
-                correlate::link_all(store)?;
-                policy::tick(store, cfg, &hc, now)?;
-                rotation::tick(store, cfg, &hc, &git, now)?;
-                Ok(())
-            };
-            if let Err(e) = step() {
-                eprintln!("agm daemon: vòng định kỳ lỗi: {e:#}");
+        if last.is_none_or(|l| l.elapsed() >= Duration::from_secs(interval)) {
+            // Rút cạn sự kiện đã đến để policy chạy trên trạng thái mới nhất.
+            while let Ok(line) = rx.try_recv() {
+                if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                    let _ = daemon::apply_event(store, &v, crate::now_ms());
+                }
             }
+            last = Some(std::time::Instant::now());
+            let now = crate::now_ms();
+            // Mỗi bước độc lập: một bước lỗi không làm bỏ qua các bước sau.
+            let report = |name: &str, r: Result<()>| {
+                if let Err(e) = r {
+                    eprintln!("agm daemon: {name} lỗi: {e:#}");
+                }
+            };
+            report("quét log", periodic(store));
+            report("ghép terminal", correlate::link_all(store).map(|_| ()));
+            report("policy", policy::tick(store, cfg, &hc, now));
+            report("xoay vòng", rotation::tick(store, cfg, &hc, &git, now));
         }
     }
 }
@@ -171,13 +177,13 @@ pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Res
 
 pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
     let Some(t) = store.terminal(target)? else { bail!("không biết terminal {target}") };
-    let protected = matches!(t.app.as_deref(), Some("codex" | "claude-code"));
-    if protected {
+    // Danh sách trắng: chỉ thợ OpenCode được xoay vòng (bước cuối là kill phiên cũ).
+    if t.app.as_deref() != Some("opencode") {
         // Xoay vòng kết thúc bằng kill phiên cũ: Codex/Claude chỉ khi người dùng ra lệnh, và v1 chỉ tự xoay OpenCode.
         let c = caller(store, yes, None)?;
         bail!(
-            "xoay vòng tự động chỉ áp dụng cho thợ OpenCode; với {} hãy tự bàn giao rồi `agm kill {target}`{}",
-            t.app.unwrap_or_default(),
+            "xoay vòng chỉ áp dụng cho thợ OpenCode; {target} là {} — hãy tự bàn giao rồi `agm kill {target}`{}",
+            t.app.unwrap_or_else(|| "app chưa rõ".into()),
             if matches!(c, Caller::Agent(_)) { " (chỉ người dùng được kill)" } else { "" }
         );
     }
@@ -197,6 +203,9 @@ pub fn budget_set(store: &Store, scope: &str, soft: f64, hard: f64, action: &str
         ["provider", p, w] if !p.is_empty() && w.parse::<u32>().is_ok() => "percent",
         _ => bail!("phạm vi '{scope}' không hợp lệ: dùng task:<ID> hoặc provider:<tên>:<phút cửa sổ> (vd provider:codex:10080)"),
     };
+    if !soft.is_finite() || !hard.is_finite() || soft < 0.0 || hard < 0.0 {
+        bail!("ngưỡng phải là số hữu hạn ≥ 0");
+    }
     if soft > hard {
         bail!("ngưỡng mềm ({soft}) phải ≤ ngưỡng cứng ({hard})");
     }

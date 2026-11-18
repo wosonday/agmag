@@ -87,15 +87,34 @@ fn task_terminals(store: &Store, task: &str) -> Result<Vec<TerminalRow>> {
     Ok(store.terminals(true)?.into_iter().filter(|t| t.task.as_deref() == Some(task)).collect())
 }
 
+fn level_rank(level: &str) -> u8 {
+    match level {
+        "hard" => 2,
+        "soft" => 1,
+        _ => 0,
+    }
+}
+
 fn budgets_tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()> {
     for b in store.budgets()? {
         let Some(v) = budget_value(store, &b)? else { continue };
         let task = b.scope.strip_prefix("task:");
-        if v >= b.hard {
+        // Mức đã kích hoạt được nhớ theo từng ngân sách: chỉ báo/hành động khi mức TĂNG, kể cả khi người dùng
+        // đã đóng mục hộp thư; giá trị xuống dưới ngưỡng mềm (vd ngân sách được nâng) thì đặt lại.
+        let key = format!("budget_level:{}", b.scope);
+        let prev = store.setting(&key)?.unwrap_or_default();
+        let level = if v >= b.hard { "hard" } else if v >= b.soft { "soft" } else { "none" };
+        if level_rank(level) <= level_rank(&prev) {
+            if level == "none" && !prev.is_empty() && prev != "none" {
+                store.set_setting(&key, "none")?;
+            }
+            continue;
+        }
+        store.set_setting(&key, level)?;
+        if level == "hard" {
             let text = format!("Ngân sách {} đã vượt ngưỡng cứng ({:.0} {})", b.scope, b.hard, b.unit);
-            // Chỉ hành động khi vừa vượt (mục hộp thư mới mở), không lặp mỗi vòng.
-            if notify(store, cfg, hc, "hard", task, &text, now)?
-                && let (Some(task), "kill" | "interrupt") = (task, b.action.as_str()) {
+            notify(store, cfg, hc, "hard", task, &text, now)?;
+            if let (Some(task), "kill" | "interrupt") = (task, b.action.as_str()) {
                     let caller = Caller::Agent(Some(POLICY_ACTOR.into()));
                     for t in task_terminals(store, task)? {
                         // actions:: từ chối Codex/Claude và chuyển đề nghị cho người dùng.
@@ -106,7 +125,7 @@ fn budgets_tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()
                         };
                     }
                 }
-        } else if v >= b.soft {
+        } else {
             let text = format!("Ngân sách {} đã vượt ngưỡng mềm ({:.0} {})", b.scope, b.soft, b.unit);
             notify(store, cfg, hc, "soft", task, &text, now)?;
         }

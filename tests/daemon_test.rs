@@ -144,3 +144,10 @@ fn hc_run_puts_json_flag_before_command() {
     assert!(send.iter().position(|a| a == "--json").unwrap() < dashdash, "{send:?}");
     assert_eq!(&send[dashdash + 1..], ["t5", "-bắt đầu bằng gạch"]);
 }
+
+#[test]
+fn empty_app_strings_fall_back_to_argv() {
+    let row = terminal_row_from(&json!({"address": "t1", "argv": ["opencode"], "status": {"app": "", "state": "idle"}, "state": "live"}));
+    assert_eq!(row.app.as_deref(), Some("opencode"));
+    assert_eq!(app_from_argv(&["".into()]), None);
+}

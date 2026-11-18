@@ -109,6 +109,9 @@ fn rotation_fails_to_inbox_without_commit() -> Result<()> {
     rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
     go_idle(&store, 6);
     rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?;
+    // Lượt đầu chưa thấy commit → vẫn chờ (agent có thể cần thêm lượt), không kill.
+    assert_eq!(state(&store), "requested");
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 11 * MIN)?;
     assert_eq!(state(&store), "failed");
     assert!(!hc.calls.borrow().iter().any(|c| c.starts_with("kill")));
     assert!(store.inbox(true)?.iter().any(|i| i.source == "rotation" && i.terminal.as_deref() == Some("t1")));
@@ -190,15 +193,15 @@ fn failed_rotation_is_not_retried_automatically() -> Result<()> {
     let git = FakeGit { touched: None, clean: true, ..Default::default() };
     rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
     go_idle(&store, 6);
-    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?; // thất bại
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 11 * MIN)?; // thất bại (quá hạn)
     let sends_before = hc.calls.borrow().len();
-    rotation::tick(&store, &Config::builtin(), &hc, &git, 2 * MIN)?;
-    rotation::tick(&store, &Config::builtin(), &hc, &git, 3 * MIN)?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 12 * MIN)?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 13 * MIN)?;
     let n: i64 = store.conn().query_row("SELECT COUNT(*) FROM rotations", [], |r| r.get(0))?;
     assert_eq!(n, 1);
     assert_eq!(hc.calls.borrow().len(), sends_before);
     // Người dùng chủ động xoay lại thì được.
-    assert!(rotation::start(&store, "t1", None, true, 4 * MIN)?);
+    assert!(rotation::start(&store, "t1", None, true, 14 * MIN)?);
     Ok(())
 }
 
@@ -209,6 +212,17 @@ fn rotation_fails_early_without_cwd() -> Result<()> {
     let hc = FakeHc::default();
     rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 0)?;
     assert_eq!(state(&store), "failed");
+    assert!(hc.calls.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn rotation_does_not_send_handoff_while_done_only_when_idle() -> Result<()> {
+    let store = setup("opencode", "done")?;
+    let hc = FakeHc::default();
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 0)?;
+    // `done` có thể vừa chuyển sang lượt mới; chỉ gửi khi `idle` (kèm --if idle).
+    assert_eq!(state(&store), "pending");
     assert!(hc.calls.borrow().is_empty());
     Ok(())
 }

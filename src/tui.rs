@@ -35,6 +35,9 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
         std::io::stdin().is_terminal(),
         false,
     );
+    if !matches!(who, Caller::User { .. }) {
+        anyhow::bail!("agm tui chỉ dành cho người dùng ở terminal (TTY, không phải agent); agent hãy dùng các lệnh agm thường");
+    }
     let mut note = String::new();
     let mut pending: Option<TuiCmd> = None;
     loop {

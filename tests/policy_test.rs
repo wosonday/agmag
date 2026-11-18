@@ -133,3 +133,21 @@ fn policy_off_does_nothing() -> Result<()> {
     assert!(store.inbox(true)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn dismissed_budget_alert_does_not_fire_again() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    worker(&store, "t2", "opencode", "a", 300);
+    budget(&store, "task:a", "tokens", 100.0, 200.0, "kill");
+    policy::tick(&store, &Config::builtin(), &hc, 1)?;
+    assert_eq!(hc.calls.borrow().len(), 1);
+    for item in store.inbox(true)? {
+        store.resolve_inbox(item.id, None, 2)?;
+    }
+    policy::tick(&store, &Config::builtin(), &hc, 3)?;
+    policy::tick(&store, &Config::builtin(), &hc, 4)?;
+    assert_eq!(hc.calls.borrow().len(), 1, "{:?}", hc.calls.borrow());
+    assert!(store.inbox(true)?.is_empty());
+    Ok(())
+}

@@ -75,7 +75,7 @@ fn rescan_is_noop() -> anyhow::Result<()> {
     fs::write(&path, CODEX)?;
     let store = Store::open_in_memory()?;
     ingest_file(&store, Source::Codex, &path)?;
-    let before = store.cursor(&path.to_string_lossy())?.unwrap();
+    let before = store.cursor(&agmag::ingest::path_key(&path))?.unwrap();
     let second = ingest_file(&store, Source::Codex, &path)?;
     assert_eq!(
         second,
@@ -84,7 +84,7 @@ fn rescan_is_noop() -> anyhow::Result<()> {
             ..Default::default()
         }
     );
-    assert_eq!(store.cursor(&path.to_string_lossy())?.unwrap(), before);
+    assert_eq!(store.cursor(&agmag::ingest::path_key(&path))?.unwrap(), before);
     assert_eq!(count(&store, "usage"), 1);
     Ok(())
 }

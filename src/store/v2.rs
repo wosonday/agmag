@@ -194,6 +194,12 @@ impl Store {
         Ok(())
     }
 
+    /// Kích thước cửa sổ ngữ cảnh là thuộc tính của model: ghi không phụ thuộc mốc thời gian.
+    pub fn set_context_window(&self, sid: i64, window: u64) -> Result<()> {
+        self.conn.execute("UPDATE sessions SET ctx_window = ?2 WHERE id = ?1", params![sid, window as i64])?;
+        Ok(())
+    }
+
     pub fn link_terminal(&self, addr: &str, session: i64, source: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE terminals SET session = ?2, link_source = ?3 WHERE address = ?1",

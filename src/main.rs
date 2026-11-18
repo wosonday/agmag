@@ -104,7 +104,19 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Scan { days } => days,
         _ => SCAN_DAYS,
     };
-    let stats = ingest_all(&store, &roots(), now - scan_days * DAY_MS)?;
+    let mut stats = ingest_all(&store, &roots(), now - scan_days * DAY_MS)?;
+    match agmag::opencode::ingest_opencode(&store, &agmag::opencode::default_db()) {
+        Ok(oc) => {
+            stats.files += oc.files;
+            stats.lines += oc.lines;
+            stats.events += oc.events;
+            stats.bad += oc.bad;
+        }
+        Err(err) => {
+            eprintln!("agm: bỏ qua opencode.db: {err:#}");
+            stats.skipped += 1;
+        }
+    }
 
     match cli.cmd {
         Cmd::Scan { .. } => emit(json, &stats_json(&stats), || {

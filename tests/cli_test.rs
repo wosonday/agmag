@@ -28,6 +28,7 @@ fn agm(tmp: &Path, args: &[&str]) -> Output {
         .env("AGM_HOME", tmp.join("home"))
         .env("AGM_CODEX_DIR", tmp.join("codex"))
         .env("AGM_CLAUDE_DIR", tmp.join("claude"))
+        .env("AGM_OPENCODE_DB", tmp.join("opencode.db"))
         .output()
         .unwrap()
 }

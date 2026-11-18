@@ -58,6 +58,8 @@ fn source_from(s: &str) -> Result<Source> {
     match s {
         "codex" => Ok(Source::Codex),
         "claude" => Ok(Source::Claude),
+        "opencode" => Ok(Source::OpenCode),
+        "agy" => Ok(Source::Agy),
         other => bail!("nguồn không rõ trong CSDL: {other}"),
     }
 }

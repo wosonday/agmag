@@ -99,6 +99,8 @@ impl Config {
         match source {
             Source::Codex => "codex",
             Source::Claude => "claude",
+            Source::OpenCode => "opencode",
+            Source::Agy => "agy",
         }
     }
 }

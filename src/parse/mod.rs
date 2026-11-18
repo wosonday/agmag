@@ -18,5 +18,6 @@ pub fn parser_for(source: Source) -> Box<dyn LogParser> {
     match source {
         Source::Codex => Box::new(codex::CodexParser::default()),
         Source::Claude => Box::new(claude::ClaudeParser::default()),
+        Source::OpenCode | Source::Agy => unreachable!("nguồn này không đọc theo dòng log"),
     }
 }

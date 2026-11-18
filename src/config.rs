@@ -79,7 +79,9 @@ impl Config {
     }
 }
 
-/// Chờ người dùng triển khai trong bài tập Learn by Doing.
+/// Chi phí USD của một lượng token đã chuẩn hóa, theo giá USD / 1M token.
+/// Chỉ được gọi cho provider `billing = "api"` có giá (report bỏ qua gói tháng).
+// TODO(human): viết thân hàm (khoảng 5 dòng). Test: tests/config_test.rs::cost_basic.
 pub fn cost_usd(_u: &Usage, _p: &Price) -> f64 {
     todo!("TODO(human)")
 }

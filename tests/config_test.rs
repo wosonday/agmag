@@ -141,6 +141,7 @@ fn context_pct_cases() {
 
 // Chờ người dùng: Learn by Doing — triển khai cost_usd; test này được phép FAIL.
 #[test]
+#[ignore = "TODO(human): cost_usd chờ người dùng viết"]
 fn cost_basic() {
     let input_only = Usage {
         input_uncached: 1_000_000,

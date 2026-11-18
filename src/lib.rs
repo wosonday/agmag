@@ -1,6 +1,17 @@
+pub mod actions;
+pub mod ask;
 pub mod config;
+pub mod correlate;
+pub mod daemon;
+pub mod dashboard;
+pub mod git;
+pub mod hc;
+pub mod hook;
 pub mod ingest;
 pub mod model;
+pub mod opencode;
 pub mod parse;
+pub mod policy;
 pub mod report;
+pub mod rotation;
 pub mod store;

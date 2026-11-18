@@ -15,7 +15,8 @@ billing = "api"
 
 [models."gpt-6.1-sol"]
 provider = "codex"
-# context_window do Codex tự báo trong log.
+# Codex tự báo model_context_window = 475000 trong log; OpenCode cần giá trị này.
+context_window = 475000
 
 [models."claude-opus-5-5"]
 provider = "claude"

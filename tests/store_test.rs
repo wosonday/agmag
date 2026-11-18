@@ -178,7 +178,7 @@ fn open_creates_file() -> anyhow::Result<()> {
         store
             .conn()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-        1
+        2
     );
     assert_eq!(
         store
@@ -295,6 +295,9 @@ fn dedupe_is_scoped_to_session_and_no_future_tables_exist() -> anyhow::Result<()
     let tables = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(tables, ["cursors", "quota", "sessions", "turns", "usage"]);
+    assert_eq!(
+        tables,
+        ["actions", "budgets", "cursors", "inbox", "messages", "quota", "rotations", "sessions", "settings", "terminals", "turns", "usage"]
+    );
     Ok(())
 }

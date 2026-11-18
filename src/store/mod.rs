@@ -7,6 +7,9 @@ use crate::model::{
     ContextSnapshot, QuotaSnapshot, Role, SessionMeta, Source, TurnSummary, UsageRecord,
 };
 
+mod v2;
+pub use v2::{BudgetRow, InboxRow, MessageRow, TerminalRow};
+
 pub struct Store {
     conn: Connection,
 }
@@ -39,8 +42,25 @@ impl Store {
     }
 
     fn initialize(conn: Connection) -> Result<Self> {
+        // Daemon và CLI cùng ghi: chờ khóa thay vì lỗi ngay (đặt trước mọi lệnh có thể cần khóa).
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        conn.execute_batch(include_str!("schema.sql"))?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 2 {
+            conn.execute_batch(include_str!("schema.sql"))?;
+            conn.execute_batch(include_str!("schema_v2.sql"))?;
+            if version == 1 && cfg!(windows) {
+                // v1 lưu đường dẫn thô; v2 dùng khóa chuẩn hóa (ingest::path_key). Đổi khóa để log không bị
+                // đọc lại thành phiên mới (đếm token hai lần).
+                conn.execute_batch(
+                    "UPDATE OR IGNORE sessions SET path = lower(replace(path, '/', '\\'))
+                         WHERE source IN ('codex', 'claude');
+                     UPDATE OR IGNORE cursors SET path = lower(replace(path, '/', '\\'))
+                         WHERE path NOT LIKE 'opencode-db:%';",
+                )?;
+            }
+            conn.execute_batch("PRAGMA user_version = 2;")?;
+        }
         Ok(Self { conn })
     }
 
@@ -128,7 +148,7 @@ impl Store {
 
     pub fn set_context(&self, sid: i64, ctx: &ContextSnapshot) -> Result<()> {
         self.conn.execute(
-            "UPDATE sessions SET ctx_ts_ms=?2, ctx_used=?3, ctx_window=?4
+            "UPDATE sessions SET ctx_ts_ms=?2, ctx_used=?3, ctx_window=COALESCE(?4, ctx_window)
              WHERE id=?1 AND (ctx_ts_ms IS NULL OR ctx_ts_ms <= ?2)",
             params![
                 sid,

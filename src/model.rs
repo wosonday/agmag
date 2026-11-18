@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub enum Source {
     Codex,
     Claude,
+    OpenCode,
+    Agy,
 }
 
 impl Source {
@@ -12,6 +14,8 @@ impl Source {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::OpenCode => "opencode",
+            Self::Agy => "agy",
         }
     }
 }

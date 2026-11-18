@@ -41,6 +41,30 @@ pub struct Config {
     pub models: BTreeMap<String, ModelCfg>,
     #[serde(default)]
     pub aliases: BTreeMap<String, String>,
+    #[serde(default)]
+    pub policy: Policy,
+}
+
+/// Ngưỡng và hạn mức cho policy (ngân sách, cảnh báo ngữ cảnh, xoay vòng thợ).
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Policy {
+    /// Số thợ (nhãn agm.role=worker) sống cùng lúc tối đa.
+    pub max_workers: u32,
+    /// Tên terminal quản lý nhận cảnh báo; None = chỉ hộp thư người dùng.
+    pub manager: Option<String>,
+    /// % ngữ cảnh: cảnh báo.
+    pub ctx_warn: f64,
+    /// % ngữ cảnh: xoay vòng thợ OpenCode.
+    pub ctx_rotate: f64,
+    /// Phút chờ agent bàn giao trước khi bỏ cuộc và báo người dùng.
+    pub handoff_timeout_min: u64,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Policy { max_workers: 3, manager: None, ctx_warn: 50.0, ctx_rotate: 70.0, handoff_timeout_min: 10 }
+    }
 }
 
 impl Config {
@@ -75,15 +99,22 @@ impl Config {
         match source {
             Source::Codex => "codex",
             Source::Claude => "claude",
+            Source::OpenCode => "opencode",
+            Source::Agy => "agy",
         }
     }
 }
 
 /// Chi phí USD của một lượng token đã chuẩn hóa, theo giá USD / 1M token.
 /// Chỉ được gọi cho provider `billing = "api"` có giá (report bỏ qua gói tháng).
-// TODO(human): viết thân hàm (khoảng 5 dòng). Test: tests/config_test.rs::cost_basic.
-pub fn cost_usd(_u: &Usage, _p: &Price) -> f64 {
-    todo!("cost_usd chưa được viết")
+/// `reasoning` đã nằm trong `output` nên không tính thêm.
+pub fn cost_usd(u: &Usage, p: &Price) -> f64 {
+    // Nhân trước rồi chia một lần để không mất độ chính xác với lượng token nhỏ.
+    (u.input_uncached as f64 * p.input
+        + u.cache_read as f64 * p.cache_read
+        + u.cache_write as f64 * p.cache_write
+        + u.output as f64 * p.output)
+        / 1_000_000.0
 }
 
 pub fn context_pct(used: u64, window: Option<u64>) -> Option<f64> {

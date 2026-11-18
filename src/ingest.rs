@@ -96,6 +96,17 @@ pub fn head_hash(bytes: &[u8]) -> u64 {
     })
 }
 
+/// Khóa ổn định cho một tệp log. Trên Windows đường dẫn không phân biệt hoa thường và chấp nhận cả `/`,
+/// nên chuẩn hóa để cùng một tệp không thành hai phiên (đếm token hai lần).
+pub fn path_key(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if cfg!(windows) {
+        s.replace('/', "\\").to_lowercase()
+    } else {
+        s.into_owned()
+    }
+}
+
 pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestStats> {
     let mut reader = BufReader::new(File::open(path)?);
     let metadata = reader.get_ref().metadata()?;
@@ -105,7 +116,7 @@ pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestS
         .duration_since(UNIX_EPOCH)?
         .as_millis()
         .try_into()?;
-    let path_key = path.to_string_lossy();
+    let path_key = path_key(path);
     let tx = store.conn().unchecked_transaction()?;
     let sid = store.session_id_for_path(source.clone(), &path_key)?;
     let saved = store.cursor(&path_key)?;
@@ -171,7 +182,7 @@ pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestS
     }
     store.add_line_stats(sid, stats.unknown, stats.bad)?;
     store.save_cursor(&Cursor {
-        path: path_key.into_owned(),
+        path: path_key,
         offset,
         size,
         mtime_ms,

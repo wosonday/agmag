@@ -41,7 +41,7 @@ pub struct CostRow {
     pub cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QuotaRow {
     pub provider: String,
     pub window_minutes: u32,
@@ -58,6 +58,8 @@ fn source_from(s: &str) -> Result<Source> {
     match s {
         "codex" => Ok(Source::Codex),
         "claude" => Ok(Source::Claude),
+        "opencode" => Ok(Source::OpenCode),
+        "agy" => Ok(Source::Agy),
         other => bail!("nguồn không rõ trong CSDL: {other}"),
     }
 }

@@ -17,8 +17,9 @@ fn default_has_subscriptions() {
     assert_eq!(cfg.providers["ollama"].billing, Billing::Api);
     for model in cfg.models.values() {
         assert!(model.price.is_none());
-        assert!(model.context_window.is_none());
     }
+    // Chỉ gpt-6.1-sol có cửa sổ mặc định (giá trị Codex tự báo); Claude chờ hook statusline.
+    assert_eq!(cfg.model("claude-opus-5-5").unwrap().context_window, None);
 }
 
 #[test]
@@ -141,7 +142,6 @@ fn context_pct_cases() {
 
 // Chờ người dùng: Learn by Doing — triển khai cost_usd; test này được phép FAIL.
 #[test]
-#[ignore = "chờ người dùng viết cost_usd"]
 fn cost_basic() {
     let input_only = Usage {
         input_uncached: 1_000_000,
@@ -172,4 +172,16 @@ fn cost_basic() {
         output: 15.0,
     };
     assert_eq!(cost_usd(&cached_output, &price), 15.3);
+}
+
+#[test]
+fn policy_defaults() {
+    let p = Config::builtin().policy;
+    assert_eq!((p.max_workers, p.ctx_warn, p.ctx_rotate, p.handoff_timeout_min), (3, 50.0, 70.0, 10));
+    assert_eq!(p.manager, None);
+}
+
+#[test]
+fn gpt_sol_has_window() {
+    assert_eq!(Config::builtin().model("gpt-6.1-sol").unwrap().context_window, Some(475000));
 }

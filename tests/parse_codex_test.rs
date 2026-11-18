@@ -197,7 +197,6 @@ fn known_noise_is_ignored() {
 }
 
 #[test]
-#[ignore = "Task 1 real_sanitized.jsonl is not present in this worktree"]
 fn real_fixture_smoke() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")

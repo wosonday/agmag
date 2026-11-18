@@ -7,6 +7,9 @@ use crate::model::{
     ContextSnapshot, QuotaSnapshot, Role, SessionMeta, Source, TurnSummary, UsageRecord,
 };
 
+mod v2;
+pub use v2::{BudgetRow, InboxRow, MessageRow, TerminalRow};
+
 pub struct Store {
     conn: Connection,
 }
@@ -40,7 +43,11 @@ impl Store {
 
     fn initialize(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        // Daemon và CLI cùng ghi: chờ khóa thay vì lỗi ngay.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(include_str!("schema.sql"))?;
+        conn.execute_batch(include_str!("schema_v2.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 2;")?;
         Ok(Self { conn })
     }
 
@@ -128,7 +135,7 @@ impl Store {
 
     pub fn set_context(&self, sid: i64, ctx: &ContextSnapshot) -> Result<()> {
         self.conn.execute(
-            "UPDATE sessions SET ctx_ts_ms=?2, ctx_used=?3, ctx_window=?4
+            "UPDATE sessions SET ctx_ts_ms=?2, ctx_used=?3, ctx_window=COALESCE(?4, ctx_window)
              WHERE id=?1 AND (ctx_ts_ms IS NULL OR ctx_ts_ms <= ?2)",
             params![
                 sid,

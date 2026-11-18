@@ -54,4 +54,3 @@ CREATE TABLE IF NOT EXISTS cursors (
     head_hash INTEGER NOT NULL
 );
 
-PRAGMA user_version = 1;

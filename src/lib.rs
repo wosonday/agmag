@@ -1,4 +1,5 @@
 pub mod config;
+pub mod correlate;
 pub mod daemon;
 pub mod hc;
 pub mod hook;

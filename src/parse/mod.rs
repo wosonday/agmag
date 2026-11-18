@@ -1,5 +1,6 @@
 use crate::model::{LineOutcome, Source};
 
+pub mod claude;
 pub mod codex;
 
 #[derive(Debug, thiserror::Error)]
@@ -16,6 +17,6 @@ pub trait LogParser {
 pub fn parser_for(source: Source) -> Box<dyn LogParser> {
     match source {
         Source::Codex => Box::new(codex::CodexParser::default()),
-        Source::Claude => todo!("t3"),
+        Source::Claude => Box::new(claude::ClaudeParser::default()),
     }
 }

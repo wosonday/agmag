@@ -174,6 +174,20 @@ impl Store {
         }
     }
 
+    /// Xóa dữ liệu suy ra từ log của một phiên (dùng khi tệp log bị thay và phải đọc lại từ đầu).
+    pub fn reset_session(&self, sid: i64) -> Result<()> {
+        self.with_savepoint(|tx| {
+            tx.execute("DELETE FROM usage WHERE session=?1", [sid])?;
+            tx.execute("DELETE FROM turns WHERE session=?1", [sid])?;
+            tx.execute(
+                "UPDATE sessions SET unknown_lines=0, bad_lines=0, last_ms=NULL,
+                        ctx_ts_ms=NULL, ctx_used=NULL, ctx_window=NULL WHERE id=?1",
+                [sid],
+            )?;
+            Ok(())
+        })
+    }
+
     fn refresh_last_ms(conn: &Connection, sid: i64) -> Result<()> {
         conn.execute(
             "UPDATE sessions SET last_ms=(

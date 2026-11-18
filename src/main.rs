@@ -157,7 +157,7 @@ fn emit<T: Serialize + ?Sized>(json: bool, value: &T, human: impl FnOnce()) -> R
 }
 
 fn stats_json(s: &agmag::ingest::IngestStats) -> serde_json::Value {
-    serde_json::json!({"files": s.files, "lines": s.lines, "events": s.events, "unknown": s.unknown, "bad": s.bad})
+    serde_json::json!({"files": s.files, "lines": s.lines, "events": s.events, "unknown": s.unknown, "bad": s.bad, "skipped": s.skipped})
 }
 
 /// Đọc nguyên một dòng log tại vị trí byte (chỉ đọc).
@@ -239,9 +239,9 @@ fn print_cost(rows: &[report::CostRow], by: GroupBy) {
 }
 
 fn window_label(minutes: u32) -> String {
-    if minutes % 1440 == 0 {
+    if minutes.is_multiple_of(1440) {
         format!("{}d", minutes / 1440)
-    } else if minutes % 60 == 0 {
+    } else if minutes.is_multiple_of(60) {
         format!("{}h", minutes / 60)
     } else {
         format!("{minutes}m")

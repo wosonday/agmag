@@ -28,7 +28,8 @@ fn ingest_mini_codex() -> anyhow::Result<()> {
             lines: 7,
             events: 6,
             unknown: 1,
-            bad: 0
+            bad: 0,
+            skipped: 0
         }
     );
     assert_eq!(count(&store, "usage"), 1);
@@ -223,5 +224,64 @@ fn file_transaction_rolls_back_on_store_error() -> anyhow::Result<()> {
     assert!(store.conn().is_autocommit());
     store.conn().execute_batch("DROP TRIGGER reject_cursor")?;
     assert_eq!(ingest_file(&store, Source::Codex, &path)?.lines, 7);
+    Ok(())
+}
+
+#[test]
+fn reread_from_zero_resets_session_data() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mini.jsonl");
+    fs::write(&path, format!("{CODEX}{{oops
+"))?;
+    let store = Store::open_in_memory()?;
+    ingest_file(&store, Source::Codex, &path)?;
+    // Thay nội dung (đầu tệp khác) -> đọc lại từ 0; dữ liệu cũ của phiên phải biến mất.
+    let usage_line = CODEX.lines().nth(3).unwrap().replace("resp_1", "resp_new");
+    fs::write(&path, format!("{usage_line}
+"))?;
+    ingest_file(&store, Source::Codex, &path)?;
+    let keys: Vec<String> = store
+        .conn()
+        .prepare("SELECT dedupe_key FROM usage")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    assert_eq!(keys, ["resp_new"]);
+    assert_eq!(count(&store, "turns"), 0);
+    let stats: (i64, i64) = store.conn().query_row(
+        "SELECT unknown_lines, bad_lines FROM sessions",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    assert_eq!(stats, (0, 0));
+    Ok(())
+}
+
+#[test]
+fn head_hash_is_stable_fnv1a() {
+    assert_eq!(agmag::ingest::head_hash(b""), 0xcbf29ce484222325);
+    assert_eq!(agmag::ingest::head_hash(b"a"), 0xaf63dc4c8601ec8c);
+}
+
+#[cfg(windows)]
+#[test]
+fn ingest_all_skips_locked_file() -> anyhow::Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = tempfile::tempdir()?;
+    let dir = tmp.path().join("codex/2026/11/18");
+    fs::create_dir_all(&dir)?;
+    fs::write(dir.join("rollout-a.jsonl"), CODEX)?;
+    fs::write(dir.join("rollout-b.jsonl"), CODEX.replace("resp_1", "resp_b"))?;
+    let _lock = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(dir.join("rollout-a.jsonl"))?;
+    let roots = Roots {
+        codex: tmp.path().join("codex"),
+        claude: tmp.path().join("claude"),
+    };
+    let store = Store::open_in_memory()?;
+    let stats = ingest_all(&store, &roots, 0)?;
+    assert_eq!((stats.files, stats.skipped), (1, 1));
+    assert_eq!(count(&store, "usage"), 1);
     Ok(())
 }

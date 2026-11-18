@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -62,7 +61,15 @@ pub fn discover(roots: &Roots, since_ms: i64) -> Vec<(Source, PathBuf)> {
 pub fn ingest_all(store: &Store, roots: &Roots, since_ms: i64) -> Result<IngestStats> {
     let mut total = IngestStats::default();
     for (source, path) in discover(roots, since_ms) {
-        let stats = ingest_file(store, source, &path)?;
+        // Một tệp lỗi (bị khóa, bị xóa giữa chừng) không được làm hỏng cả lần quét.
+        let stats = match ingest_file(store, source, &path) {
+            Ok(stats) => stats,
+            Err(err) => {
+                eprintln!("agm: bỏ qua {}: {err:#}", path.display());
+                total.skipped += 1;
+                continue;
+            }
+        };
         total.files += stats.files;
         total.lines += stats.lines;
         total.events += stats.events;
@@ -79,6 +86,14 @@ pub struct IngestStats {
     pub events: u64,
     pub unknown: u64,
     pub bad: u64,
+    pub skipped: u64,
+}
+
+/// FNV-1a 64-bit của phần đầu tệp: ổn định giữa các phiên bản Rust (khác `DefaultHasher`).
+pub fn head_hash(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestStats> {
@@ -96,11 +111,7 @@ pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestS
     let saved = store.cursor(&path_key)?;
     let mut head = Vec::new();
     reader.by_ref().take(4096).read_to_end(&mut head)?;
-    let hash = |bytes: &[u8]| {
-        let mut hasher = DefaultHasher::new();
-        bytes.hash(&mut hasher);
-        hasher.finish()
-    };
+    let hash = head_hash;
     // Compare the old prefix length: appending to a short file changes its full head hash.
     let mut offset = saved
         .as_ref()
@@ -110,6 +121,10 @@ pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestS
                 && hash(&head[..head.len().min(c.size as usize)]) == c.head_hash
         })
         .map_or(0, |c| c.offset);
+    if saved.is_some() && offset == 0 {
+        // Tệp đã bị thay: bỏ dữ liệu cũ để đọc lại không bị cộng dồn (cùng transaction của tệp).
+        store.reset_session(sid)?;
+    }
     reader.seek(SeekFrom::Start(offset))?;
     let mut parser = parser_for(source);
     if offset > 0 {

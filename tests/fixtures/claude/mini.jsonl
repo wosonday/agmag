@@ -1,0 +1,5 @@
+{"type":"user","sessionId":"s-1","cwd":"D:\\Dự án\\x","version":"2.0.0","timestamp":"2026-11-18T00:00:00.000Z","message":{"content":"xin chào"}}
+{"type":"assistant","sessionId":"s-1","cwd":"D:\\Dự án\\x","timestamp":"2026-11-18T00:00:01.000Z","message":{"id":"msg_1","model":"claude-opus-5-5","content":[{"type":"text","text":"chào bạn"}],"usage":{"input_tokens":2,"cache_read_input_tokens":356264,"cache_creation_input_tokens":281,"output_tokens":10,"output_tokens_details":{"thinking_tokens":348}}}}
+{"type":"assistant","sessionId":"s-1","cwd":"D:\\Dự án\\x","timestamp":"2026-11-18T00:00:02.000Z","message":{"id":"msg_1","model":"claude-opus-5-5","content":[{"type":"text","text":"chào bạn lần nữa"}],"usage":{"input_tokens":2,"cache_read_input_tokens":356264,"cache_creation_input_tokens":281,"output_tokens":1208,"output_tokens_details":{"thinking_tokens":348}}}}
+{"type":"api-request-blob","data":"must not be retained"}
+{"type":"weird"}

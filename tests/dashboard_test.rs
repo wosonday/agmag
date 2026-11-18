@@ -35,7 +35,7 @@ fn snapshot_sections() -> anyhow::Result<()> {
     let s = snapshot(&store, &Config::builtin(), 1_000_000)?;
     assert_eq!(s.quota.len(), 2);
     let t = &s.terminals[0];
-    assert_eq!((t.address.as_str(), t.tokens, t.context_pct), ("t5", 340_000, Some(50.0)));
+    assert_eq!((t.address.as_str(), t.tokens, t.context_pct), ("t5", Some(340_000), Some(50.0)));
     assert_eq!(s.budgets[0].value, Some(340_000.0));
     assert_eq!(s.inbox.len(), 1);
     assert!(s.policy_on);
@@ -64,4 +64,7 @@ fn parse_commands() {
     assert_eq!(parse_command(""), Ok(TuiCmd::Refresh));
     assert!(parse_command("r x có").is_err());
     assert!(parse_command("zzz").is_err());
+    assert_eq!(parse_command("s t5  GIAO  làm"), Ok(TuiCmd::Send("t5".into(), "GIAO".into(), "làm".into())));
+    assert!(parse_command("s t5 GIAOX làm").is_err());
+    assert_eq!(parse_command("d 4"), Ok(TuiCmd::Done(4)));
 }

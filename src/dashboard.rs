@@ -16,7 +16,8 @@ pub struct TermView {
     pub app: String,
     pub status: String,
     pub task: String,
-    pub tokens: u64,
+    /// None khi terminal chưa ghép được với phiên log (không biết, không phải 0).
+    pub tokens: Option<u64>,
     pub context_pct: Option<f64>,
 }
 
@@ -50,9 +51,9 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
                     [sid],
                     |r| r.get(0),
                 )?;
-                (n.max(0) as u64, session_context_pct(store, cfg, sid)?)
+                (Some(n.max(0) as u64), session_context_pct(store, cfg, sid)?)
             }
-            None => (0, None),
+            None => (None, None),
         };
         let status = match (t.status.as_deref(), t.kind.as_deref()) {
             (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
@@ -138,7 +139,7 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             v.app.clone(),
             v.status.clone(),
             v.task.clone(),
-            tokens(v.tokens),
+            v.tokens.map(tokens).unwrap_or_else(|| "?".into()),
             v.context_pct.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "?".into()),
         ]);
     }
@@ -149,19 +150,21 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += "  (chưa đặt — agm budget set task:<ID> --soft … --hard …)\n";
     }
     for b in &s.budgets {
-        let pct = b.value.map(|v| if b.hard > 0.0 { v / b.hard * 100.0 } else { 0.0 });
+        let pct = b.value.filter(|_| b.hard > 0.0).map(|v| v / b.hard * 100.0);
         let flag = match b.value {
             Some(v) if v >= b.hard => " CỨNG",
             Some(v) if v >= b.soft => " mềm",
             _ => "",
         };
+        // Chưa có số liệu → "?" (không vẽ 0% giả). Ngân sách % hiển thị số thực, không làm tròn kiểu token.
+        let num = |v: f64| if b.unit == "tokens" { tokens(v as u64) } else { format!("{v:.1}") };
         out += &format!(
-            "  {:<24} {} {:>3.0}%  {} / {} {}{flag}\n",
+            "  {:<24} {} {:>4}  {} / {} {}{flag}\n",
             b.scope,
-            bar(pct.unwrap_or(0.0)),
-            pct.unwrap_or(0.0),
-            b.value.map(|v| tokens(v as u64)).unwrap_or_else(|| "?".into()),
-            tokens(b.hard as u64),
+            pct.map(bar).unwrap_or_else(|| "··········".into()),
+            pct.map(|p| format!("{p:.0}%")).unwrap_or_else(|| "?".into()),
+            b.value.map(num).unwrap_or_else(|| "?".into()),
+            num(b.hard),
             b.unit
         );
     }
@@ -171,16 +174,21 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += "  (trống)\n";
     }
     for i in &s.inbox {
-        out += &format!("  #{} [{}] {} — {}\n", i.id, i.source, i.terminal.as_deref().unwrap_or("-"), i.text);
+        out += &format!("  #{} [{}] {} — {}\n", i.id, i.source, i.terminal.as_deref().unwrap_or("-"), one_line(&i.text, 200));
     }
 
     out += &section("TIN GẦN ĐÂY", width);
     for m in &s.messages {
-        out += &format!("  {} → {}  {}  {}  ({})\n", m.from, m.to, m.kind, m.text.chars().take(60).collect::<String>(), m.status);
+        out += &format!("  {} → {}  {}  {}  ({})\n", m.from, m.to, m.kind, one_line(&m.text, 60), m.status);
     }
     out += &"─".repeat(width);
-    out += "\nlệnh: r <#> <trả lời> · s <t> <LOẠI> <tin> · i <t> · k <t> · p on|off · q   (Enter: làm mới)\n";
+    out += "\nlệnh: r <#> <trả lời> · d <#> (đóng) · s <t> <LOẠI> <tin> · i <t> · k <t> · p on|off · q   (Enter: làm mới)\n";
     out
+}
+
+/// Một dòng hiển thị: bỏ xuống dòng và ký tự điều khiển (kể cả mã ANSI) để không phá khung TUI.
+fn one_line(s: &str, max: usize) -> String {
+    s.chars().map(|c| if c.is_control() { ' ' } else { c }).take(max).collect()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,6 +196,7 @@ pub enum TuiCmd {
     Refresh,
     Quit,
     Reply(i64, String),
+    Done(i64),
     Send(String, String, String),
     Interrupt(String),
     Kill(String),
@@ -208,10 +217,19 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
             }
             TuiCmd::Reply(id, text.trim().into())
         }
+        "d" => match rest.parse() {
+            Ok(id) => TuiCmd::Done(id),
+            Err(_) => return Err("cú pháp: d <số mục>".into()),
+        },
         "s" => {
             let (target, after) = rest.split_once(' ').unwrap_or((rest, ""));
-            // Loại tin có thể có hai từ (BÁO CÁO, CHƯA ĐẠT).
-            let Some(kind) = KINDS.iter().filter(|k| after.starts_with(*k)).max_by_key(|k| k.len()) else {
+            let after = after.trim_start();
+            // Loại tin có thể có hai từ (BÁO CÁO, CHƯA ĐẠT); sau loại phải là khoảng trắng (ranh giới từ).
+            let Some(kind) = KINDS
+                .iter()
+                .filter(|k| after.strip_prefix(**k).is_some_and(|r| r.starts_with(' ')))
+                .max_by_key(|k| k.len())
+            else {
                 return Err(format!("cú pháp: s <terminal> <{}> <tin>", KINDS.join("|")));
             };
             let text = after[kind.len()..].trim();

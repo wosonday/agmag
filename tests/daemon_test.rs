@@ -95,3 +95,52 @@ fn app_detection() {
     let row = terminal_row_from(&json!({"address": "t1", "state": "live"}));
     assert_eq!((row.address.as_str(), row.app), ("t1", None));
 }
+
+#[test]
+fn app_detection_windows_shims_and_agent_field() {
+    for (argv0, want) in [("C:\\npm\\claude.cmd", "claude-code"), ("codex.CMD", "codex"), ("opencode.ps1", "opencode"), ("agy.bat", "antigravity")] {
+        assert_eq!(app_from_argv(&[argv0.into()]).as_deref(), Some(want), "{argv0}");
+    }
+    // `hc ls` cho trường agent = tên chương trình; cũng phải qua cùng bộ chuẩn hóa.
+    assert_eq!(terminal_row_from(&json!({"address": "t1", "agent": "claude", "state": "live"})).app.as_deref(), Some("claude-code"));
+}
+
+#[test]
+fn snapshot_finishes_terminals_missing_from_core() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    apply_event(&store, &created("t20"), 1)?;
+    apply_event(&store, &created("t21"), 1)?;
+    // Daemon khởi động lại: ảnh chụp chỉ còn t21 → t20 đã chết khi daemon tắt.
+    let snap = json!({"channel": null, "seq": 9, "terminals": [{"address": "t21", "argv": ["opencode"], "state": "live", "labels": {}}]});
+    apply_event(&store, &snap, 50)?;
+    assert_eq!(store.terminal("t20")?.unwrap().state, "finished");
+    assert_eq!(store.terminal("t21")?.unwrap().state, "live");
+    Ok(())
+}
+
+#[test]
+fn null_status_and_removed_resolve_inbox() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let blocked = ev("status", "t1", json!({"reported": true, "status": {"app": "codex", "kind": "permission", "state": "blocked"}}));
+    apply_event(&store, &blocked, 1)?;
+    apply_event(&store, &ev("status", "t1", json!({"reported": true, "status": null})), 2)?;
+    assert!(store.inbox(true)?.is_empty());
+    apply_event(&store, &ev("status", "t2", json!({"reported": true, "status": {"app": "codex", "state": "blocked"}})), 3)?;
+    apply_event(&store, &ev("removed", "t2", json!({})), 4)?;
+    assert!(store.inbox(true)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn hc_run_puts_json_flag_before_command() {
+    let spec = agmag::hc::RunSpec { argv: vec!["worker-mid".into(), "-x làm tiếp".into()], name: Some("w-a-1".into()), ..Default::default() };
+    let args = agmag::hc::run_args(&spec);
+    let json_at = args.iter().position(|a| a == "--json").unwrap();
+    let cmd_at = args.iter().position(|a| a == "worker-mid").unwrap();
+    assert!(json_at < cmd_at, "{args:?}");
+    assert_eq!(args.last().map(String::as_str), Some("-x làm tiếp"));
+    let send = agmag::hc::send_args("t5", "-bắt đầu bằng gạch", true, false);
+    let dashdash = send.iter().position(|a| a == "--").unwrap();
+    assert!(send.iter().position(|a| a == "--json").unwrap() < dashdash, "{send:?}");
+    assert_eq!(&send[dashdash + 1..], ["t5", "-bắt đầu bằng gạch"]);
+}

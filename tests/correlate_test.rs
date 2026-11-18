@@ -61,3 +61,26 @@ fn hook_link_wins_and_linked_session_not_reused() -> anyhow::Result<()> {
     assert_eq!(store.terminal("t1")?.unwrap().link_source.as_deref(), Some("hook"));
     Ok(())
 }
+
+#[test]
+fn one_to_one_required_both_ways() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    // A tạo trước, chưa có phiên; B tạo sau 1 phút, phiên của B bắt đầu — cả hai cửa sổ đều chứa nó.
+    term(&store, "tA", "codex", r"D:\w", 1_000_000);
+    term(&store, "tB", "codex", r"D:\w", 1_060_000);
+    session(&store, Source::Codex, "b.jsonl", r"D:\w", 1_070_000);
+    assert_eq!(link_all(&store)?, 0);
+    Ok(())
+}
+
+#[test]
+fn session_of_finished_terminal_not_reused() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    term(&store, "old", "codex", r"D:\w", 1_000_000);
+    let s = session(&store, Source::Codex, "a.jsonl", r"D:\w", 1_010_000);
+    store.link_terminal("old", s, "auto")?;
+    store.finish_terminal("old", Some(0), 1_050_000)?;
+    term(&store, "new", "codex", r"D:\w", 1_060_000);
+    assert_eq!(link_all(&store)?, 0);
+    Ok(())
+}

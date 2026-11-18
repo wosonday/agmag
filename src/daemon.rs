@@ -12,16 +12,11 @@ use crate::store::Store;
 pub fn apply_event(store: &Store, line: &Value, now: i64) -> Result<()> {
     // Ảnh chụp đầu luồng (và sau `missed`): {channel, seq, terminals:[...]}.
     if let Some(terms) = line["terminals"].as_array() {
-        for t in terms {
-            apply_terminal(store, t, now)?;
-        }
-        return Ok(());
+        return apply_snapshot(store, terms, now);
     }
     if line["method"] == "missed" {
         if let Some(terms) = line["params"]["terminals"].as_array() {
-            for t in terms {
-                apply_terminal(store, t, now)?;
-            }
+            return apply_snapshot(store, terms, now);
         }
         return Ok(());
     }
@@ -39,7 +34,10 @@ pub fn apply_event(store: &Store, line: &Value, now: i64) -> Result<()> {
             store.finish_terminal(addr, data["exit_code"].as_i64(), data["finished_ms"].as_i64().unwrap_or(now))?;
             store.resolve_inbox_for_terminal(addr, "blocked", now)?;
         }
-        "removed" => store.remove_terminal(addr)?,
+        "removed" => {
+            store.remove_terminal(addr)?;
+            store.resolve_inbox_for_terminal(addr, "blocked", now)?;
+        }
         "labels" => {
             let labels: BTreeMap<String, String> = data["labels"]
                 .as_object()
@@ -57,6 +55,25 @@ pub fn apply_event(store: &Store, line: &Value, now: i64) -> Result<()> {
                 }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Ảnh chụp là danh sách đầy đủ terminal đang sống của core: terminal còn `live` trong CSDL mà vắng mặt
+/// đã chết trong lúc daemon không chạy → đánh dấu kết thúc (để không chiếm chỗ max_workers hay bị policy nhắm tới).
+fn apply_snapshot(store: &Store, terms: &[Value], now: i64) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for t in terms {
+        if let Some(a) = t["address"].as_str() {
+            seen.insert(a.to_string());
+        }
+        apply_terminal(store, t, now)?;
+    }
+    for t in store.terminals(true)? {
+        if !seen.contains(&t.address) {
+            store.finish_terminal(&t.address, None, now)?;
+            store.resolve_inbox_for_terminal(&t.address, "blocked", now)?;
+        }
     }
     Ok(())
 }
@@ -90,7 +107,8 @@ fn apply_status(store: &Store, addr: &str, status: &Value, turn: Option<i64>, no
             _ => format!("{} đang chờ: {}", app.unwrap_or("agent"), kind.unwrap_or("không rõ")),
         };
         store.open_inbox(Some(addr), "blocked", kind, &text, now)?;
-    } else if state.is_some() {
+    } else {
+        // Trạng thái khác hoặc bị xóa (status: null) → hết bị chặn.
         store.resolve_inbox_for_terminal(addr, "blocked", now)?;
     }
     Ok(())

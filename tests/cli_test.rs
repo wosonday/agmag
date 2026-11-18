@@ -165,3 +165,44 @@ fn cli_hook_statusline_never_fails() {
     assert!(out.status.success());
     assert!(!out.stdout.is_empty());
 }
+
+#[test]
+fn cli_tui_with_piped_stdin_cannot_kill_codex() {
+    use std::io::Write;
+    let tmp = sandbox(None);
+    let events = tmp.path().join("ev.jsonl");
+    fs::write(&events, "{\"channel\":null,\"seq\":1,\"terminals\":[{\"address\":\"t1q\",\"argv\":[\"codex\"],\"created_ms\":1,\"labels\":{},\"state\":\"live\",\"reported\":true,\"status\":{\"app\":\"codex\",\"state\":\"idle\"}}]}\n").unwrap();
+    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agm"))
+        .args(["tui", "--refresh", "60"])
+        .env("AGM_HOME", tmp.path().join("home"))
+        .env("AGM_CODEX_DIR", tmp.path().join("codex"))
+        .env("AGM_CLAUDE_DIR", tmp.path().join("claude"))
+        .env("AGM_OPENCODE_DB", tmp.path().join("opencode.db"))
+        .env("AGM_HC_BIN", tmp.path().join("khong-co-hc"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"k t1q\ny\nq\n").unwrap();
+    assert!(child.wait_with_output().unwrap().status.success());
+    let inbox = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]));
+    assert!(inbox.as_array().unwrap().iter().any(|i| i["source"] == "request"), "{inbox}");
+}
+
+#[test]
+fn cli_emergency_commands_work_with_broken_config() {
+    let tmp = sandbox(None);
+    fs::write(tmp.path().join("home/providers.toml"), "[[[").unwrap();
+    assert!(agm_env(tmp.path(), &["policy", "off"], &[]).status.success());
+    assert!(agm_env(tmp.path(), &["inbox", "--json"], &[]).status.success());
+}
+
+#[test]
+fn cli_done_dismisses_inbox_item() {
+    let tmp = sandbox(None);
+    assert!(agm_env(tmp.path(), &["send", "user", "--type", "BÁO CÁO", "xong"], &[("HC_TERMINAL_ID", "t5")]).status.success());
+    let id = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]))[0]["id"].as_i64().unwrap();
+    assert!(agm_env(tmp.path(), &["done", &id.to_string()], &[]).status.success());
+    assert!(json(&agm_env(tmp.path(), &["inbox", "--json"], &[])).as_array().unwrap().is_empty());
+}

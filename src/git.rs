@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 
 pub trait Git {
     fn head(&self, cwd: &str) -> Result<String>;
-    /// Worktree không còn thay đổi chưa commit (bỏ qua tệp chưa theo dõi trong `.agents/tasks/`).
+    /// Worktree không còn thay đổi chưa commit, kể cả tệp mới (bỏ qua `.agents/tasks/`, `.agents/.runtime/`).
     fn is_clean(&self, cwd: &str) -> Result<bool>;
     /// Commit mới nhất kể từ `since` có chạm `path`; None nếu không có.
     fn touched_since(&self, cwd: &str, since: &str, path: &str) -> Result<Option<String>>;
@@ -28,7 +28,11 @@ impl Git for GitCli {
     }
 
     fn is_clean(&self, cwd: &str) -> Result<bool> {
-        let status = git(cwd, &["status", "--porcelain", "--untracked-files=no"])?;
+        // Tệp mới chưa commit (mã nguồn) cũng tính là bẩn; chỉ bỏ qua tệp điều phối chép vào worktree.
+        let status = git(
+            cwd,
+            &["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).agents/tasks", ":(exclude).agents/.runtime"],
+        )?;
         Ok(status.is_empty())
     }
 

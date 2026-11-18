@@ -121,7 +121,7 @@ impl Store {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?12)
              ON CONFLICT(address) DO UPDATE SET
                  name = COALESCE(excluded.name, name), app = COALESCE(excluded.app, app),
-                 cwd = COALESCE(excluded.cwd, cwd), labels = excluded.labels,
+                 cwd = COALESCE(excluded.cwd, cwd), labels = CASE WHEN excluded.labels = '{}' THEN labels ELSE excluded.labels END,
                  task = COALESCE(excluded.task, task), role = COALESCE(excluded.role, role),
                  template = COALESCE(excluded.template, template), state = excluded.state,
                  reported = MAX(reported, excluded.reported), parent = COALESCE(excluded.parent, parent),
@@ -220,7 +220,7 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                &format!("SELECT {TERM_COLS} FROM terminals WHERE address = ?1 OR name = ?1 ORDER BY state = 'live' DESC LIMIT 1"),
+                &format!("SELECT {TERM_COLS} FROM terminals WHERE address = ?1 OR name = ?1 ORDER BY (address = ?1) DESC, (state = 'live') DESC, created_ms DESC LIMIT 1"),
                 [addr],
                 term_from,
             )
@@ -236,19 +236,14 @@ impl Store {
 
     /// Mở một mục hộp thư; trả None nếu đã có mục đang mở y hệt (cùng terminal, nguồn, nội dung).
     pub fn open_inbox(&self, terminal: Option<&str>, source: &str, kind: Option<&str>, text: &str, now: i64) -> Result<Option<i64>> {
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM inbox WHERE resolved_ms IS NULL AND terminal IS ?1 AND source = ?2 AND text = ?3)",
-            params![terminal, source, text],
-            |r| r.get(0),
-        )?;
-        if exists {
-            return Ok(None);
-        }
-        self.conn.execute(
-            "INSERT INTO inbox (ts_ms, terminal, source, kind, text) VALUES (?1, ?2, ?3, ?4, ?5)",
+        // Một câu lệnh nguyên tử: daemon và CLI cùng ghi không tạo được mục trùng.
+        let n = self.conn.execute(
+            "INSERT INTO inbox (ts_ms, terminal, source, kind, text)
+             SELECT ?1, ?2, ?3, ?4, ?5
+             WHERE NOT EXISTS (SELECT 1 FROM inbox WHERE resolved_ms IS NULL AND terminal IS ?2 AND source = ?3 AND text = ?5)",
             params![now, terminal, source, kind, text],
         )?;
-        Ok(Some(self.conn.last_insert_rowid()))
+        Ok((n > 0).then(|| self.conn.last_insert_rowid()))
     }
 
     pub fn resolve_inbox_for_terminal(&self, terminal: &str, source: &str, now: i64) -> Result<()> {

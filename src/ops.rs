@@ -21,23 +21,21 @@ pub fn hc_terminal() -> Option<String> {
 }
 
 /// Ai đang gọi: người dùng (TTY, terminal gọi không phải agent) hay agent. Hỏi y/N khi cần xác nhận.
+/// Fail-closed (`actions::detect_caller`): không chắc thì là agent.
 pub fn caller(store: &Store, yes: bool, needs_confirm: Option<&str>) -> Result<Caller> {
     let term = hc_terminal();
-    let is_agent = match &term {
-        Some(t) => store.terminal(t)?.map(|r| r.reported && r.app.as_deref().is_some_and(|a| a != "pwsh" && a != "cmd" && a != "bash")).unwrap_or(false),
-        None => false,
-    };
     let tty = std::io::stdin().is_terminal();
-    let mut confirmed = yes;
-    if tty && !is_agent && !yes
-        && let Some(question) = needs_confirm {
-            eprint!("{question} [y/N] ");
-            std::io::stderr().flush()?;
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line)?;
-            confirmed = matches!(line.trim(), "y" | "Y" | "yes" | "có");
-        }
-    Ok(classify_caller(term.as_deref(), is_agent, tty, confirmed))
+    let first = actions::detect_caller(store, &HcCli::default(), term.as_deref(), tty, yes);
+    let Caller::User { confirmed } = first else { return Ok(first) };
+    if confirmed {
+        return Ok(first);
+    }
+    let Some(question) = needs_confirm else { return Ok(first) };
+    eprint!("{question} [y/N] ");
+    std::io::stderr().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(classify_caller(term.as_deref(), false, tty, matches!(line.trim(), "y" | "Y" | "yes" | "có")))
 }
 
 pub fn print_json(v: &impl serde::Serialize) -> Result<()> {
@@ -159,6 +157,8 @@ pub fn spawn(store: &Store, cfg: &Config, req: &SpawnReq, now: i64) -> Result<()
 
 pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Result<()> {
     let app = store.terminal(target)?.and_then(|t| t.app).unwrap_or_else(|| "?".into());
+    // Codex/Claude (hoặc chưa rõ app): luôn phải gõ y — `--yes` không đủ, vì agent có thể tự thêm cờ.
+    let yes = yes && app == "opencode";
     let c = caller(store, yes, Some(&format!("{verb} {target} ({app})?")))?;
     let hc = HcCli::default();
     match verb {
@@ -181,7 +181,7 @@ pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
             if matches!(c, Caller::Agent(_)) { " (chỉ người dùng được kill)" } else { "" }
         );
     }
-    if rotation::start(store, &t.address, None, now)? {
+    if rotation::start(store, &t.address, None, true, now)? {
         println!("Đã xếp {target} vào hàng xoay vòng; daemon sẽ yêu cầu bàn giao khi agent rảnh.");
     } else {
         println!("{target} đang trong một vòng xoay.");
@@ -251,12 +251,20 @@ pub fn hook_install(agm_exe: &Path) -> Result<()> {
     let path = dirs::home_dir().context("không tìm thấy home")?.join(".claude").join("settings.json");
     let mut v: Value = match std::fs::read_to_string(&path) {
         Ok(t) => serde_json::from_str(&t).with_context(|| format!("{} không phải JSON hợp lệ", path.display()))?,
-        Err(_) => json!({}),
+        // Chỉ "chưa có tệp" mới bắt đầu từ rỗng; lỗi khác (bị khóa, không có quyền) → dừng, không ghi đè cấu hình.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => return Err(e).with_context(|| format!("đọc {}", path.display())),
     };
+    if !v.is_object() {
+        bail!("{} không phải một đối tượng JSON", path.display());
+    }
     if !v["statusLine"].is_null() {
         bail!("{} đã có statusLine; agmag không ghi đè. Gọi `agm hook statusline` từ script hiện có của bạn.", path.display());
     }
     v["statusLine"] = json!({"type": "command", "command": format!("\"{}\" hook statusline", agm_exe.display())});
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     std::fs::write(&path, serde_json::to_string_pretty(&v)?)?;
     println!("Đã thêm statusLine vào {}.", path.display());
     Ok(())

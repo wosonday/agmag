@@ -72,16 +72,23 @@ fn set_state(store: &Store, id: i64, state: &str, detail: Option<&str>, now: i64
 }
 
 fn fail(store: &Store, r: &Rotation, reason: &str, now: i64) -> Result<()> {
+    fail_with(store, r, reason, "Phiên cũ được giữ nguyên.", now)
+}
+
+fn fail_with(store: &Store, r: &Rotation, reason: &str, after: &str, now: i64) -> Result<()> {
     set_state(store, r.id, "failed", Some(reason), now)?;
-    store.open_inbox(Some(&r.old), "rotation", Some("failed"), &format!("Xoay vòng {} thất bại: {reason}. Phiên cũ được giữ nguyên.", r.old), now)?;
+    let text = format!("Xoay vòng {} thất bại: {reason}. {after} Dùng `agm rotate {}` để thử lại.", r.old, r.old);
+    store.open_inbox(Some(&r.old), "rotation", Some("failed"), &text, now)?;
     store.log_action(POLICY_ACTOR, "rotate", &r.old, reason, false, now)?;
     Ok(())
 }
 
-/// Bắt đầu xoay vòng một terminal (tự động hoặc `agm rotate`). Bỏ qua nếu đã có vòng đang chạy.
-pub fn start(store: &Store, addr: &str, ctx_pct: Option<f64>, now: i64) -> Result<bool> {
+/// Bắt đầu xoay vòng một terminal. Bỏ qua nếu đã có vòng đang chạy; vòng **tự động** cũng bỏ qua
+/// terminal đã có vòng thất bại (tránh nhắc bàn giao mãi) — chỉ `agm rotate` (manual) mới thử lại.
+pub fn start(store: &Store, addr: &str, ctx_pct: Option<f64>, manual: bool, now: i64) -> Result<bool> {
+    let states = if manual { "'pending', 'requested'" } else { "'pending', 'requested', 'failed'" };
     let busy: bool = store.conn().query_row(
-        "SELECT EXISTS(SELECT 1 FROM rotations WHERE old_terminal = ?1 AND state IN ('pending', 'requested'))",
+        &format!("SELECT EXISTS(SELECT 1 FROM rotations WHERE old_terminal = ?1 AND state IN ({states}))"),
         [addr],
         |r| r.get(0),
     )?;
@@ -105,7 +112,7 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
         let Some(sid) = t.session else { continue };
         if let Some(pct) = session_context_pct(store, cfg, sid)?
             && pct >= cfg.policy.ctx_rotate {
-                start(store, &t.address, Some(pct), now)?;
+                start(store, &t.address, Some(pct), false, now)?;
             }
     }
     // 2. Tiến từng vòng đang chạy.
@@ -119,12 +126,27 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
             fail(store, &r, "terminal đã kết thúc trước khi bàn giao", now)?;
             continue;
         }
+        if !rotatable(&t) {
+            fail(store, &r, "chỉ xoay vòng được thợ OpenCode có mã việc", now)?;
+            continue;
+        }
         let task = r.task.clone().unwrap_or_default();
-        let cwd = t.cwd.clone().unwrap_or_default();
+        let Some(cwd) = t.cwd.clone().filter(|c| !c.trim().is_empty()) else {
+            fail(store, &r, "không biết thư mục làm việc của terminal", now)?;
+            continue;
+        };
         match r.state.as_str() {
             "pending" if idle(&t) => {
-                let head = git.head(&cwd).ok();
-                match hc.send(&t.address, &handoff_text(&task), true, false) {
+                let head = match git.head(&cwd) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        fail(store, &r, &format!("không đọc được git HEAD trong {cwd}: {e:#}"), now)?;
+                        continue;
+                    }
+                };
+                // `--if idle` chỉ khi đang idle; trạng thái `done` cũng là đã xong lượt.
+                let if_idle = t.status.as_deref() == Some("idle");
+                match hc.send(&t.address, &handoff_text(&task), if_idle, false) {
                     Ok(_) => {
                         store.conn().execute(
                             "UPDATE rotations SET state = 'requested', head_before = ?2, turn_before = ?3, requested_ms = ?4, updated_ms = ?4
@@ -161,9 +183,6 @@ fn verify_and_respawn(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r
         return fail(store, r, &format!("không có commit mới chạm .agents/log/{task}.md"), now);
     };
     store.conn().execute("UPDATE rotations SET commit_sha = ?2 WHERE id = ?1", params![r.id, commit])?;
-    if let Err(e) = actions::kill(store, hc, &Caller::Agent(Some(POLICY_ACTOR.into())), &t.address, now) {
-        return fail(store, r, &format!("kill phiên cũ lỗi: {e:#}"), now);
-    }
     let req = SpawnReq {
         template,
         task: task.clone(),
@@ -172,6 +191,15 @@ fn verify_and_respawn(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r
         cwd: t.cwd.clone(),
         text: Some(resume_text(&task)),
     };
+    // Kiểm mọi điều kiện mở phiên mới TRƯỚC khi kill (không để thợ chết mà không có người thay).
+    if let Err(e) = actions::spawn_precheck(store, cfg, &req, Some(&t.address)) {
+        return fail(store, r, &format!("không mở được phiên mới: {e:#}"), now);
+    }
+    if let Err(e) = actions::kill(store, hc, &Caller::Agent(Some(POLICY_ACTOR.into())), &t.address, now) {
+        return fail(store, r, &format!("kill phiên cũ lỗi: {e:#}"), now);
+    }
+    // Đánh dấu ngay (không chờ sự kiện hc) để max_workers và vòng sau không còn tính phiên cũ.
+    store.finish_terminal(&t.address, None, now)?;
     match actions::spawn(store, hc, cfg, &req, now) {
         Ok(addr) => {
             store.conn().execute("UPDATE rotations SET new_terminal = ?2 WHERE id = ?1", params![r.id, addr])?;
@@ -179,6 +207,12 @@ fn verify_and_respawn(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r
             store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("→ {addr}"), true, now)?;
             Ok(())
         }
-        Err(e) => fail(store, r, &format!("đã kill phiên cũ nhưng mở phiên mới lỗi: {e:#}"), now),
+        Err(e) => fail_with(
+            store,
+            r,
+            &format!("mở phiên mới lỗi: {e:#}"),
+            &format!("Phiên cũ ĐÃ bị dừng; bàn giao nằm ở commit {commit} — hãy `agm spawn` lại cho đầu việc {task}."),
+            now,
+        ),
     }
 }

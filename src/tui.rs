@@ -1,7 +1,7 @@
 //! `agm tui`: bảng điều khiển vẽ lại theo chu kỳ (mã ANSI) + dòng lệnh ngắn.
 //! Không dùng thư viện TUI (máy đang offline); phím được thay bằng lệnh một chữ: r s i k p q.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -27,6 +27,14 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
         }
     });
     let hc = HcCli::default();
+    // Ai đang dùng TUI: xác định một lần, fail-closed. Agent (hoặc stdin bị pipe) không được kill/ngắt qua TUI.
+    let who = actions::detect_caller(
+        store,
+        &hc,
+        crate::ops::hc_terminal().as_deref(),
+        std::io::stdin().is_terminal(),
+        false,
+    );
     let mut note = String::new();
     let mut pending: Option<TuiCmd> = None;
     loop {
@@ -52,7 +60,10 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
         // Kill/ngắt cần xác nhận: lệnh trước đặt `pending`, dòng này phải là "y".
         if let Some(cmd) = pending.take() {
             if line.trim() == "y" {
-                let user = Caller::User { confirmed: true };
+                let user = match &who {
+                    Caller::User { .. } => Caller::User { confirmed: true },
+                    agent => agent.clone(),
+                };
                 let res = match &cmd {
                     TuiCmd::Kill(t) => actions::kill(store, &hc, &user, t, now),
                     TuiCmd::Interrupt(t) => actions::interrupt(store, &hc, &user, t, now),
@@ -86,9 +97,18 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
                     Err(e) => format!("lỗi: {e:#}"),
                 };
             }
+            Ok(TuiCmd::Done(id)) => {
+                note = match actions::dismiss(store, id, now) {
+                    Ok(()) => format!("đã đóng #{id}"),
+                    Err(e) => format!("lỗi: {e:#}"),
+                };
+            }
             Ok(TuiCmd::Policy(on)) => {
-                let _ = store.set_setting("policy", if on { "on" } else { "off" });
-                note = format!("policy {}", if on { "bật" } else { "TẮT" });
+                // Không nuốt lỗi: người dùng phải biết policy có thật sự tắt hay không.
+                note = match store.set_setting("policy", if on { "on" } else { "off" }) {
+                    Ok(()) => format!("policy {}", if on { "bật" } else { "TẮT" }),
+                    Err(e) => format!("LỖI — policy CHƯA đổi: {e:#}"),
+                };
             }
             Err(e) => note = e,
         }

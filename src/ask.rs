@@ -11,16 +11,25 @@ use crate::store::Store;
 
 /// Ghi kết quả `agy --output-format json` vào CSDL; trả câu trả lời.
 pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, now: i64) -> Result<String> {
-    if out["status"] != "SUCCESS" {
-        bail!("agy trả trạng thái {}: {}", out["status"], out["response"].as_str().unwrap_or_default());
-    }
+    let ok = out["status"] == "SUCCESS";
     let response = out["response"].as_str().unwrap_or_default().to_string();
     let conv = out["conversation_id"].as_str().map(String::from).unwrap_or_else(|| format!("ask-{now}"));
     let sid = store.session_id_for_path(Source::Agy, &format!("agy://{conv}"))?;
     store.set_meta(sid, &SessionMeta { session_id: conv.clone(), cwd: None, cli_version: None, started_ms: Some(now) })?;
-    let model = model.unwrap_or("agy-default");
-    store.set_model(sid, model)?;
+    // Model: theo tham số hoặc đầu ra agy; không biết thì để trống (không bịa tên).
+    let model = model.map(String::from).or_else(|| out["model"].as_str().map(String::from));
+    if let Some(m) = &model {
+        store.set_model(sid, m)?;
+    }
     let u = &out["usage"];
+    if !u.is_object() {
+        if !ok {
+            bail!("agy trả trạng thái {}: {}", out["status"], response);
+        }
+        // Không có số liệu token → không ghi bản ghi 0.
+        store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::User, summary: summarize(question), byte_offset: now as u64 * 2 })?;
+        return Ok(response);
+    }
     let n = |k: &str| u[k].as_u64().unwrap_or(0);
     let cache = n("cache_read_tokens");
     let thinking = n("thinking_tokens");
@@ -29,7 +38,7 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
         &UsageRecord {
             dedupe_key: format!("{conv}:{now}"),
             ts_ms: now,
-            model: Some(model.into()),
+            model: model.clone(),
             usage: Usage {
                 input_uncached: n("input_tokens").saturating_sub(cache),
                 cache_read: cache,
@@ -41,6 +50,10 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
         },
     )?;
     store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::User, summary: summarize(question), byte_offset: now as u64 * 2 })?;
+    // Token đã tiêu được ghi kể cả khi agy lỗi/hết giờ; sau đó mới báo lỗi.
+    if !ok {
+        bail!("agy trả trạng thái {}: {}", out["status"], response);
+    }
     store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::Assistant, summary: summarize(&response), byte_offset: now as u64 * 2 + 1 })?;
     Ok(response)
 }
@@ -59,5 +72,12 @@ pub fn run_agy(question: &str, model: Option<&str>, timeout_s: u64) -> Result<Va
     }
     let out = cmd.arg("-p").arg(question).output().context("chạy agy")?;
     let text = String::from_utf8_lossy(&out.stdout);
-    serde_json::from_str(text.trim()).with_context(|| format!("đầu ra agy không phải JSON: {}", text.chars().take(300).collect::<String>()))
+    serde_json::from_str(text.trim()).with_context(|| {
+        format!(
+            "agy ({}) không trả JSON: {} {}",
+            out.status,
+            text.chars().take(300).collect::<String>(),
+            String::from_utf8_lossy(&out.stderr).chars().take(300).collect::<String>()
+        )
+    })
 }

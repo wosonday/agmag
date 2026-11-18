@@ -113,3 +113,19 @@ fn opencode_missing_db_is_ok() -> anyhow::Result<()> {
     assert_eq!(stats.files, 0);
     Ok(())
 }
+
+#[test]
+fn opencode_same_millisecond_message_not_skipped() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let db = tmp.path().join("opencode.db");
+    let c = make_db(&db);
+    add(&c, "msg_a", 2, "assistant", 2000, ASSISTANT);
+    let store = Store::open_in_memory()?;
+    ingest_opencode(&store, &db)?;
+    // Message khác commit sau lần quét nhưng có cùng time_updated = 2000.
+    add(&c, "msg_b", 3, "assistant", 2000, &ASSISTANT.replace("\"output\":404", "\"output\":10"));
+    ingest_opencode(&store, &db)?;
+    assert_eq!(count(&store, "SELECT SUM(output) FROM usage"), 414);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM turns"), 2);
+    Ok(())
+}

@@ -30,6 +30,7 @@ struct Msg {
     seq: i64,
     updated: i64,
     data: String,
+    rowid: i64,
 }
 
 /// Quét các message OpenCode mới hơn con trỏ. Tệp không tồn tại → không làm gì.
@@ -40,24 +41,34 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
     }
     let src = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     src.busy_timeout(std::time::Duration::from_secs(5))?;
-    let key = format!("opencode-db:{}", db.to_string_lossy());
-    let since = store.cursor(&key)?.map_or(0, |c| c.offset as i64);
+    let key = format!("opencode-db:{}", crate::ingest::path_key(db));
+    // Con trỏ kép (time_updated, rowid): message chèn sau trong cùng mili-giây có rowid lớn hơn nên không bị bỏ sót.
+    // Lưu trong Cursor: offset = time_updated, size = rowid.
+    let (since, since_row) = store.cursor(&key)?.map_or((0, 0), |c| (c.offset as i64, c.size as i64));
 
     let msgs: Vec<Msg> = src
         .prepare(
-            "SELECT id, session_id, type, seq, time_updated, data FROM session_message
-             WHERE time_updated > ?1 ORDER BY time_updated, seq",
+            "SELECT id, session_id, type, seq, time_updated, data, rowid FROM session_message
+             WHERE time_updated > ?1 OR (time_updated = ?1 AND rowid > ?2) ORDER BY time_updated, rowid",
         )?
-        .query_map(params![since], |r| {
-            Ok(Msg { id: r.get(0)?, session: r.get(1)?, kind: r.get(2)?, seq: r.get(3)?, updated: r.get(4)?, data: r.get(5)? })
+        .query_map(params![since, since_row], |r| {
+            Ok(Msg {
+                id: r.get(0)?,
+                session: r.get(1)?,
+                kind: r.get(2)?,
+                seq: r.get(3)?,
+                updated: r.get(4)?,
+                data: r.get(5)?,
+                rowid: r.get(6)?,
+            })
         })?
         .collect::<rusqlite::Result<_>>()?;
 
     stats.files = 1;
     let tx = store.conn().unchecked_transaction()?;
-    let mut max_updated = since;
+    let (mut max_updated, mut max_row) = (since, since_row);
     for m in &msgs {
-        max_updated = max_updated.max(m.updated);
+        (max_updated, max_row) = (m.updated, m.rowid); // đã sắp theo (time_updated, rowid)
         stats.lines += 1;
         let sid = store.session_id_for_path(Source::OpenCode, &format!("opencode://{}", m.session))?;
         if let Some(meta) = session_meta(&src, &m.session)? {
@@ -78,7 +89,9 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
                     store.set_model(sid, model)?;
                 }
                 let tok = &data["tokens"];
-                if tok.is_object() {
+                let total: u64 = [&tok["input"], &tok["output"], &tok["cache"]["read"], &tok["cache"]["write"]].iter().filter_map(|v| v.as_u64()).sum();
+                // Message đang stream chưa có số (toàn 0) → chưa ghi; lần cập nhật sau sẽ có.
+                if tok.is_object() && total > 0 {
                     let n = |v: &Value| v.as_u64().unwrap_or(0);
                     let usage = Usage {
                         input_uncached: n(&tok["input"]),
@@ -114,7 +127,7 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
             _ => {}
         }
     }
-    store.save_cursor(&Cursor { path: key, offset: max_updated.max(0) as u64, size: 0, mtime_ms: 0, head_hash: 0 })?;
+    store.save_cursor(&Cursor { path: key, offset: max_updated.max(0) as u64, size: max_row.max(0) as u64, mtime_ms: 0, head_hash: 0 })?;
     tx.commit()?;
     Ok(stats)
 }

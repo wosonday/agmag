@@ -10,6 +10,9 @@ use serde_json::{json, Value};
 pub struct FakeHc {
     pub calls: RefCell<Vec<String>>,
     pub fail_send: bool,
+    /// app mà `hc get` báo cho từng terminal (status.app); thiếu → không có app.
+    pub apps: Vec<(String, String)>,
+    pub fail_get: bool,
 }
 
 impl Hc for FakeHc {
@@ -17,7 +20,13 @@ impl Hc for FakeHc {
         Ok(vec![])
     }
     fn get(&self, t: &str) -> Result<Value> {
-        Ok(json!({"address": t}))
+        if self.fail_get {
+            bail!("not_found");
+        }
+        match self.apps.iter().find(|(a, _)| a == t) {
+            Some((_, app)) => Ok(json!({"address": t, "reported": true, "status": {"app": app, "state": "idle"}})),
+            None => Ok(json!({"address": t})),
+        }
     }
     fn send(&self, t: &str, text: &str, if_idle: bool, force: bool) -> Result<Value> {
         self.calls.borrow_mut().push(format!("send {t} if_idle={if_idle} force={force} {text}"));

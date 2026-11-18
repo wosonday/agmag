@@ -126,3 +126,43 @@ fn link_terminal_to_session() -> anyhow::Result<()> {
     assert_eq!(store.terminal("t9")?.unwrap().session, Some(sid));
     Ok(())
 }
+
+#[test]
+fn migration_normalizes_v1_path_keys() -> anyhow::Result<()> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("agm.db");
+    {
+        let c = rusqlite::Connection::open(&path)?;
+        c.execute_batch(include_str!("../src/store/schema.sql"))?;
+        c.execute_batch(
+            "PRAGMA user_version = 1;
+             INSERT INTO sessions(source, path) VALUES ('codex', 'C:/Users/A/Rollout-1.jsonl'), ('opencode', 'opencode://ses_X');
+             INSERT INTO cursors VALUES ('C:/Users/A/Rollout-1.jsonl', 10, 10, 0, 0);",
+        )?;
+    }
+    let store = Store::open(&path)?;
+    let p: Vec<String> = store.conn().prepare("SELECT path FROM sessions ORDER BY id")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    assert_eq!(p, [r"c:\users\a\rollout-1.jsonl", "opencode://ses_X"]);
+    assert!(store.cursor(r"c:\users\a\rollout-1.jsonl")?.is_some());
+    Ok(())
+}
+
+#[test]
+fn terminal_lookup_prefers_exact_address_and_keeps_labels() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let mut a = term("t1");
+    a.name = Some("t2".into()); // tên trùng địa chỉ của terminal khác
+    a.labels.insert("agm.task".into(), "x".into());
+    store.upsert_terminal(&a)?;
+    store.upsert_terminal(&term("t2"))?;
+    assert_eq!(store.terminal("t2")?.unwrap().address, "t2");
+    // Sự kiện sau không mang nhãn → không được xóa nhãn đã có.
+    let mut again = term("t1");
+    again.labels.clear();
+    store.upsert_terminal(&again)?;
+    assert_eq!(store.terminal("t1")?.unwrap().labels.get("agm.task").map(String::as_str), Some("x"));
+    Ok(())
+}

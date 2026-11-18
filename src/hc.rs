@@ -40,17 +40,22 @@ impl Default for HcCli {
 }
 
 impl HcCli {
+    /// `args` đã gồm `--json` ngay sau tên lệnh con. hc báo lỗi bằng `{"error": …}` kể cả khi mã thoát 0.
     fn call(&self, args: &[String]) -> Result<Value> {
         let out = Command::new(&self.bin)
             .args(args)
-            .arg("--json")
             .output()
             .with_context(|| format!("chạy {} {}", self.bin, args.join(" ")))?;
         let stdout = String::from_utf8_lossy(&out.stdout);
+        let cmd = args.first().map_or("", String::as_str);
         if !out.status.success() {
-            bail!("hc {} lỗi ({}): {}{}", args.first().map_or("", String::as_str), out.status, stdout.trim(), String::from_utf8_lossy(&out.stderr).trim());
+            bail!("hc {cmd} lỗi ({}): {}{}", out.status, stdout.trim(), String::from_utf8_lossy(&out.stderr).trim());
         }
-        Ok(serde_json::from_str(stdout.trim()).unwrap_or(Value::String(stdout.trim().to_string())))
+        let v: Value = serde_json::from_str(stdout.trim()).unwrap_or(Value::String(stdout.trim().to_string()));
+        if let Some(err) = v.get("error") {
+            bail!("hc {cmd} lỗi: {}", err["message"].as_str().unwrap_or(&err.to_string()));
+        }
+        Ok(v)
     }
 }
 
@@ -58,9 +63,39 @@ fn s(v: &str) -> String {
     v.to_string()
 }
 
+/// Tham số cho `hc run`: `--json` và mọi cờ đứng trước `--`, argv của chương trình đứng sau.
+pub fn run_args(spec: &RunSpec) -> Vec<String> {
+    let mut args = vec![s("run"), s("--json"), s("--bg"), s("--outlive-parent")];
+    if let Some(n) = &spec.name {
+        args.extend([s("--name"), n.clone()]);
+    }
+    if let Some(c) = &spec.cwd {
+        args.extend([s("--cwd"), c.clone()]);
+    }
+    for (k, v) in &spec.labels {
+        args.extend([s("--label"), format!("{k}={v}")]);
+    }
+    args.push(s("--"));
+    args.extend(spec.argv.iter().cloned());
+    args
+}
+
+/// Tham số cho `hc send`; `--` để tin bắt đầu bằng `-` không bị hiểu là cờ.
+pub fn send_args(terminal: &str, text: &str, if_idle: bool, force: bool) -> Vec<String> {
+    let mut args = vec![s("send"), s("--json")];
+    if if_idle {
+        args.extend([s("--if"), s("idle")]);
+    }
+    if force {
+        args.push(s("--force"));
+    }
+    args.extend([s("--"), s(terminal), s(text)]);
+    args
+}
+
 impl Hc for HcCli {
     fn ls(&self, all: bool) -> Result<Vec<Value>> {
-        let mut args = vec![s("ls")];
+        let mut args = vec![s("ls"), s("--json")];
         if all {
             args.push(s("--all"));
         }
@@ -69,42 +104,23 @@ impl Hc for HcCli {
     }
 
     fn get(&self, terminal: &str) -> Result<Value> {
-        self.call(&[s("get"), s(terminal)])
+        self.call(&[s("get"), s("--json"), s("--"), s(terminal)])
     }
 
     fn send(&self, terminal: &str, text: &str, if_idle: bool, force: bool) -> Result<Value> {
-        let mut args = vec![s("send")];
-        if if_idle {
-            args.extend([s("--if"), s("idle")]);
-        }
-        if force {
-            args.push(s("--force"));
-        }
-        args.extend([s(terminal), s(text)]);
-        self.call(&args)
+        self.call(&send_args(terminal, text, if_idle, force))
     }
 
     fn run(&self, spec: &RunSpec) -> Result<Value> {
-        let mut args = vec![s("run"), s("--bg"), s("--outlive-parent")];
-        if let Some(n) = &spec.name {
-            args.extend([s("--name"), n.clone()]);
-        }
-        if let Some(c) = &spec.cwd {
-            args.extend([s("--cwd"), c.clone()]);
-        }
-        for (k, v) in &spec.labels {
-            args.extend([s("--label"), format!("{k}={v}")]);
-        }
-        args.extend(spec.argv.iter().cloned());
-        self.call(&args)
+        self.call(&run_args(spec))
     }
 
     fn kill(&self, terminal: &str) -> Result<()> {
-        self.call(&[s("kill"), s(terminal)]).map(|_| ())
+        self.call(&[s("kill"), s("--json"), s("--"), s(terminal)]).map(|_| ())
     }
 
     fn interrupt(&self, terminal: &str) -> Result<()> {
-        self.call(&[s("interrupt"), s(terminal)]).map(|_| ())
+        self.call(&[s("interrupt"), s("--json"), s("--"), s(terminal)]).map(|_| ())
     }
 }
 
@@ -112,7 +128,8 @@ impl Hc for HcCli {
 pub fn app_from_argv(argv: &[String]) -> Option<String> {
     let first = argv.first()?;
     let base = first.rsplit(['\\', '/']).next().unwrap_or(first).to_lowercase();
-    let base = base.strip_suffix(".exe").unwrap_or(&base);
+    // Shim của npm/pnpm/bun trên Windows: claude.cmd, codex.ps1, …
+    let base = [".exe", ".cmd", ".bat", ".ps1"].iter().find_map(|ext| base.strip_suffix(ext)).unwrap_or(&base);
     Some(match base {
         "claude" => "claude-code".into(),
         "agy" => "antigravity".into(),
@@ -130,7 +147,7 @@ pub fn terminal_row_from(v: &Value) -> TerminalRow {
         .unwrap_or_default();
     // `hc ls` cho `status` là chuỗi + `agent`; `hc get`/sự kiện cho `status` là đối tượng.
     let reported_app = v["status"]["app"].as_str().map(String::from).or_else(|| {
-        v["agent"].as_str().filter(|a| !a.contains(['\\', '/'])).map(String::from)
+        v["agent"].as_str().and_then(|a| app_from_argv(&[a.to_string()]))
     });
     TerminalRow {
         address: str_of("address").unwrap_or_default(),

@@ -139,3 +139,61 @@ fn caller_detection() {
     assert!(matches!(actions::classify_caller(Some("t1b"), false, true, false), Caller::User { confirmed: false }));
     assert!(matches!(actions::classify_caller(None, false, false, true), Caller::Agent(None)));
 }
+
+#[test]
+fn agent_cannot_kill_unknown_or_unrecorded_app() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    let agent = Caller::Agent(Some("t9".into()));
+    // Terminal không có trong CSDL (daemon không chạy) → không rõ app → từ chối.
+    assert!(actions::kill(&store, &hc, &agent, "t77", 1).is_err());
+    // Shim npm chưa báo 7501: app đoán là "claude.cmd"/"node" → không phải opencode → từ chối.
+    term(&store, "t8", "node", Some("worker"));
+    assert!(actions::kill(&store, &hc, &agent, "t8", 1).is_err());
+    assert!(hc.calls.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn fresh_hc_app_overrides_stale_db_app() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    // CSDL nói opencode, nhưng hc get hiện báo claude-code → phải từ chối.
+    term(&store, "t3", "opencode", Some("worker"));
+    let hc = FakeHc { apps: vec![("t3".into(), "claude-code".into())], ..Default::default() };
+    assert!(actions::kill(&store, &hc, &Caller::Agent(None), "t3", 1).is_err());
+    assert!(hc.calls.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn detect_caller_fails_closed() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    // HC_TERMINAL_ID có nhưng hc get lỗi → coi là agent, kể cả có TTY và --yes.
+    let failing = FakeHc { fail_get: true, ..Default::default() };
+    assert!(matches!(actions::detect_caller(&store, &failing, Some("t9"), true, true), Caller::Agent(_)));
+    // Terminal là app agent (dù CSDL ghi reported=0) → agent.
+    let hc = FakeHc { apps: vec![("t9".into(), "claude-code".into())], ..Default::default() };
+    assert!(matches!(actions::detect_caller(&store, &hc, Some("t9"), true, true), Caller::Agent(_)));
+    // Shell của người dùng (pwsh, không báo 7501) + TTY → người dùng.
+    store.upsert_terminal(&TerminalRow { address: "t1b".into(), app: Some("pwsh".into()), state: "live".into(), ..Default::default() })?;
+    assert!(matches!(actions::detect_caller(&store, &FakeHc::default(), Some("t1b"), true, true), Caller::User { confirmed: true }));
+    // Không có HC_TERMINAL_ID + TTY → người dùng; không TTY → agent.
+    assert!(matches!(actions::detect_caller(&store, &FakeHc::default(), None, true, false), Caller::User { confirmed: false }));
+    assert!(matches!(actions::detect_caller(&store, &FakeHc::default(), None, false, true), Caller::Agent(None)));
+    Ok(())
+}
+
+#[test]
+fn reply_only_to_agent_questions_and_done_dismisses() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    let req = store.open_inbox(Some("t11"), "request", Some("kill"), "t9 đề nghị kill t11", 1)?.unwrap();
+    // Trả lời một "đề nghị" không được gõ chữ vào phiên Claude t11.
+    assert!(actions::reply(&store, &hc, req, "đồng ý", 2).is_err());
+    assert!(hc.calls.borrow().is_empty());
+    let budget = store.open_inbox(None, "budget", Some("soft"), "Ngân sách task:a vượt mềm", 1)?.unwrap();
+    actions::dismiss(&store, req, 3)?;
+    actions::dismiss(&store, budget, 3)?;
+    assert!(store.inbox(true)?.is_empty());
+    Ok(())
+}

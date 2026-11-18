@@ -28,3 +28,13 @@ fn ask_error_status_is_error() -> anyhow::Result<()> {
     assert!(record(&store, &out, "q", None, 1).is_err());
     Ok(())
 }
+
+#[test]
+fn ask_failure_still_records_usage_and_model_is_not_invented() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let out = json!({"status": "TIMEOUT", "response": "", "usage": {"input_tokens": 500, "output_tokens": 0}});
+    assert!(record(&store, &out, "q", None, 7).is_err());
+    let (n, model): (i64, Option<String>) = store.conn().query_row("SELECT COUNT(*), MAX(model) FROM usage", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    assert_eq!((n, model), (1, None));
+    Ok(())
+}

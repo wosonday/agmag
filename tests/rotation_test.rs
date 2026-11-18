@@ -151,3 +151,64 @@ fn rotation_respects_policy_off() -> Result<()> {
     assert_eq!(n, 0);
     Ok(())
 }
+
+#[test]
+fn rotation_at_max_workers_replaces_old_worker() -> Result<()> {
+    let store = setup("opencode", "idle")?;
+    let mut cfg = Config::builtin();
+    cfg.policy.max_workers = 1; // thợ cũ là thợ duy nhất
+    let hc = FakeHc::default();
+    let git = FakeGit { touched: Some("abc".into()), clean: true, ..Default::default() };
+    rotation::tick(&store, &cfg, &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &cfg, &hc, &git, MIN)?;
+    assert_eq!(state(&store), "done", "{:?}", hc.calls.borrow());
+    assert_eq!(store.terminal("t1")?.unwrap().state, "finished");
+    Ok(())
+}
+
+#[test]
+fn rotation_prechecks_before_kill() -> Result<()> {
+    let store = setup("opencode", "idle")?;
+    // Ngân sách cứng đã vượt → không được mở phiên mới → KHÔNG được kill phiên cũ.
+    store.set_budget(&agmag::store::BudgetRow { scope: "task:a".into(), unit: "tokens".into(), soft: 0.0, hard: 0.0, action: "notify".into() })?;
+    let hc = FakeHc::default();
+    let git = FakeGit { touched: Some("abc".into()), clean: true, ..Default::default() };
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?;
+    assert_eq!(state(&store), "failed");
+    assert!(!hc.calls.borrow().iter().any(|c| c.starts_with("kill")), "{:?}", hc.calls.borrow());
+    assert_eq!(store.terminal("t1")?.unwrap().state, "live");
+    Ok(())
+}
+
+#[test]
+fn failed_rotation_is_not_retried_automatically() -> Result<()> {
+    let store = setup("opencode", "idle")?;
+    let hc = FakeHc::default();
+    let git = FakeGit { touched: None, clean: true, ..Default::default() };
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?; // thất bại
+    let sends_before = hc.calls.borrow().len();
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 2 * MIN)?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 3 * MIN)?;
+    let n: i64 = store.conn().query_row("SELECT COUNT(*) FROM rotations", [], |r| r.get(0))?;
+    assert_eq!(n, 1);
+    assert_eq!(hc.calls.borrow().len(), sends_before);
+    // Người dùng chủ động xoay lại thì được.
+    assert!(rotation::start(&store, "t1", None, true, 4 * MIN)?);
+    Ok(())
+}
+
+#[test]
+fn rotation_fails_early_without_cwd() -> Result<()> {
+    let store = setup("opencode", "idle")?;
+    store.conn().execute("UPDATE terminals SET cwd = NULL", [])?;
+    let hc = FakeHc::default();
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 0)?;
+    assert_eq!(state(&store), "failed");
+    assert!(hc.calls.borrow().is_empty());
+    Ok(())
+}

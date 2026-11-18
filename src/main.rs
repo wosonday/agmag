@@ -86,6 +86,8 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Đóng một mục hộp thư (không gõ gì vào terminal nào)
+    Done { id: i64 },
     /// Trả lời một mục hộp thư (gõ vào terminal liên quan)
     Reply {
         id: i64,
@@ -190,7 +192,7 @@ pub(crate) fn now_ms() -> i64 {
 fn agm_home() -> PathBuf {
     std::env::var_os("AGM_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().expect("không tìm thấy thư mục home").join(".agmag"))
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".agmag"))
 }
 
 fn roots() -> Roots {
@@ -222,14 +224,16 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let home = agm_home();
     let cfg_path = home.join("providers.toml");
-    let cfg = Config::load(&cfg_path).with_context(|| format!("đọc cấu hình {}", cfg_path.display()))?;
+    // Chỉ nạp cấu hình khi lệnh cần: `policy off`, `kill`, `inbox`, `done` phải chạy được cả khi providers.toml hỏng.
+    let cfg = || Config::load(&cfg_path).with_context(|| format!("đọc cấu hình {}", cfg_path.display()));
     let store = Store::open(&home.join("agm.db"))?;
     let json = cli.json || !std::io::stdout().is_terminal();
     let now = now_ms();
 
     let reads = matches!(cli.cmd, Cmd::Scan { .. } | Cmd::Ls { .. } | Cmd::Cost { .. } | Cmd::Quota | Cmd::Log { .. });
     let scan_days = match cli.cmd {
-        Cmd::Scan { days } => days,
+        Cmd::Scan { days } => days.clamp(0, 36_500),
+        Cmd::Ls { days } | Cmd::Cost { days, .. } => days.clamp(0, 36_500).max(SCAN_DAYS),
         _ => SCAN_DAYS,
     };
     let stats = if reads { scan(&store, now - scan_days * DAY_MS)? } else { Default::default() };
@@ -243,7 +247,7 @@ fn run(cli: Cli) -> Result<()> {
             emit(json, &serde_json::json!({ "applied": n }), || println!("Đã nạp {n} sự kiện."))
         }
         Cmd::Daemon { interval, replay: None } => {
-            ops::daemon_loop(&store, &cfg, interval, |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ()))
+            ops::daemon_loop(&store, &cfg()?, interval, |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ()))
         }
         Cmd::Ps { all } => {
             let rows = store.terminals(!all)?;
@@ -251,10 +255,14 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Send { to, kind, task, text } => ops::send(&store, &to, &kind, task.as_deref(), &text.join(" "), json, now),
         Cmd::Inbox { all } => ops::inbox(&store, all, json),
+        Cmd::Done { id } => {
+            agmag::actions::dismiss(&store, id, now)?;
+            emit(json, &serde_json::json!({ "done": id }), || println!("Đã đóng mục #{id}."))
+        }
         Cmd::Reply { id, text } => ops::reply(&store, id, &text.join(" "), now),
         Cmd::Spawn { template, task, role, name, cwd, text } => {
             let text = (!text.is_empty()).then(|| text.join(" "));
-            ops::spawn(&store, &cfg, &agmag::actions::SpawnReq { template, task, role, name, cwd, text }, now)
+            ops::spawn(&store, &cfg()?, &agmag::actions::SpawnReq { template, task, role, name, cwd, text }, now)
         }
         Cmd::Kill { target, yes } => ops::stop(&store, &target, "kill", yes, now),
         Cmd::Interrupt { target, yes } => ops::stop(&store, &target, "interrupt", yes, now),
@@ -275,8 +283,9 @@ fn run(cli: Cli) -> Result<()> {
             s => {
                 store.set_setting("policy", s)?;
                 store.log_action(&ops::hc_terminal().unwrap_or_else(|| "user".into()), "policy", s, "", true, now)?;
-                println!("policy: {}", if s == "on" { "bật" } else { "TẮT — không còn hành động tự động" });
-                Ok(())
+                emit(json, &serde_json::json!({ "enabled": s == "on" }), || {
+                    println!("policy: {}", if s == "on" { "bật" } else { "TẮT — không còn hành động tự động" })
+                })
             }
         },
         Cmd::Link { terminal, session } => ops::link(&store, &terminal, &session),
@@ -286,7 +295,7 @@ fn run(cli: Cli) -> Result<()> {
             let text = agmag::ask::record(&store, &out, &q, model.as_deref(), now)?;
             emit(json, &out, || println!("{text}"))
         }
-        Cmd::Tui { refresh } => tui::run(&store, &cfg, refresh, |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ())),
+        Cmd::Tui { refresh } => tui::run(&store, &cfg()?, refresh, |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ())),
         Cmd::Scan { .. } => emit(json, &stats_json(&stats), || {
             println!(
                 "Đã quét {} tệp, {} dòng mới ({} sự kiện, {} dòng loại lạ, {} dòng hỏng).",
@@ -294,11 +303,11 @@ fn run(cli: Cli) -> Result<()> {
             )
         }),
         Cmd::Ls { days } => {
-            let rows = report::sessions(&store, &cfg, now - days * DAY_MS)?;
+            let rows = report::sessions(&store, &cfg()?, now - days.clamp(0, 36_500) * DAY_MS)?;
             emit(json, &rows, || print_sessions(&rows))
         }
         Cmd::Cost { by, days } => {
-            let rows = report::cost(&store, &cfg, by, now - days * DAY_MS)?;
+            let rows = report::cost(&store, &cfg()?, by, now - days.clamp(0, 36_500) * DAY_MS)?;
             emit(json, &rows, || print_cost(&rows, by))
         }
         Cmd::Quota => {
@@ -309,6 +318,9 @@ fn run(cli: Cli) -> Result<()> {
             let turns = report::turns(&store, &session, limit)?;
             if full {
                 let (_, path) = report::resolve_session(&store, &session)?;
+                if path.starts_with("opencode://") || path.starts_with("agy://") {
+                    anyhow::bail!("--full chỉ dùng cho phiên Codex/Claude (log jsonl); phiên này lưu trong CSDL của {}", path.split(':').next().unwrap_or(""));
+                }
                 let raw = turns
                     .iter()
                     .map(|t| raw_line(&path, t.byte_offset))

@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, io::ErrorKind, path::Path};
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{Source, Usage};
 
-#[derive(Deserialize, Clone, Copy, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Billing {
     Subscription,

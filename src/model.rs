@@ -16,7 +16,7 @@ impl Source {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
     pub input_uncached: u64,
     pub cache_read: u64,

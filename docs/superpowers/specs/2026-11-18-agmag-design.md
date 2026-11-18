@@ -143,11 +143,19 @@ Bảng chính (người làm tự chọn kiểu cột cụ thể, chỉ mục, m
 - `actions` — nhật ký mọi can thiệp (ai/cái gì kích hoạt, lệnh `hc` gửi đi, kết quả).
 - `log_cursors` — tệp, offset, inode/size/mtime để phát hiện tệp bị thay.
 
-### 5.5. Bảng giá và chi phí
+### 5.5. Hạn mức gói tháng, bảng giá và chi phí
 
-`~/.agmag/prices.toml`: mỗi model có giá / 1M token cho input, cached input (cache read), cache write, output (reasoning tính như output nếu không có giá riêng). Có thể đặt **bí danh** (`gpt-5.5-codex` → mục giá). Model chưa có giá → chi phí hiện "?" kèm số token, **không** tính bằng 0. Gói thuê bao (Claude Max, ChatGPT Pro) có thể đánh dấu `billing = "subscription"`: vẫn hiện "chi phí tương đương API" nhưng tách riêng khỏi tiền thật.
+**Cách người dùng trả tiền (đã chốt 2026-11-18):** Claude, ChatGPT/Codex và agy/Gemini đều là **gói tháng Pro**. Vì vậy thước đo chính của "tiết kiệm" là **% hạn mức của từng gói theo cửa sổ thời gian**, không phải USD. Tiết kiệm nghĩa là: không chạm trần trước giờ reset, và đẩy việc cơ khí sang model rẻ hơn (OpenCode/agy) để giữ hạn mức của model đắt (Claude Opus, Codex).
 
-Giá mặc định đi kèm phải được người dùng xác nhận; agmag không tự lấy giá từ mạng ở v1.
+`~/.agmag/providers.toml` khai báo mỗi nhà cung cấp:
+
+- `billing = "subscription"` (claude, codex, agy) hoặc `"api"` (mặc định cho provider của OpenCode như OpenRouter/Ollama Cloud — **quyết định của người viết thiết kế**, người dùng chưa nói, sửa được).
+- Với `subscription`: các cửa sổ hạn mức (ví dụ `5h`, `7d`) và nguồn số liệu:
+  - **Codex — đã kiểm:** sự kiện `token_count` trong rollout `.jsonl` có `rate_limits` {`primary`: `used_percent`, `window_minutes: 300`, `resets_at`; `secondary`: `window_minutes: 10080`, …}. Đọc thẳng, chính xác.
+  - **Claude Code — chưa kiểm (P0):** log `.jsonl` không có hạn mức. Kiểm dữ liệu JSON mà Claude Code đưa cho lệnh statusline có trường hạn mức không; nếu có, `agm` cung cấp lệnh `agm hook statusline` để người dùng nối (bọc statusline hiện có, không thay). Nếu không: **ước lượng** = token trong cửa sổ ÷ mức trần do người dùng hiệu chỉnh, và hiện rõ chữ "ước lượng".
+  - **agy — chưa kiểm (P0):** tìm trong dữ liệu của agy; không có thì ước lượng như Claude.
+- Với `api`: `prices.toml` giá / 1M token cho input, cached input, cache write, output (reasoning tính như output nếu không có giá riêng); bí danh tên model. Model chưa có giá → "?" kèm số token, **không** tính bằng 0. agmag không tự lấy giá từ mạng ở v1.
+- Với `subscription` vẫn có thể hiện thêm "chi phí tương đương API" nếu có giá, nhưng tách riêng và không dùng cho ngân sách.
 
 ### 5.6. Lệnh CLI
 
@@ -171,7 +179,9 @@ Tất cả in JSON khi đi qua đường ống, văn bản bảng khi ra màn h�
 ### 5.7. Chính sách (policy)
 
 - **Hạn mức thợ**: số terminal đang sống có nhãn `agm.role=worker` ≤ `max_workers` (mặc định đọc `MAX_WORKERS` từ `.agents/bot.env` nếu có).
-- **Ngân sách**: khi tổng của phạm vi vượt ngưỡng mềm → một mục trong TUI + gửi tin `LỖI`/cảnh báo ngắn cho quản lý (`codex-mgr` hoặc tên cấu hình). Vượt ngưỡng cứng → hành động cấu hình: `notify` (mặc định) | `interrupt` | `kill`; luôn từ chối `spawn` mới trong phạm vi đó.
+- **Ngân sách** có hai loại đơn vị: **% hạn mức gói** (cho provider `subscription`, ví dụ "Claude 5h ≤ 80%", "Codex tuần ≤ 90%") và **token/USD** (theo đầu việc, hoặc provider `api`). Ngân sách theo đầu việc tính bằng token, vì một đầu việc không sở hữu hạn mức gói.
+- **Bảo vệ hạn mức** (mục tiêu tiết kiệm chính): khi một gói vượt ngưỡng mềm của cửa sổ → cảnh báo kèm giờ reset và gợi ý chuyển việc cơ khí sang bậc rẻ hơn; `agm spawn` một template dùng gói đó sẽ hỏi lại (CLI in cảnh báo, agent gọi thì từ chối trừ khi có `--force`).
+- Khi ngưỡng mềm bị vượt → một mục trong TUI + (nếu đã cấu hình tên quản lý, ví dụ `codex-mgr`) gửi tin cảnh báo ngắn cho quản lý; mặc định chỉ vào hộp thư người dùng. Vượt ngưỡng cứng → hành động cấu hình: `notify` (mặc định) | `interrupt` | `kill`; luôn từ chối `spawn` mới trong phạm vi đó.
 - Vì quan sát là **sau khi tiêu**, ngưỡng cứng có thể bị vượt quá một lượt; tài liệu và TUI nói rõ điều này.
 - **Gợi ý bậc model** (chỉ gợi ý): ví dụ thợ bậc Mạnh mà lượt gần nhất ngắn và không lỗi → gợi ý hạ; thợ CHƯA ĐẠT 2 lần → gợi ý nâng. Luật cụ thể là đề xuất, người làm có thể đơn giản hóa.
 - Mọi hành động tự động có công tắc tắt toàn cục (`agm policy off`) — "nút dừng khẩn".
@@ -179,14 +189,17 @@ Tất cả in JSON khi đi qua đường ống, văn bản bảng khi ra màn h�
 ### 5.8. TUI
 
 ```
-┌ agmag ─ hôm nay $4.12 (API $3.20 · thuê bao ~$11.40) ──────── daemon ● ┐
-│ TERMINALS                         model            tok     $     task  │
-│ ● t11 arch        claude working  opus-5.5      1.2M   2.10  login-7 │
-│ ○ t1f w-login-7-1 opencode idle   qwen3-coder   340k   0.08  login-7 │
-│ ! t16 review      claude BLOCKED  opus-5.5       90k   0.40  login-7 │
-│ · (ngoài core) codex  3 phiên                   2.1M   1.54   —      │
-├ NGÂN SÁCH ─────────────────────────────────────────────────────────────┤
-│ login-7   ██████▓░░░ 62% / $5    ngày  ███░░░░░░░ 31% / $20            │
+┌ agmag ───────────────────────────────────────────────────── daemon ● ┐
+├ HẠN MỨC GÓI ───────────────────────────────────────────────────────────┤
+│ codex  5h ██▓░░░░░░░ 22% reset 15:29 · tuần ████████░░ 79% reset T6  │
+│ claude 5h █████░░░░░ ~48% (ước lượng) · agy 5h ? (chưa đo được)       │
+├ TERMINALS                         model            tok   task         ┤
+│ ● t11 arch        claude working  opus-5.5      1.2M   login-7        │
+│ ○ t1f w-login-7-1 opencode idle   qwen3-coder   340k   login-7 $0.08  │
+│ ! t16 review      claude BLOCKED  opus-5.5       90k   login-7        │
+│ · (ngoài core) codex  3 phiên                   2.1M    —             │
+├ NGÂN SÁCH ĐẦU VIỆC ────────────────────────────────────────────────────┤
+│ login-7   ██████▓░░░ 62% / 3M tok                                      │
 ├ HỘP THƯ (2) ─ TIN GẦN ĐÂY ─────────────────────────────────────────────┤
 │ ! t16 hỏi quyền: chạy `cargo test`?                                    │
 │ 10:41 codex-mgr → w-login-7-1  GIAO  login-7  .agents/tasks/login-7.md │
@@ -236,4 +249,15 @@ Mỗi giai đoạn dùng được ngay sau khi xong (P1 đã trả lời đượ
 2. agy tương tác: định dạng `conversations/` và `conversation_summaries.db`; có tách được token không.
 3. Dạng `data` của sự kiện `status`, `turn` trong `events.subscribe`.
 4. Codex/Claude có ghi biến môi trường hoặc gì đó để ghép chắc chắn với terminal không (mục 5.3 bước 1).
-5. Giá hiện hành của từng model đang dùng (người dùng xác nhận).
+5. Claude Code và agy có cung cấp số % hạn mức gói ở đâu đó đọc được không (statusline JSON, tệp trạng thái); nếu không, cách hiệu chỉnh ước lượng.
+6. `agm send` biết ai đang gửi bằng cách nào (tham số `caller` của `terminal.send`, biến môi trường hc đặt cho terminal).
+7. Giá của các provider `api` cho OpenCode (người dùng xác nhận).
+
+## 10. Quyết định do người viết thiết kế tự chốt (người dùng kiểm khi đọc)
+
+- Một agmag dùng chung cho mọi dự án; đầu việc/ngân sách tìm bằng cách đi ngược từ `cwd` của terminal lên `.agents/` gần nhất.
+- Cảnh báo mặc định vào hộp thư người dùng; chỉ gửi cho terminal quản lý khi đã cấu hình tên.
+- Provider của OpenCode mặc định `billing = "api"`.
+- Ngân sách đầu việc tính bằng token; ngân sách gói tính bằng % hạn mức.
+- Ngưỡng cứng mặc định chỉ `notify`, không tự ngắt/kill.
+- CSDL lưu tóm tắt lượt + con trỏ tới log gốc, không chép toàn bộ hội thoại.

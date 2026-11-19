@@ -1,76 +1,103 @@
-# Chỉ dẫn làm việc với đội agent (phiên bản 3.2: Claude + Codex + OpenCode + Google Gemini + HERDR + herdr-mesh)
+# Chỉ dẫn làm việc với đội agent (phiên bản 3.4: Claude + Codex + OpenCode + GitHub Copilot + Google Gemini / agy + HERDR + agm)
 
-Chỉ dẫn dùng chung cho dự án code hoặc việc khác (tài liệu, báo cáo, phân tích). Quy tắc riêng của dự án (`CLAUDE.md`, `AGENTS.md`) luôn ưu tiên hơn chỉ dẫn này.
+Chỉ dẫn dùng chung cho dự án code hoặc việc khác (tài liệu, báo cáo, phân tích).
 
-> **Cập nhật 3.2 (2026-11-18):** model Google nhận vai Tìm kiếm/research (Gemini qua Antigravity CLI `agy`) và vai Media mới (ảnh 2D, tài nguyên 3D, video qua API) — mục 1, 2.2; cách cài/nâng cấp OpenCode v2 (`@opencode/cli`, tự cập nhật, bẫy dịch vụ nền trên Windows) và nơi v2 lưu đăng nhập — mục 2.1. Với MATHY-AI, bản vận hành chính thức nằm ở `HARNESSING.md` §5.3, §5.7.
+> **Thứ tự ưu tiên tài liệu (từ cao xuống thấp):** `AGENTS.md` / `CLAUDE.md` của từng dự án **>** `AGENTS-TUTORIAL.md` (quy tắc cứng, quyền & cổng phát hành) **>** [BOT-CEO.md](BOT-CEO.md) (mở rộng khi tách nhiều lane) **>** [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md) (hạ tầng `agm`/`hc`).
 
-> **Cập nhật 3.1 (2026-11-17, bổ sung 2026-11-18):** thêm mục 4.2.1, gồm kết quả chạy `hc` (herdr-core 0.1.21) trên máy thật Windows 11: lệnh, dạng JSON, sự kiện, quy tắc tên; bổ sung mục 4.3 và phần "Chưa xác minh". Chi tiết về bot (template, script, dọn dẹp) nằm ở [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md).
+> **Cập nhật 3.4 (2026-11-19):**
+> - **Bảo toàn hạn mức Claude Code:** chỉ mở Claude Code cho **Kiến trúc sư / BOT-CEO** (và ca leo thang rủi ro cao). **Reviewer mặc định chuyển sang OpenCode** (ví dụ `openai/gpt-6.1-sol` hoặc model mạnh tương đương), kết hợp **Opus High qua `agy`** làm vai **đồng trao đổi / phản biện** trước khi chốt duyệt.
+> - **Tận dụng tối đa model miễn phí:** giao hẳn **Audit**, **tìm kiếm trong repo / tóm tắt log dài**, **thợ bậc Nhanh (`worker-fast`)** và **sàng lọc quy ước trước Reviewer** cho model miễn phí (`opencode/deepseek-v4.1-flash-free`, OpenRouter `:free`, Ollama cục bộ `num_ctx ≥ 64k`) theo cơ chế thang leo.
+> - **Cập nhật tài liệu tự động theo cổng:** **Gemini 4 Hydrogen Medium** (`gemini-4-hydrogen-medium` qua `agy`) nhận lệnh cập nhật docs khi có thay đổi **sau khi Reviewer đã duyệt/chỉnh sửa và trước khi gọi GitHub Copilot**.
+> - **Cố vấn kỹ thuật & tối ưu Harnessing:** **Gemini Argon** (`gemini-4-argon-*` qua `agy`) đóng vai trò cố vấn kỹ thuật giống Codex, với trách nhiệm đặc thù là cập nhật và tối ưu hóa hệ thống harnessing giữa các phiên để khắc phục những vấn đề lớn của phiên trước (bao gồm hiệu chỉnh phân bậc `tier:` cho model miễn phí).
+> - **Bỏ phần ảnh 2D/3D và video** khỏi chỉ dẫn chung (nếu dự án nào cần, sẽ tối ưu riêng trong harness của dự án đó).
+> - **Điều phối nền bằng `agm` (`agmag` v0.2.0):** thay cơ chế theo dõi/giao tiếp thủ công trong `herdr-core` bằng `agm` (`agm daemon`, `agm spawn`, `agm send`, `agm ask`, `agm inbox`, `agm tui`, xoay vòng và ngân sách). Chi tiết xem [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md).
+> - **Mô hình đa mảng (BOT-CEO):** với dự án lớn cần tách nhiều mảng độc lập để tránh phình ngữ cảnh, xem [BOT-CEO.md](BOT-CEO.md).
+
+> **Cập nhật 3.3 (2026-11-18):** giao quản lý phiên bản Git cho **GitHub Copilot**: tích hợp nhánh, lịch sử, revert và dọn nhánh đã tích hợp. Với MATHY-AI, Copilot nhận vai bot GIT theo [GIT_BOT.md](docs/harness/GIT_BOT.md).
+
+> **Cập nhật 3.2 (2026-11-18):** cách cài/nâng cấp OpenCode v2 (`@opencode/cli`, tự cập nhật, bẫy dịch vụ nền trên Windows) và nơi v2 lưu đăng nhập — mục 2.1. Với MATHY-AI, bản vận hành chính thức nằm ở `HARNESSING.md` §5.3, §5.7.
+
+> **Cập nhật 3.1 (2026-11-17, bổ sung 2026-11-18):** thêm mục 4.2.1, gồm kết quả chạy `hc` (herdr-core 0.1.21) trên máy thật Windows 11.
 
 ## 0. Tóm tắt mô hình
 
 - **Mỗi phiên OpenCode = một lập trình viên riêng**, làm trên một git worktree riêng, nên nhiều feature chạy song song mà không đè lên nhau.
-- **Việc cơ khí** (viết code theo đặc tả, sửa lỗi nhỏ, chạy test, tìm kiếm, đổi tên, cập nhật tài liệu) giao cho OpenCode. Model của từng phiên có thể đổi bất cứ lúc nào theo yêu cầu của Codex hoặc Opus.
-- **Kiến trúc sư** (Opus 5.5 Extra hoặc Fable 5.2) quyết định hướng đi và rủi ro.
-- **Reviewer** (Opus 5.5 High) duyệt kết quả.
+- **Việc cơ khí** (viết code theo đặc tả, sửa lỗi nhỏ, chạy test, tìm trong repo, đổi tên) giao cho OpenCode. Model của từng phiên có thể đổi bất cứ lúc nào theo yêu cầu của Codex hoặc Opus.
+- **Kiến trúc sư** (Claude Code: Opus 5.5 Extra hoặc Fable 5.2; khi tách nhiều mảng thì mỗi lane là một **BOT-CEO** theo `BOT-CEO.md`) quyết định hướng đi và rủi ro. **Claude Code chỉ mở cho vai Kiến trúc sư / BOT-CEO** và ca leo thang rủi ro cao.
+- **Đồng trao đổi / phản biện trước duyệt** (**Opus High qua `agy`**) trao đổi phương án với Kiến trúc sư hoặc rà trước kết quả để giữ góc nhìn Opus mà không tốn hạn mức Claude Code.
+- **Reviewer mặc định** chạy qua **OpenCode** (ví dụ `openai/gpt-6.1-sol` hoặc model mạnh trên OpenRouter; chỉ leo thang về Claude Opus 5.5 High khi đụng bảo mật, dữ liệu, migration DB, kiến trúc lớn hoặc `CHƯA ĐẠT` 2 lần liên tiếp).
+- **Cập nhật tài liệu (Docs)** (**Gemini 4 Hydrogen Medium** qua `agy`) nhận lệnh cập nhật docs khi có thay đổi, thực hiện **sau khi nhánh đã qua Reviewer / chỉnh sửa xong và trước khi gọi GitHub Copilot**.
 - **Codex** là kỹ sư cố vấn và **quản lý các phiên OpenCode**: giao việc, theo dõi, gỡ vướng, đổi model/phiên.
+- **Gemini Argon** (`gemini-4-argon-*` qua `agy`) đóng vai trò **cố vấn kỹ thuật** tương tự Codex, nhưng phụ trách phần đặc thù là **cập nhật và tối ưu hóa các harnessing** (`AGENTS.md`, `CLAUDE.md`, `.agents/`, template, skill, cổng kiểm) để các phiên sau cải thiện được những vấn đề lớn của phiên trước.
+- **GitHub Copilot quản lý phiên bản Git:** nhận nhánh và SHA đã qua kiểm tra (và đã cập nhật docs nếu có) để tích hợp; xử lý lịch sử, revert/rollback và dọn nhánh trong phạm vi được cho phép.
 - **Mọi agent ghi nhật ký và lưu tệp `.md` ngay trên nhánh đang làm**, commit cùng với code, và kiểm các thay đổi bằng git trước khi bàn giao (mục 3.3).
-- Các agent trao đổi qua **herdr-mesh** (máy chủ MCP bọc CLI của herdr). Các phiên được chạy và quan sát qua **HERDR TUI** (người dùng điều khiển) và **herdr-core** (bot chạy nền).
+- Các phiên chạy trong **herdr / herdr-core (`hc`)**, được theo dõi, gửi tin có ghi sổ, giới hạn ngân sách và xoay vòng qua **`agm`** (bộ điều khiển `agmag`, mục 3.2 và 4.2); `herdr-mesh` chỉ dùng bổ sung nếu chạy trong HERDR TUI độc lập. Khi trao đổi với Kiến trúc sư/BOT-CEO, người dùng mở thẳng phiên trong HERDR và chat trực tiếp (kèm `agm manage`), còn `agm` lo đo token, hộp thư và `agm ask` một lượt.
 
 ### 0.1. Kiến trúc tổng thể
 
 ```
-                 HERDR (APP cho người / core cho bot)
+             HERDR / herdr-core (hc) + agm (daemon, TUI, sổ sách, policy)
                               |
-                      HERDR-MESH (MCP)
-                              |
-              ORCHESTRATOR (Kiến trúc sư + Codex quản lý)
+              ORCHESTRATOR & CỐ VẤN
+              (Kiến trúc sư / BOT-CEO · Codex quản lý · Gemini Argon cố vấn & harness)
                               |
           +-------------------+-------------------+
           |                   |                   |
           v                   v                   v
-   Research Agent       Developer Agent      Reviewer Agent
-   (Tìm kiếm)           (Thợ cơ khí)         (Reviewer)
-          |                   |                   |
-   model nhanh/tra cứu   model code (Codex      Opus High
-   (vd. Gemini)          hoặc model OpenCode)   (GPT: ý kiến thứ hai)
+   Research / Audit     Developer Agent      Pre-Review / Reviewer
+   (Miễn phí / Gemini)  (Thợ cơ khí)         - Đồng trao đổi: agy Opus High
+   - agy / explore      - worker-fast: :free - Reviewer: OpenCode (gpt-6.1-sol)
+   - Audit: :free/local - mid/strong: trả phí  (rủi ro cao -> leo thang Claude)
           |                   |                   |
           +-------------------+-------------------+
                               |
               GIT WORKSPACE (mỗi phiên một worktree + nhánh)
                               |
-               TEST / VALIDATION (Audit: test, build, lint)
+               TEST / VALIDATION (Audit + Pre-check: model miễn phí)
+                              |
+               PRE-REVIEW & REVIEWER (agy Opus High -> OpenCode Reviewer)
+                              |
+               DOCS UPDATE (Gemini 4 Hydrogen Medium, nếu có thay đổi)
+                              |
+               GIT INTEGRATION (GitHub Copilot, đúng SHA)
+                              |
+               HARNESS RETRO & OPTIMIZATION (Gemini Argon cho phiên sau)
                               |
                FINAL REPORT (Codex tổng hợp, mục 8)
 ```
 
 Cách đọc sơ đồ:
 
-1. **HERDR** là nơi chạy và quan sát mọi phiên; **herdr-mesh** là kênh liên lạc duy nhất giữa các agent (mục 3.2).
-2. **Orchestrator** gồm hai vai đã định nghĩa ở mục 1: Kiến trúc sư (phương án, rủi ro, tiêu chí) và Codex (chia việc, giao việc, đổi model). Orchestrator không tự làm phần việc chính.
-3. **Ba nhánh làm việc** ứng với các vai ở mục 1:
-   - _Research Agent_ = vai Tìm kiếm (chỉ đọc). Dùng **model Google** (Gemini) qua Antigravity CLI `agy` cho tìm kiếm web/research; tìm trong mã của repo có thể dùng OpenCode `explore` với model rẻ (mục 2.2).
-   - _Developer Agent_ = vai Thợ cơ khí. Có thể là phiên OpenCode ở bậc nào tùy mức khó; với việc khó, Codex có thể mở thêm một phiên Codex CLI trong worktree riêng như một thợ bậc Mạnh (Codex vẫn không sửa code của thợ khác).
-   - _Reviewer Agent_ = vai Reviewer. Mặc định Opus High. Khi cần ý kiến độc lập (việc chạm bảo mật/dữ liệu, hoặc hai lần CHƯA ĐẠT liên tiếp), thêm một phiên GPT duyệt song song; kết luận cuối vẫn thuộc Reviewer Opus High và Kiến trúc sư.
-4. **Git workspace:** mọi kết quả đi qua nhánh/worktree; không agent nào ghi thẳng vào nhánh chung.
+1. **HERDR / herdr-core (`hc`)** là nơi chạy và quan sát mọi phiên; **`agm`** là kênh giao tiếp ghi sổ (`agm send`), hộp thư (`agm inbox`), theo dõi token/ngữ cảnh, áp ngân sách và xoay vòng phiên (mục 3.2, 4.2).
+2. **Orchestrator & Cố vấn** gồm ba nhánh trách nhiệm ở mục 1: Kiến trúc sư (hoặc từng BOT-CEO theo mảng trong `BOT-CEO.md`), Codex (chia việc, giao việc, đổi model thợ OpenCode), và **Gemini Argon** (cố vấn kỹ thuật + tổng kết vấn đề lớn để cập nhật, tối ưu harnessing cho phiên sau). Orchestrator không tự làm phần việc code chính của thợ.
+3. **Ba nhánh thực thi chính:**
+   - *Research / Audit Agent* = vai Tìm kiếm & Kiểm tra (chỉ đọc mã / chạy lệnh). Dùng **Google Gemini** (`agy` / `agm ask`) cho tìm kiếm web; tìm trong repo, tóm tắt log dài và **Audit** dùng **model miễn phí** trong OpenCode (`:free`, `deepseek-v4.1-flash-free`, Ollama cục bộ) để tiết kiệm hạn mức.
+   - *Developer Agent* = vai Thợ cơ khí. Mặc định giao việc hẹp/rõ cho `worker-fast` (model miễn phí); lỗi 2 lần hoặc việc khó nâng lên bậc `vừa`/`mạnh` hoặc Codex CLI trong worktree riêng.
+   - *Pre-Review & Reviewer:* Dùng **Opus High qua `agy`** để đồng trao đổi/rà trước; **Reviewer mặc định chạy qua OpenCode** (`openai/gpt-6.1-sol` hoặc model mạnh, tách hẳn khỏi phiên Claude Code để tiết kiệm hạn mức và giữ khách quan). Chỉ leo thang lên **Claude Code Opus 5.5 High** với ca rủi ro cao (bảo mật/dữ liệu/migration/2 lần `CHƯA ĐẠT`).
+4. **Git workspace & Docs Update:** mọi kết quả đi qua nhánh/worktree. Sau khi nhánh qua Reviewer (và đã chỉnh sửa xong nếu có lỗi), **Gemini 4 Hydrogen Medium** nhận lệnh cập nhật docs khi có thay đổi và commit trên nhánh đó trước khi chuyển SHA cho GitHub Copilot.
 5. **Test / Validation** là cổng Audit ở mục 6; chưa đạt thì quay lại Developer Agent (lỗi chuyển nguyên văn).
-6. **Final report** theo mẫu mục 8.
+6. **Harness Optimization & Final Report:** Gemini Argon rút kinh nghiệm vấn đề lớn để tối ưu harness cho phiên kế tiếp; Codex tổng hợp báo cáo cuối theo mục 8.
 
 ## 1. Vai trò và model
 
-| Cấp | Vai                      | Model đề xuất                                                      | Công cụ                                                                         | Quyền                                                        | Việc                                                                                                                                                                             |
-| --- | ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Kiến trúc sư             | Opus 5.5 Extra hoặc Fable 5.2                                      | Claude Code (`/model`)                                                          | Chỉ đọc                                                      | Phương án, rủi ro, tiêu chí đạt; chẩn đoán lỗi khó; đánh giá SẴN SÀNG trước phát hành                                                                                            |
-| 2   | Reviewer                 | Opus 5.5 High                                                      | Claude Code                                                                     | Chỉ đọc                                                      | Duyệt độ đúng, phạm vi, quy ước; báo ĐẠT/CHƯA ĐẠT, lỗi theo mức Nghiêm trọng/Lớn/Nhỏ kèm vị trí và cách sửa                                                                      |
-| 2   | Quản lý kỹ thuật (Codex) | Codex (model mạnh nhất sẵn có)                                     | Codex CLI                                                                       | Đọc, ghi hạn chế (chỉ tệp điều phối, không sửa code của thợ) | Biến phương án của Kiến trúc sư thành đầu việc cụ thể; giao việc và giám sát các phiên OpenCode; cố vấn kỹ thuật; quyết định đổi model/phiên; tích hợp (merge) sau khi Audit đạt |
-| 3   | Thợ cơ khí               | Do Codex chọn theo mức khó (xem mục 2)                             | OpenCode trong worktree riêng                                                   | Sửa trong phạm vi được giao                                  | Viết/sửa code hoặc nội dung đúng đặc tả; báo đã đổi gì và đã tự kiểm gì                                                                                                          |
-| 4   | Tìm kiếm                 | **Google Gemini** (`gemini-3.8-flash` nhanh, `gemini-4-argon` sâu) | Antigravity CLI `agy --mode plan --sandbox`; tìm trong repo: OpenCode `explore` | Chỉ đọc                                                      | Tìm mã, nguồn, số liệu; trả danh sách vị trí kèm bằng chứng (URL hoặc tệp:dòng)                                                                                                  |
-| 4   | Media                    | **Google** (Gemini Image / Nano Banana, Gemini Omni)               | API (OpenRouter hoặc Gemini API) qua script                                     | Chỉ ghi vào thư mục media tạm                                | Tạo ảnh 2D, ảnh khái niệm cho tài nguyên 3D, video theo đặc tả (mục 2.2)                                                                                                         |
-| 4   | Audit                    | Model nhanh, rẻ                                                    | OpenCode (worktree riêng)                                                       | Chạy lệnh, không sửa mã nguồn                                | Chạy test/build/lint hoặc đối chiếu số liệu, mẫu, chính tả; báo ĐẠT HẾT/CHƯA ĐẠT                                                                                                 |
+| Cấp | Vai | Model đề xuất | Công cụ | Quyền | Việc |
+|---|---|---|---|---|---|
+| 1 | Kiến trúc sư (hoặc BOT-CEO theo lane) | Opus 5.5 Extra hoặc Fable 5.2 | Claude Code (`/model`, kèm `agm manage`) | Chỉ đọc (hoặc sửa `BRANCHES.md` có khóa) | Phương án, rủi ro, tiêu chí đạt; chẩn đoán lỗi khó; đánh giá SẴN SÀNG trước phát hành. **Đây là vai chính duy nhất mở Claude Code thường xuyên** |
+| 1–2 | Đồng trao đổi / Phản biện | **Opus High qua `agy`** (**[KIỂM]** mã model chính xác bằng `agy models`) | Antigravity CLI `agy` (hoặc `agm ask`) | Chỉ đọc | Đồng trao đổi phương án với Kiến trúc sư/BOT-CEO; rà/phản biện sơ bộ code/diff trước khi chốt duyệt để giảm tải token Claude |
+| 2 | Reviewer (mặc định) | **`openai/gpt-6.1-sol`** hoặc model mạnh trong OpenCode *(leo thang lên Claude Opus 5.5 High chỉ khi rủi ro cao / 2 lần `CHƯA ĐẠT`)* | OpenCode (`opencode run --agent reviewer` hoặc `agm spawn --role review`) | Chỉ đọc + ghi `.agents/reviews/` | Duyệt độ đúng, phạm vi, quy ước; báo ĐẠT/CHƯA ĐẠT, lỗi theo mức Nghiêm trọng/Lớn/Nhỏ kèm vị trí và cách sửa |
+| 2 | Quản lý kỹ thuật (Codex) | Codex (model mạnh nhất sẵn có) | Codex CLI | Đọc, ghi hạn chế (chỉ tệp điều phối, không sửa code của thợ) | Biến phương án của Kiến trúc sư thành đầu việc cụ thể; giao việc và giám sát các phiên OpenCode; cố vấn kỹ thuật; quyết định đổi model/phiên; bàn giao cho Copilot sau Review + Docs |
+| 2 | Cố vấn kỹ thuật & Tối ưu Harness | **Gemini Argon** (`gemini-4-argon-medium` / `gemini-4-argon-high`) | Antigravity CLI `agy` (chỉ đọc qua `agm ask` để cố vấn/review; phiên `agy` trong worktree riêng khi sửa harness) | Đọc; chỉ ghi vào tệp harness/điều phối khi được giao | Cố vấn kỹ thuật độc lập giống Codex; phân tích các vấn đề lớn của phiên vừa chạy để **cập nhật và tối ưu hóa harnessing** (`.agents/`, `AGENTS.md`, `CLAUDE.md`, template, skill, cổng, ngưỡng `tier:`) cho các phiên sau |
+| 2 | Quản lý phiên bản Git | Model chọn trong GitHub Copilot | GitHub Copilot CLI (`copilot`) | Tích hợp đúng SHA đã kiểm chứng; thao tác nhánh/lịch sử theo phạm vi cho phép | Merge, revert/rollback, dọn nhánh đã tích hợp; ghi SHA và kết quả kiểm; push/tag/phát hành cần quyền của người dùng |
+| 3 | Cập nhật tài liệu (Docs) | **Gemini 4 Hydrogen Medium** (`gemini-4-hydrogen-medium`) | Antigravity CLI `agy` (trong worktree nhánh cần cập nhật) | Chỉ sửa tài liệu / docs trong phạm vi được giao | Nhận lệnh cập nhật docs khi có thay đổi **sau khi Reviewer đã chỉnh sửa/duyệt xong và trước khi gọi GitHub Copilot**; commit cập nhật docs trên cùng nhánh |
+| 3 | Thợ cơ khí | Do Codex chọn theo mức khó (bậc `nhanh` ưu tiên model `:free` / local, mục 2.1) | OpenCode trong worktree riêng | Sửa trong phạm vi được giao | Viết/sửa code hoặc nội dung đúng đặc tả; báo đã đổi gì và đã tự kiểm gì |
+| 4 | Tìm kiếm & Tóm tắt log | **Google Gemini** (`gemini-3.8-flash` nhanh, `gemini-4-argon` sâu); trong repo: **model miễn phí** | `agy` / `agm ask` (web); OpenCode `explore` dùng `:free`/local (mã repo & tóm tắt log dài) | Chỉ đọc | Tìm mã, nguồn, số liệu; tóm tắt log test/build dài trước khi đưa vào Kiến trúc sư/BOT-CEO; trả danh sách vị trí kèm bằng chứng |
+| 4 | Audit & Sàng lọc sơ bộ | **Model miễn phí / siêu rẻ** (`opencode/deepseek-v4.1-flash-free`, `:free` OpenRouter, Ollama local) | OpenCode (worktree riêng) | Chạy lệnh, ghi `.agents/log/`, không sửa mã nguồn | Chạy test/build/lint, kiểm quy ước (diff trong phạm vi, có log/test mới) trước khi gọi Reviewer; báo ĐẠT HẾT/CHƯA ĐẠT |
 
 Ghi chú:
 
 1. Tên model cụ thể của OpenCode do người dùng cấu hình trong `opencode.json` (định dạng `nhà-cung-cấp/model`). Chỉ dẫn này chỉ quy định **bậc** (nhanh / vừa / mạnh), không cố định tên.
 2. Mỗi vai của OpenCode nên được khai báo thành một agent trong `.opencode/agents/<tên>.md` với trường `model` và quyền (`edit`, `bash`) riêng. Như vậy đổi model chỉ cần sửa một dòng. (Repo MATHY-AI hiện dùng thư mục `.opencode/agent/`, số ít; theo đúng thư mục mà bản OpenCode đang cài nhận ra.)
+3. Phần **tạo ảnh 2D/3D và video** không còn nằm trong bộ vai trò dùng chung; nếu dự án nào cần, sẽ bổ sung và tối ưu riêng trong harness của dự án đó.
 
 ### 1.1. Skill theo vai
 
@@ -82,26 +109,30 @@ Skill nói **cách làm**; tệp tác vụ nói **làm gì**. Khi mâu thuẫn, 
 2. **Thợ cơ khí tối đa 2 skill.**
 3. Cần skill khác thì **thay** skill cũ (hoặc mở phiên mới), không cộng dồn.
 4. Skill do Codex (hoặc Kiến trúc sư) chọn theo loại việc và ghi vào trường `skills:` trong `.agents/tasks/<ID>.md`, ví dụ `skills: test-driven-development, verification-before-completion`. Phiên chỉ dùng đúng các skill đã ghi.
-5. Không nạp skill kiểu "phải gọi skill trước mọi hành động" cho thợ, Audit, Tìm kiếm và bot; chúng kéo thêm skill thiết kế và hỏi đáp vào việc cơ khí, và có thể làm phiên chạy nền treo chờ người trả lời.
+5. Không nạp skill kiểu "phải gọi skill trước mọi hành động" cho thợ, Audit, Tìm kiếm, Docs và bot; chúng kéo thêm skill thiết kế và hỏi đáp vào việc cơ khí, và có thể làm phiên chạy nền treo chờ người trả lời.
 
-| Vai           | Số skill khi khởi tạo | Gợi ý (chọn theo giai đoạn)                                                                                                                                    |
-| ------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Kiến trúc sư  | 1 đến 3               | `brainstorming` (giai đoạn hiểu yêu cầu), `system-design` hoặc `architecture` (giai đoạn thiết kế/ghi quyết định); đổi skill khi sang giai đoạn khác           |
-| Codex quản lý | 1 đến 3               | `writing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`; `testing-strategy` hoặc `requesting-code-review` khi cần, thay cho skill không còn dùng |
-| Reviewer      | 1 đến 2               | `code-review`, `verification-before-completion`                                                                                                                |
-| Thợ cơ khí    | **1 đến 2**           | Xem bảng loại việc bên dưới                                                                                                                                    |
-| Audit         | 0 đến 1               | `verification-before-completion`                                                                                                                               |
-| Tìm kiếm      | 0 đến 1               | Skill "exploring" của GitNexus (nếu dùng)                                                                                                                      |
-| Bot           | 0                     | Chỉ cần `hc`                                                                                                                                                   |
+| Vai | Số skill khi khởi tạo | Gợi ý (chọn theo giai đoạn) |
+|---|---|---|
+| Kiến trúc sư | 1 đến 3 | `brainstorming` (giai đoạn hiểu yêu cầu), `system-design` hoặc `architecture` (giai đoạn thiết kế/ghi quyết định); đổi skill khi sang giai đoạn khác |
+| Đồng trao đổi (`agy` Opus High) | 0 đến 1 | Không cần nạp nhiều; đọc thẳng phương án/diff + `.agents/tasks/<ID>.md` |
+| Codex quản lý | 1 đến 3 | `writing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`; `testing-strategy` hoặc `requesting-code-review` khi cần, thay cho skill không còn dùng |
+| Gemini Argon (Cố vấn & Harness) | 1 đến 2 | Đọc `AGENTS.md`, `.agents/log/`, `.agents/reviews/`, `.agents/decisions/` để tổng kết lỗi hệ thống và cập nhật harness |
+| GitHub Copilot quản lý Git | 0 đến 1 | `verification-before-completion` nếu hỗ trợ; ưu tiên playbook Git của dự án |
+| Reviewer | 1 đến 2 | `code-review`, `verification-before-completion` |
+| Cập nhật docs (`agy` Hydrogen Medium) | 0 đến 1 | Đọc diff nhánh + `tasks/<ID>.md` + docs hiện hữu |
+| Thợ cơ khí | **1 đến 2** | Xem bảng loại việc bên dưới |
+| Audit | 0 đến 1 | `verification-before-completion` |
+| Tìm kiếm | 0 đến 1 | Skill "exploring" của GitNexus (nếu dùng) |
+| Bot | 0 | Chỉ cần `agm` và `hc` |
 
 **Chọn skill cho thợ theo loại việc (tối đa 2):**
 
-| Loại việc                                           | Skill                                                        |
-| --------------------------------------------------- | ------------------------------------------------------------ |
-| Thêm tính năng, có đặc tả rõ                        | `test-driven-development` + `verification-before-completion` |
-| Sửa lỗi                                             | `systematic-debugging` + `verification-before-completion`    |
-| Sửa theo kết quả duyệt (CHƯA ĐẠT)                   | `receiving-code-review` + `verification-before-completion`   |
-| Việc cơ khí đơn giản (đổi tên, định dạng, tài liệu) | 1 skill hoặc không có                                        |
+| Loại việc | Skill |
+|---|---|
+| Thêm tính năng, có đặc tả rõ | `test-driven-development` + `verification-before-completion` |
+| Sửa lỗi | `systematic-debugging` + `verification-before-completion` |
+| Sửa theo kết quả duyệt (CHƯA ĐẠT) | `receiving-code-review` + `verification-before-completion` |
+| Việc cơ khí đơn giản (đổi tên, định dạng) | 1 skill hoặc không có |
 
 **Cách gắn và kiểm soát:**
 
@@ -112,16 +143,16 @@ Skill nói **cách làm**; tệp tác vụ nói **làm gì**. Khi mâu thuẫn, 
 
 ## 2. Bậc model cho thợ OpenCode và cách đổi
 
-| Bậc   | Dùng khi                                                       | Ví dụ                                                           |
-| ----- | -------------------------------------------------------------- | --------------------------------------------------------------- |
-| Nhanh | Việc lặp lại, rõ ràng, rủi ro thấp                             | Tìm kiếm, chạy test/lint, đổi tên, định dạng, cập nhật tài liệu |
-| Vừa   | Việc code thông thường có đặc tả rõ                            | Thêm endpoint, viết test, refactor cục bộ                       |
-| Mạnh  | Việc khó trong phạm vi hẹp, hoặc phiên vừa thất bại ở bậc thấp | Lỗi logic phức tạp, đa tệp, tối ưu hiệu năng                    |
+| Bậc | Dùng khi | Ví dụ |
+|---|---|---|
+| Nhanh | Việc lặp lại, rõ ràng, rủi ro thấp | Tìm trong repo, chạy test/lint, đổi tên, định dạng |
+| Vừa | Việc code thông thường có đặc tả rõ | Thêm endpoint, viết test, refactor cục bộ |
+| Mạnh | Việc khó trong phạm vi hẹp, hoặc phiên vừa thất bại ở bậc thấp | Lỗi logic phức tạp, đa tệp, tối ưu hiệu năng |
 
 Quy tắc đổi:
 
 1. Codex hoặc Opus được **yêu cầu đổi model hoặc mở phiên mới** khi: thợ sửa 2 lần chưa đạt; việc rõ ràng khó hơn dự kiến; hoặc việc dễ hơn dự kiến (hạ bậc để tiết kiệm).
-2. Khi đổi model, giữ nguyên worktree và nhánh; giao lại bằng bản tóm tắt (đã làm gì, còn gì, lỗi nguyên văn) ghi vào tệp tác vụ (mục 3.2) rồi báo qua herdr-mesh.
+2. Khi đổi model, giữ nguyên worktree và nhánh; giao lại bằng bản tóm tắt (đã làm gì, còn gì, lỗi nguyên văn) ghi vào tệp tác vụ (mục 3.2) rồi báo qua `agm send` (hoặc `herdr-mesh` nếu ở TUI).
 3. Chỉ Codex hoặc Opus được đổi model của thợ. Thợ không tự đổi.
 
 ### 2.1. Nguồn cung cấp model cho thợ cơ khí (OpenCode, Ollama, OpenRouter)
@@ -137,25 +168,32 @@ OpenCode là phần mềm chạy thợ; model đến từ các **nhà cung cấp
 
 **Ba nguồn:**
 
-| Nguồn                  | Cách nối                                                                                                                                                                                                                       | Ưu                                                                                                   | Nhược / lưu ý                                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **Ollama chạy cục bộ** | Khai báo provider `ollama`, gói `@ai-sdk/openai-compatible`, `baseURL` là `http://localhost:11434/v1`, liệt kê model trong `models`; hoặc chạy `ollama launch opencode` để tự cấu hình                                         | Không tốn phí token; mã không rời máy                                                                | Phụ thuộc phần cứng. Ollama khuyến nghị cửa sổ ngữ cảnh tối thiểu 64k cho OpenCode; nếu gọi công cụ lỗi, tăng `num_ctx` |
-| **Ollama Cloud**       | Lấy khóa API tại ollama.com (Settings, Keys), chạy `opencode auth login` rồi chọn Ollama Cloud; hoặc `ollama launch opencode`. Endpoint `https://ollama.com`, biến môi trường `OLLAMA_API_KEY`. Model cloud có hậu tố `:cloud` | Model lớn không cần GPU cục bộ; Ollama gợi ý `glm-4.7:cloud` cho OpenCode                            | Mã gửi lên dịch vụ ngoài; có giới hạn số model cloud chạy đồng thời theo gói (xem bên dưới)                             |
-| **OpenRouter**         | `/connect` rồi tìm OpenRouter; thêm model bằng slug dưới `provider.openrouter.models` trong `opencode.json`; mã dùng là `openrouter/<slug>`                                                                                    | Một khóa truy cập nhiều model; chọn được nhà cung cấp hạ nguồn qua `options.provider` của từng model | Mã gửi lên dịch vụ ngoài; chất lượng và giá phụ thuộc model, nhà cung cấp hạ nguồn                                      |
+| Nguồn | Cách nối | Ưu | Nhược / lưu ý |
+|---|---|---|---|
+| **Ollama chạy cục bộ** | Khai báo provider `ollama`, gói `@ai-sdk/openai-compatible`, `baseURL` là `http://localhost:11434/v1`, liệt kê model trong `models`; hoặc chạy `ollama launch opencode` để tự cấu hình | Không tốn phí token; mã không rời máy | Phụ thuộc phần cứng. Ollama khuyến nghị cửa sổ ngữ cảnh tối thiểu 64k cho OpenCode; nếu gọi công cụ lỗi, tăng `num_ctx` |
+| **Ollama Cloud** | Lấy khóa API tại ollama.com (Settings, Keys), chạy `opencode auth login` rồi chọn Ollama Cloud; hoặc `ollama launch opencode`. Endpoint `https://ollama.com`, biến môi trường `OLLAMA_API_KEY`. Model cloud có hậu tố `:cloud` | Model lớn không cần GPU cục bộ; Ollama gợi ý `glm-4.7:cloud` cho OpenCode | Mã gửi lên dịch vụ ngoài; có giới hạn số model cloud chạy đồng thời theo gói (xem bên dưới) |
+| **OpenRouter** | `/connect` rồi tìm OpenRouter; thêm model bằng slug dưới `provider.openrouter.models` trong `opencode.json`; mã dùng là `openrouter/<slug>` | Một khóa truy cập nhiều model; chọn được nhà cung cấp hạ nguồn qua `options.provider` của từng model | Mã gửi lên dịch vụ ngoài; chất lượng và giá phụ thuộc model, nhà cung cấp hạ nguồn |
 
-**Gói và giới hạn của Ollama Cloud (biến động, phải xem lại trên ollama.com/pricing):** các trang tôi đọc không thống nhất. Một số nêu số model cloud chạy đồng thời theo gói (Free 1, Pro 3, Max 10); một số nêu Ollama đã chuyển sang tính theo token từ 31/08/2026, gói Pro 20 USD kèm 60 USD sử dụng, Max 100 USD kèm 300 USD, và bậc 0 USD trả theo mức dùng. Vì thế `MAX_WORKERS` (xem `HERDR-CORE-BOT.md`) **không được vượt giới hạn đồng thời của gói đang dùng**, nếu giới hạn đó còn áp dụng.
+**Gói và giới hạn của Ollama Cloud (biến động, phải xem lại trên ollama.com/pricing):** các trang tôi đọc không thống nhất. Một số nêu số model cloud chạy đồng thời theo gói (Free 1, Pro 3, Max 10); một số nêu Ollama đã chuyển sang tính theo token từ 31/08/2026, gói Pro 20 USD kèm 60 USD sử dụng, Max 100 USD kèm 300 USD, và bậc 0 USD trả theo mức dùng. Vì thế `max_workers` trong `~/.agmag/providers.toml` **không được vượt giới hạn đồng thời của gói đang dùng**, nếu giới hạn đó còn áp dụng.
 
 **Gán nguồn cho bậc model (mục 2):** đây là gợi ý, tên model phải kiểm theo danh mục hiện hành vì thay đổi liên tục.
 
-| Bậc   | Nguồn gợi ý                                                                                  |
-| ----- | -------------------------------------------------------------------------------------------- |
-| Nhanh | Ollama cục bộ (model nhỏ) hoặc model rẻ trên Ollama Cloud / OpenRouter                       |
-| Vừa   | Ollama Cloud hoặc model code trên OpenRouter                                                 |
-| Mạnh  | Model mạnh trên OpenRouter (hoặc Ollama Cloud nếu có), hoặc nâng lên Codex/Claude theo mục 2 |
+| Bậc | Nguồn gợi ý |
+|---|---|
+| Nhanh (miễn phí / 0 đồng biên) | **OpenCode/OpenRouter `:free`** (`opencode/deepseek-v4.1-flash-free`, `openrouter/thinkingmachines/inkling-2-small:free`, kiểm thêm bằng `opencode models \| findstr :free`) hoặc **Ollama cục bộ** (chủ yếu cho Audit, `explore`/tóm tắt log, sàng lọc quy ước, việc cơ khí 1–2 tệp có test sẵn) |
+| Vừa | Ollama Cloud hoặc model code trả phí rẻ trên OpenRouter / `gpt-6.1-terra-fast` |
+| Mạnh | Model mạnh trên OpenRouter / `openai/gpt-6.1-sol` (Codex), hoặc leo thang lên Claude Code cho ca kiến trúc/rủi ro cao |
+
+**Chiến lược tận dụng tối đa model miễn phí (giảm tải hạn mức mà không gây vòng lặp `CHƯA ĐẠT`):**
+
+1. **Đúng việc cho model miễn phí:** đưa hẳn **Audit (`auditor`)**, **tìm kiếm trong repo (`explore`) & tóm tắt log dài**, **sàng lọc sơ bộ quy ước trước Reviewer**, và **thợ bậc Nhanh (`worker-fast`, 1–2 tệp có test sẵn)** sang `:free` hoặc Ollama cục bộ. Không đẩy việc sửa lỗi đa tệp/kiến trúc phức tạp cho model yếu vì bị trả lại `CHƯA ĐẠT` sẽ tốn gấp đôi token của Reviewer/BOT-CEO.
+2. **Thang leo 2 lần:** mặc định giao việc rõ ràng cho bậc Nhanh (miễn phí); chỉ khi thợ fail 2 lần hoặc chạm logic phức tạp mới nâng bậc lên trả phí / Codex.
+3. **Dự phòng chống nghẽn `429`:** các endpoint `:free` hay bị giới hạn tốc độ theo phút hoặc gọi công cụ kém ổn định — luôn chuẩn bị sẵn 2–3 slug `:free` (và Ollama local nếu có) để Codex đổi nguồn ngay khi nghẽn.
+4. **Cắt token đầu vào bằng GitNexus & theo dõi qua `agm`:** dùng **GitNexus MCP** (`query`, `context`, `impact`) ở chế độ chỉ đọc để agent miễn phí không đọc tràn ngữ cảnh; định kỳ chạy `agm cost --by source` và `agm quota` để đo tỷ lệ token đã chuyển sang `opencode`/`agy`, rồi giao **Gemini Argon** chỉnh lại phân loại `tier:` nếu một nhóm việc dùng `:free` hay bị trả lại.
 
 **Khai báo trong repo (mẫu, thay bằng model có thật):**
 
-```
+```json
 # opencode.json (không chứa khóa API)
 {
   "$schema": "https://opencode.ai/config.json",
@@ -173,7 +211,7 @@ OpenCode là phần mềm chạy thợ; model đến từ các **nhà cung cấp
 }
 ```
 
-```
+```markdown
 # .opencode/agents/worker-fast.md   (tương tự worker-mid.md, worker-strong.md)
 ---
 description: Thợ bậc nhanh
@@ -188,72 +226,84 @@ Với Ollama Cloud, đừng viết tay cấu hình; chạy `opencode auth login`
 
 1. **Đổi nguồn do Codex hoặc Opus quyết định**, không do thợ (mục 2, quy tắc đổi). Khi nguồn bị giới hạn tốc độ hoặc lỗi, Codex đổi sang nguồn khác cùng bậc, giữ nguyên worktree, và ghi vào nhật ký.
 2. **Dữ liệu nhạy cảm:** đầu việc chạm bảo mật hoặc dữ liệu (mục 5, quy tắc 2) chỉ dùng model cục bộ, hoặc phải được người dùng đồng ý trước khi gửi mã lên nguồn cloud.
-3. **Khóa API:** chỉ lưu trong kho đăng nhập của OpenCode (`opencode auth login`) hoặc biến môi trường (`OLLAMA_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`) của dịch vụ bot; không đưa vào repo, tệp tác vụ hay nhật ký.
-4. **Chi phí:** người dùng quyết định ngân sách (mục 3.1); bot giới hạn số thợ đồng thời và số phiên theo `bot.env`.
+3. **Khóa API:** chỉ lưu trong kho đăng nhập của OpenCode (`opencode auth login`) hoặc biến môi trường (`OLLAMA_API_KEY`, `OPENROUTER_API_KEY`) của dịch vụ chạy nền; không đưa vào repo, tệp tác vụ hay nhật ký.
+4. **Chi phí:** người dùng quyết định ngân sách (mục 3.1); `agm` giới hạn `max_workers` và ngân sách token/hạn mức qua `~/.agmag/providers.toml` và `agm budget`.
 5. **Chọn model theo năng lực gọi công cụ:** thợ phải gọi công cụ ổn định (sửa tệp, chạy lệnh). Trước khi dùng model mới cho thợ, chạy thử một đầu việc mẫu: sửa một tệp trong worktree, chạy test, ghi nhật ký, commit. Model không qua thử nghiệm thì không được giao việc thật.
-6. Tệp tác vụ có thể ghi trường `tier: nhanh | vừa | mạnh`; bot chọn template tương ứng (`worker-fast`, `worker-mid`, `worker-strong`).
+6. Tệp tác vụ có thể ghi trường `tier: nhanh | vừa | mạnh`; `dispatch.sh` chọn template tương ứng (`worker-fast`, `worker-mid`, `worker-strong`) khi gọi `agm spawn`.
 
-### 2.2. Model Google: tìm kiếm/research, ảnh 2D/3D, video
+### 2.2. Antigravity CLI `agy`: tìm kiếm, đồng trao đổi, docs, cố vấn & tối ưu harness
 
-Người dùng giao cho model Google ba trách nhiệm: **tìm kiếm và research thông tin**, **tạo ảnh** (kể cả khi cần dựng tài nguyên 2D/3D) và **làm video**. Hai đường gọi khác nhau:
+Người dùng dùng Antigravity CLI (`agy`) cho bốn vai trò riêng biệt (không còn dùng phần tạo ảnh 2D/3D và video dùng chung; dự án nào cần media sẽ tự tối ưu harness riêng):
 
-| Trách nhiệm         | Gọi bằng                                                                       | Model (kiểm 2026-11-18)                                                                                                                                                                                        | Ghi chú                                                                   |
-| ------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Tìm kiếm / research | Antigravity CLI `agy` (công cụ `search_web`)                                   | `gemini-3.8-flash-{low,medium,high}` (nhanh), `gemini-4-argon-{low,medium,high}` (tổng hợp sâu), `gemini-4-hydrogen-{low…xhigh}` (suy luận nặng), `gemini-pro-orchestrator-g1-pro` (điều phối nhiều agent con) | Đã chạy thật. Danh sách theo gói tài khoản Google: xem bằng `agy models`  |
-| Ảnh 2D              | HTTP API: OpenRouter (`OPENROUTER_API_KEY`) hoặc Gemini API (`GEMINI_API_KEY`) | `google/gemini-nano-banana-2.1`, `google/gemini-3-pro-image`, `google/gemini-3.1-flash-image`                                                                                                                  | `agy` CLI **không** có công cụ tạo ảnh (Antigravity IDE thì có, dùng tay) |
-| Video               | Như trên                                                                       | `google/gemini-omni-1.2-flash` (OpenRouter); Veo cần Gemini API hoặc Vertex AI                                                                                                                                 | Tính tiền theo lượt, đắt                                                  |
-| 3D                  | Không có model Google tạo 3D trực tiếp                                         | (a) Gemini tạo ảnh khái niệm → Space image-to-3D trên Hugging Face; (b) Gemini viết mã three.js/glTF                                                                                                           | Chọn theo việc                                                            |
+| Vai trò | Model qua `agy` (kiểm danh sách bằng `agy models`) | Chế độ chạy | Ghi chú |
+|---|---|---|---|
+| **Tìm kiếm / research** | `gemini-3.8-flash-{low,medium,high}` (nhanh), `gemini-4-argon-{low,medium,high}` (sâu) | Chỉ đọc: `agm ask` hoặc `agy --mode plan --sandbox` (ở thư mục tạm ngoài repo) | Tìm mã trong repo không cần web có thể dùng OpenCode `explore` với model rẻ |
+| **Đồng trao đổi / phản biện trước Reviewer** | **Opus High qua `agy`** (**[KIỂM]** tên slug cụ thể trong `agy models`) | Chỉ đọc: `agm ask` hoặc phiên `agy` trong `hc` | Trao đổi phương án, phản biện diff/code sơ bộ trước khi đẩy sang Reviewer (mặc định OpenCode; Claude Code Opus 5.5 High chỉ khi leo thang) nhằm giảm tải token Claude |
+| **Cập nhật tài liệu (Docs)** | **`gemini-4-hydrogen-medium`** | Phiên `agy` trong worktree nhánh đang làm | Nhận lệnh cập nhật docs khi có thay đổi **sau khi Reviewer đã chỉnh sửa/duyệt xong và trước khi gọi GitHub Copilot**; sửa docs và commit trên cùng nhánh |
+| **Cố vấn kỹ thuật & Tối ưu Harnessing** | **`gemini-4-argon-medium`** / **`gemini-4-argon-high`** | Chỉ đọc qua `agm ask` (hoặc script kiểu `argon_review.py` của `agmag`) để cố vấn/review; phiên `agy` trong worktree riêng khi sửa tệp harness | Đóng vai cố vấn kỹ thuật giống Codex, nhưng đặc thù phụ trách **cập nhật và tối ưu hóa harnessing** (`.agents/`, `AGENTS.md`, `CLAUDE.md`, template, skill, cổng) dựa trên các vấn đề lớn của phiên trước |
 
-**Research — mẫu lệnh (không cần người, đã kiểm):**
+**Mẫu lệnh một lần (chỉ đọc, tự ghi token vào `agm`):**
 
 ```bash
+# Cách ưu tiên: qua agm ask (tự chạy agy --mode plan --sandbox trong thư mục tạm ngoài repo và ghi token vào agm.db)
+agm ask --model gemini-4-argon-high --timeout 300 "<câu hỏi hoặc đoạn diff/mã cần cố vấn>"
+
+# Hoặc gọi agy trực tiếp ngoài repo (khi cần xuất JSON thô)
 cd <thư-mục-tạm-ngoài-repo>
 agy --model gemini-4-argon-medium --mode plan --sandbox --print-timeout 600s --output-format json \
   -p "<câu hỏi>. Mỗi kết luận kèm URL nguồn. Không sửa tệp." > research.json
-# research.json: {"status":"SUCCESS","response":"…","usage":{…},"conversation_id":"…"}
 ```
 
-**Quy tắc riêng cho model Google:**
+**Quy tắc riêng cho các vai chạy qua `agy`:**
 
 1. **Research là gợi ý, không phải sự thật.** Lần thử 2026-11-18, Gemini báo sai phiên bản một gói npm dù kèm đúng URL. Codex/Kiến trúc sư đối chiếu mọi con số, phiên bản, giá với nguồn gốc (lệnh `npm view`, trang chính thức) trước khi đưa vào tệp tác vụ.
-2. `agy` có quyền riêng, **không** đọc quyền của agent OpenCode. Luôn chạy `--mode plan --sandbox`, ở thư mục tạm ngoài repo; không bao giờ `--dangerously-skip-permissions`.
-3. Tìm ra danh sách model ảnh/video: OpenCode chỉ liệt kê model văn bản; dùng `https://openrouter.ai/api/v1/models` và lọc `architecture.output_modalities` chứa `image` hoặc `video`.
-4. Tạo media: tệp tác vụ ghi **số lượt tạo tối đa**; thử bằng model flash-image trước model pro. Kết quả lưu ở thư mục tạm; chỉ tệp đã chọn mới commit, qua nhánh của phần sở hữu thư mục đích.
+2. `agy` có quyền riêng, **không** đọc quyền của agent OpenCode. Các vai chỉ đọc (Tìm kiếm, Đồng trao đổi, Cố vấn chỉ đọc) luôn chạy `--mode plan --sandbox` ở thư mục tạm ngoài repo (hoặc qua `agm ask`); không bao giờ `--dangerously-skip-permissions`.
+3. **Vai sửa tệp qua `agy` (Hydrogen Medium sửa docs, Argon sửa harness):** chỉ mở phiên tương tác trong worktree đúng phạm vi và **chỉ giao đúng phạm vi được sửa** (docs với Hydrogen Medium; tệp harness/điều phối với Argon), không sửa code nghiệp vụ của thợ.
+4. **Đo token trong `agm`:** `agm` tự quét token của phiên `agy` tương tác từ `transcript.jsonl` và ghi nhận `agm ask` riêng (khử trùng lặp); riêng phiên IDE không ghi `transcript.jsonl` chỉ đo được qua `agm ask`.
 5. Dữ liệu gửi đi theo đúng quy tắc mục 2.1 quy tắc 2: không bí mật, không dữ liệu khách.
 
 ## 3. Điều phối và giao tiếp
 
 ### 3.1. Trách nhiệm
 
-- **Người dùng:** quyết định về nghiệp vụ, quyền, dữ liệu, chi phí; phê duyệt phát hành.
-- **Kiến trúc sư:** hiểu yêu cầu, lập phương án và tiêu chí đạt, không tự làm phần việc chính.
+- **Người dùng:** quyết định về nghiệp vụ, quyền, dữ liệu, chi phí; phê duyệt phát hành; chỉ người dùng được dừng/ngắt phiên Codex hoặc Claude Code. Khi trao đổi nhiều lượt với Kiến trúc sư / BOT-CEO, người dùng mở thẳng phiên trong HERDR và chat trực tiếp (kèm `agm manage`), còn theo dõi/trả lời hộp thư và hỏi 1 lượt thì dùng `agm tui` / `agm ask`.
+- **Kiến trúc sư (hoặc từng BOT-CEO theo lane trong `BOT-CEO.md`):** hiểu yêu cầu, lập phương án và tiêu chí đạt, không tự làm phần việc chính. Với mô hình đa mảng, **1 lane = BOT-CEO kiêm luôn Kiến trúc sư của lane đó**; chỉ mở Kiến trúc sư tổng khi thiết kế xương sống liên mảng.
+- **Đồng trao đổi (`agy` Opus High):** phản biện phương án/diff trước khi chốt duyệt mà không tốn hạn mức Claude Code.
+- **Reviewer (mặc định qua OpenCode):** duyệt độc lập theo bằng chứng diff/test; chỉ leo thang về Claude Code Opus High với ca rủi ro cao (bảo mật/dữ liệu/migration/2 lần `CHƯA ĐẠT`).
 - **Codex:** chia phương án thành đầu việc, giao việc một lần cho đủ (mục tiêu, phạm vi được sửa, ràng buộc, tiêu chí đạt, mẫu báo cáo), theo dõi tiến độ, gỡ vướng cho thợ.
+- **Gemini Argon:** cố vấn kỹ thuật song song với Codex, đồng thời phụ trách tổng kết vấn đề lớn sau mỗi phiên để cập nhật, tối ưu hóa harnessing cho các phiên kế tiếp.
+- **Gemini 4 Hydrogen Medium:** nhận lệnh cập nhật docs khi có thay đổi sau bước Reviewer (trước khi gọi Copilot) và commit docs trên nhánh.
+- **GitHub Copilot:** quản lý phiên bản Git; nhận nhánh + SHA + kết quả Audit/Review (+ commit docs nếu có) từ Codex, tích hợp tuần tự và kiểm lại sau merge. Không tự sửa lỗi nghiệp vụ; trả về quản lý khi xung đột.
 - **Mỗi tệp/phần chỉ một phiên sửa tại một thời điểm.** Codex chịu trách nhiệm phân chia để các worktree không chồng phạm vi.
 - Công cụ không tạo được phiên riêng thì một AI tự đóng lần lượt từng vai, đúng thứ tự.
 
-### 3.2. Giao tiếp bằng herdr-mesh
+### 3.2. Giao tiếp bằng `agm` (trên `herdr-core`) và `herdr-mesh`
 
-herdr-mesh là một máy chủ MCP bọc CLI của herdr thành các công cụ MCP, để agent đọc pane của agent khác, bàn giao ngữ cảnh, phối hợp và mở agent mới. Nó không gắn với một loại agent cụ thể. Vì vậy:
+**Kênh mặc định trong `herdr-core` là `agm send` / `agm inbox`** (từ dự án `agmag`, mục 5–6 của `README_vi.md`). `agm` bọc `hc send` nhưng **ghi lịch sử tin nhắn vào `~/.agmag/agm.db`**, tự nhận diện người gửi qua biến `HC_TERMINAL_ID`, và định tuyến tin gửi `user` vào **hộp thư người dùng** (`agm inbox` / `agm tui`).
 
-1. **Cài đặt:** cài toàn cục rồi chạy `herdr-mesh install` để công cụ tự dò agent và đăng ký. Mỗi agent là một MCP client riêng nên phải đăng ký cho từng agent (Claude Code, Codex, OpenCode). Với Claude Code có thể dùng `claude mcp add -s user herdr-mesh herdr-mesh`.
-2. **Phạm vi:** herdr-mesh chỉ nối các agent **đang chạy trong cùng một herdr** (xem mục 4.3). Đích đến là **tên agent đang chạy** hoặc **mã pane**.
-3. **Tên agent:** chỉ gồm chữ thường, số, `-`, `_`, bắt đầu bằng chữ cái, tối đa 32 ký tự. Quy ước: `arch`, `review`, `codex-mgr`, `w-<feature>-<số>` (thợ), `bot-<sự kiện>` (bot). `hc run --name` cũng áp đúng giới hạn này (đã kiểm), nên **mã việc `<ID>` phải viết thường** để tên `w-<ID>` hợp lệ.
-4. **Cách gửi:** dùng công cụ `herdr_relay` (gửi và nhấn gửi trong một bước), không tự gõ vào pane rồi quên xác nhận gửi.
-5. **Trước khi gửi:** kiểm tra trạng thái agent đích. Nếu đang `working` thì chờ `idle`, `done` hoặc `blocked`; không gõ chen vào prompt đang hoạt động. Mỗi lần chỉ gửi một tin ngắn, một việc. Khi cần đọc kết quả, chỉ lấy phần trả lời mới, không đọc cả pane, để tiết kiệm ngữ cảnh.
-6. **Thông tin bền vững ghi vào tệp, không chỉ nằm trong tin nhắn.** Tin nhắn chỉ là tín hiệu và con trỏ. Đặc tả, quyết định, kết quả kiểm, tóm tắt bàn giao ghi vào `.agents/tasks/<ID>.md` trong worktree (hoặc nhánh) và tin nhắn chỉ trỏ tới tệp đó. Lý do: tài liệu công khai tôi tra được không nói herdr-mesh lưu lịch sử tin nhắn bền vững.
-7. **Khóa ghi (tùy chọn):** bản fork `herdr-mesh-safe` bổ sung "lease" cho người điều khiển, reviewer và writer. Cơ chế này phù hợp với quy tắc "mỗi tệp/phần chỉ một phiên sửa"; nên cân nhắc nếu cần thực thi quy tắc bằng công cụ thay vì bằng kỷ luật.
+1. **Cho agent dùng `agm`:** thêm đoạn sau vào `AGENTS.md` và `CLAUDE.md` của dự án:
+   - Gửi tin cho agent khác: `agm send <tên-terminal> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<nội dung ngắn>"`
+   - Cần người dùng quyết định: `agm send user --type HỎI --task <ID> "<câu hỏi>"` (vào hộp thư người dùng)
+   - Xem hộp thư (Codex quản lý / người dùng): `agm inbox --json`
+   - Không dùng `agm kill` với phiên Codex/Claude — chỉ người dùng được làm việc đó.
+2. **Tên agent / terminal:** chỉ gồm 1–32 ký tự chữ thường, số, `-`, `_`. Quy ước: `arch`, `sparring` (`agy` Opus High), `review`, `codex-mgr`, `argon-adv` (Gemini Argon), `docs-hyd` (Hydrogen Medium), `copilot-git` (quản lý Git), `w-<feature>-<số>` (thợ), `agm-daemon`. Cả `hc run --name` và `agm spawn` đều áp đúng giới hạn này, nên **mã việc `<ID>` phải viết thường**.
+3. **Trước khi gửi / đọc kết quả:** `agm send` gọi `hc send --if idle` nên an toàn khi đích đang làm việc; mỗi lần chỉ gửi một tin ngắn một đến ba dòng, một việc. Khi cần đọc đầu ra màn hình, dùng `hc read <t> --lines N` (chỉ lấy phần mới, không đọc cả pane để tiết kiệm ngữ cảnh).
+4. **Thông tin bền vững ghi vào tệp, không chỉ nằm trong tin nhắn.** Tin nhắn chỉ là tín hiệu và con trỏ. Đặc tả, quyết định, kết quả kiểm, tóm tắt bàn giao ghi vào `.agents/tasks/<ID>.md` (hoặc `log/`, `decisions/`, `reviews/`) trong worktree/nhánh và tin nhắn chỉ trỏ tới tệp đó.
+5. **Nếu chạy trong HERDR TUI độc lập (không qua `agm`):** có thể dùng `herdr-mesh` (MCP bọc CLI `herdr`: `herdr install`, `claude mcp add -s user herdr-mesh herdr-mesh`, gửi bằng `herdr_relay`; bản `herdr-mesh-safe` có lease cho controller/reviewer/writer). Tuy nhiên **trên `herdr-core` đã có `agm` + `hc`**, không bắt buộc phải cài `herdr-mesh`.
 
-Mẫu tin nhắn bắt buộc (ngắn, một tin một việc):
+Mẫu tin nhắn bắt buộc (ngắn, một tin một việc — khớp định dạng `agm send`):
 
 ```
-[LOẠI] GIAO | BÁO CÁO | LỖI | HỎI | CHẶN | ĐẠT | CHƯA ĐẠT
-[ID] task-123    [NHÁNH] feat/ten-feature
-[TỆP TÁC VỤ] .agents/tasks/task-123.md
-[TÓM TẮT] một đến hai câu
-[KẾT QUẢ KIỂM] số đếm (với tin BÁO CÁO)
+agm send <đích> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<tóm tắt 1-2 câu; xem .agents/tasks/<ID>.md>"
 ```
 
-Lỗi do Audit/Reviewer tìm ra được chuyển **nguyên văn** (qua tệp tác vụ) cho đúng thợ đã làm, thông qua Codex.
+Nội dung chuẩn khi hiển thị:
+
+```
+[LOẠI] [ID <ID>] từ <người-gửi>: <tóm tắt ngắn> (kèm kết quả kiểm số đếm nếu là BÁO CÁO)
+```
+
+Lỗi do Audit/Reviewer (hoặc `agy` Opus High khi phản biện trước) tìm ra được chuyển **nguyên văn** (qua tệp tác vụ/review) cho đúng thợ đã làm, thông qua Codex.
 
 ### 3.3. Sổ ghi chép trên nhánh và kiểm thay đổi kiểu git
 
@@ -264,24 +314,26 @@ Nguyên tắc: **git là nguồn sự thật về "đã đổi gì"; tệp `.md`
 ```
 .agents/
   tasks/<ID>.md         # đặc tả: mục tiêu, phạm vi sửa, ràng buộc, tiêu chí đạt   (Codex viết)
-  log/<ID>.md           # nhật ký làm việc, chỉ thêm, không sửa cũ                 (thợ viết)
-  reviews/<ID>-<n>.md   # kết quả duyệt lần n: ĐẠT/CHƯA ĐẠT, lỗi, vị trí, cách sửa   (Reviewer viết)
-  decisions/<ID>.md     # quyết định thiết kế, rủi ro, lý do                      (Kiến trúc sư/Codex viết)
+  log/<ID>.md           # nhật ký làm việc, chỉ thêm, không sửa cũ                 (thợ / Audit / Hydrogen docs viết)
+  reviews/<ID>-<n>.md   # kết quả duyệt lần n: ĐẠT/CHƯA ĐẠT, lỗi, vị trí, cách sửa   (Reviewer / sparring viết)
+  decisions/<ID>.md     # quyết định thiết kế, rủi ro, tối ưu harnessing           (Kiến trúc sư / Codex / Argon viết)
   reports/<ID>.md       # báo cáo cuối của nhánh (mục 8)                           (Codex viết)
 ```
 
+*(Ghi chú: `.agents/handoff/` được `agm` tự thêm vào `git info/exclude` khi xoay vòng phiên Claude/Codex, không commit vào nhánh.)*
+
 **Quy tắc ghi:**
 
-1. **Mỗi tệp một người ghi** (cột bên phải ở trên), đúng nguyên tắc "một phần, một người sửa". Thợ không sửa `tasks/`; muốn đổi đặc tả thì ghi đề xuất vào `log/` và báo Codex.
+1. **Mỗi tệp đúng người ghi** theo vai trò ở trên, đúng nguyên tắc "một phần, một người sửa". Thợ không sửa `tasks/`; muốn đổi đặc tả thì ghi đề xuất vào `log/` và báo Codex.
 2. **Nhật ký chỉ thêm.** Sai thì thêm mục đính chính bên dưới, không xóa hay viết lại mục cũ.
-3. **Commit sớm và nhỏ.** Mỗi bước có ý nghĩa (xong một phần, trước khi thử hướng rủi ro, trước khi bàn giao) là một commit, **gồm cả code và mục nhật ký tương ứng**. Thông điệp commit bắt đầu bằng `<ID>:`.
-4. **Cấp quản lý cũng ghi:** Kiến trúc sư ghi `decisions/`, Codex ghi `tasks/`, `reports/` và các lần đổi model/phiên vào nhật ký điều phối, Reviewer ghi `reviews/`. Tất cả commit trên nhánh mà họ đang đứng.
+3. **Commit sớm và nhỏ.** Mỗi bước có ý nghĩa (xong một phần, trước khi thử hướng rủi ro, trước khi bàn giao, sau khi Hydrogen Medium cập nhật docs) là một commit, **gồm cả code/docs và mục nhật ký tương ứng**. Thông điệp commit bắt đầu bằng `<ID>:`.
+4. **Cấp quản lý & cố vấn cũng ghi:** Kiến trúc sư ghi `decisions/`, Codex ghi `tasks/`, `reports/` và các lần đổi model/phiên vào nhật ký điều phối, **Gemini Argon ghi đánh giá & thay đổi tối ưu harnessing** vào `decisions/` (hoặc nhánh tối ưu harness riêng), Reviewer ghi `reviews/`. Tất cả commit trên nhánh mà họ đang đứng.
 5. Không ghi bí mật (khóa, mật khẩu, dữ liệu cá nhân) vào các tệp này.
 
 **Mẫu một mục nhật ký:**
 
 ```
-## 2026-11-17 21:05 · w-login-1 · bước 2/4
+## 2026-11-19 21:05 · w-login-1 · bước 2/4
 - Đã làm: ...
 - Tệp đổi: src/a.ts, src/b.ts
 - Kiểm: `npm test` → 42 đạt / 0 lỗi
@@ -296,33 +348,46 @@ Nguyên tắc: **git là nguồn sự thật về "đã đổi gì"; tệp `.md`
 2. Đối chiếu danh sách "Tệp đổi" trong nhật ký với diff thực. Tệp đổi nằm ngoài phạm vi trong `tasks/<ID>.md`, hoặc đổi mà nhật ký không nhắc tới, là lỗi **Lớn** (CHƯA ĐẠT).
 3. **Audit** kiểm thêm: nhật ký có mục cho mỗi commit, `.md` đã commit, lệnh kiểm ghi trong nhật ký chạy lại ra cùng kết quả.
 4. **Reviewer** đọc `git diff <nhánh-gốc>...HEAD` kèm `tasks/` và `log/`; không đọc lập luận ngoài các tệp này (giữ tính độc lập).
-5. **Codex** kiểm lại các bước trên trước khi tích hợp. Khi có lỗi, chuyển nguyên văn qua `reviews/` hoặc nhật ký, rồi quay lại thợ.
-6. Muốn xem lịch sử một việc, dùng `git log -- .agents/log/<ID>.md` hoặc `git log --oneline <nhánh>`; muốn hoàn tác một bước, dùng `git revert` và ghi mục đính chính.
+5. **Cập nhật docs (nếu có thay đổi):** sau khi nhánh đã qua Reviewer / đã chỉnh sửa xong, **Gemini 4 Hydrogen Medium** cập nhật tài liệu liên quan trên đúng worktree nhánh đó, ghi một mục vào `log/<ID>.md` và commit để tạo SHA cuối.
+6. **Codex** kiểm lại các bước trên, bàn giao nhánh + **SHA cuối** + kết quả Audit/Review (+ xác nhận cập nhật docs) cho **GitHub Copilot**. Copilot xác minh đúng SHA, tích hợp rồi chạy lại cổng kiểm tra. Khi có lỗi, chuyển nguyên văn qua `reviews/` hoặc nhật ký, rồi quay lại thợ.
+7. Muốn xem lịch sử một việc, dùng `git log -- .agents/log/<ID>.md` hoặc `git log --oneline <nhánh>`. Muốn hoàn tác trên nhánh chung, giao **GitHub Copilot** thực hiện `git revert` và ghi mục đính chính; thợ chỉ commit trên nhánh riêng.
 
 Khi tích hợp vào nhánh chung, giữ thư mục `.agents/` trong repo theo mặc định; Codex có thể quyết định loại khỏi bản phát hành nếu không muốn đưa ra ngoài.
+
+### 3.3.1. Bàn giao quản lý Git cho GitHub Copilot
+
+- Worker vẫn tạo commit nhỏ trên nhánh/worktree riêng; Hydrogen Medium commit phần cập nhật docs sau bước Reviewer. Codex quản lý việc và chuẩn bị gói bàn giao; Copilot phụ trách tích hợp và quản lý lịch sử trên nhánh chung.
+- Gói bàn giao gồm: tên nhánh, SHA đầy đủ (sau commit docs nếu có), phạm vi diff, lệnh kiểm + kết quả thật, báo cáo Review/Audit, phụ thuộc và quyền push/phát hành đã có. Với MATHY-AI, CEO đăng ký vào `BRANCHES.md`; Copilot đọc hàng đợi theo [GIT_BOT.md](docs/harness/GIT_BOT.md).
+- Mở `copilot` tại checkout tích hợp, yêu cầu đọc quy tắc dự án và playbook Git. Chỉ một phiên `copilot-git` xử lý hàng đợi, merge đúng SHA rồi kiểm lại. Xung đột nghiệp vụ hoặc test lỗi thì trả về quản lý, không tự sửa code để vượt cổng.
+- Push, tag, phát hành và thao tác hủy lịch sử chỉ thực hiện khi người dùng đã cho phép. Dọn worktree/nhánh phải kiểm tra đã tích hợp, sạch và không còn phiên đang ghi.
+- **Đã chạy thử Git** bằng Copilot CLI 1.0.113 trên fixture độc lập: 3/3 ca đạt, gồm dừng khi checkout bẩn, từ chối SHA sai và merge đúng SHA; [báo cáo](docs/harness/COPILOT_GIT_SMOKE.md). Chưa nghiệm thu tích hợp toàn ứng dụng/deploy.
+- **Chưa xác minh** Copilot CLI chạy trong HERDR/herdr-mesh trên máy này. Có thể mở terminal riêng và bàn giao bằng tệp; không mặc định dùng chung cấu hình MCP hoặc quyền của OpenCode.
 
 ### 3.4. Vòng đời của thợ: ngắn hạn theo đầu việc, ngữ cảnh nằm trong tệp
 
 Vì trạng thái đã nằm trong `.agents/` và git, thợ là **thay thế được**; mặc định sống ngắn.
 
-| Vai                 | Vòng đời                                                                                     |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| Tìm kiếm, Audit     | Sinh rồi diệt theo từng yêu cầu, không giữ trạng thái                                        |
-| Thợ cơ khí          | Sống trong phạm vi một đầu việc; chỉ giữ qua nhiều đầu việc khi cùng feature và cùng vùng mã |
-| Reviewer            | Phiên mới cho mỗi lần duyệt (giữ độc lập); khi duyệt lại, đưa kết quả duyệt trước bằng tệp   |
-| Bot (herdr-core)    | Sống lâu nhưng ngữ cảnh rất nhỏ, chỉ điều phối sự kiện và sinh thợ                           |
-| Kiến trúc sư, Codex | Sống lâu theo feature, định kỳ nén ngữ cảnh, quyết định ghi vào tệp                          |
+| Vai | Vòng đời |
+|---|---|
+| Tìm kiếm, Audit, Đồng trao đổi (`agy` Opus High), Cập nhật docs (`agy` Hydrogen Medium) | Sinh rồi diệt (hoặc chạy qua `agm ask` một lần) theo từng yêu cầu, không giữ trạng thái dài |
+| Thợ cơ khí | Sống trong phạm vi một đầu việc; chỉ giữ qua nhiều đầu việc khi cùng feature và cùng vùng mã |
+| Reviewer | Phiên mới cho mỗi lần duyệt (giữ độc lập); khi duyệt lại, đưa kết quả duyệt trước bằng tệp |
+| Daemon (`agm daemon`) | Sống lâu nhưng không dùng LLM; chỉ lắng nghe `hc events`, đo token, kiểm ngân sách và xoay vòng |
+| Kiến trúc sư, Codex, Gemini Argon (cố vấn & harness) | Sống lâu theo feature/phiên làm việc, định kỳ nén hoặc xoay vòng ngữ cảnh, quyết định ghi vào tệp |
+| GitHub Copilot quản lý Git | Một phiên riêng cho hàng đợi tích hợp; bàn giao bằng nhánh, SHA và log |
 
-**Diệt thợ và thay bằng phiên mới (giữ nguyên worktree và nhánh) khi:** đầu việc xong hoặc đã tích hợp; thợ sửa 2 lần chưa đạt (phiên mới có góc nhìn sạch, kèm nâng bậc model); ngữ cảnh đã đầy quá nửa (ngưỡng kinh nghiệm, cần điều chỉnh theo thực tế); đổi model hoặc phạm vi; thợ lặp lại sai lầm cũ hoặc dựa vào giả định đã lỗi thời.
+**Xoay vòng & thay phiên (do `agm daemon` theo dõi tự động hoặc gọi `agm rotate <t>`):**
 
-**Bàn giao cho phiên mới:** trước khi diệt, thợ cũ (hoặc Codex) ghi vào nhật ký: đã làm gì, còn gì, lỗi nguyên văn, quyết định đã chốt, và **commit** tất cả. Phiên mới bắt đầu bằng cách đọc `tasks/<ID>.md`, `log/<ID>.md` và `git log` của nhánh.
+- **Thợ OpenCode (`--role worker`):** khi đạt `ctx_warn` (mặc định 50%), `agm` cảnh báo hộp thư; khi đạt `ctx_rotate` (mặc định 70%) và rảnh, `agm` yêu cầu ghi bàn giao vào `.agents/log/<ID>.md` + commit, kiểm tra worktree sạch và có commit mới chạm tệp log đó, rồi dừng phiên cũ và mở phiên mới cùng template/cwd. Cũng thay phiên khi thợ sửa 2 lần chưa đạt (kèm nâng bậc model).
+- **Phiên Claude Code & Codex đã bật `agm manage <t>`:** khi đạt `ctx_rotate`, `agm` yêu cầu ghi bàn giao vào `.agents/handoff/<id>-<ts>.md` (kết thúc bằng `<!-- agm:handoff-done -->`) rồi mở phiên mới đọc tệp đó; **`agm` không bao giờ tự kill phiên Claude/Codex cũ** (người dùng tự kiểm tra và dọn bằng `agm cleanup`).
+- **Diệt/ngắt thủ công:** chỉ người dùng được dừng/ngắt Codex hoặc Claude Code qua `agm kill`/`agm interrupt` (phải xác nhận `y`).
 
 ### 3.5. Quy tắc sinh agent phụ
 
-1. **Chỉ Kiến trúc sư và Codex được sinh agent.** Thợ, Reviewer, Audit và bot không tự sinh. Độ sâu tối đa một cấp.
-2. **Hai loại:** _subagent trong phiên_ (ngắn hạn, chỉ đọc, đầu ra có giới hạn; dùng cho tìm kiếm, tóm tắt, đối chiếu) và _phiên riêng trong HERDR_ (dài hơn, có worktree riêng; dùng cho việc sửa mã).
-3. **Giới hạn trao đổi:** thợ chỉ nhắn cho `codex-mgr`, không nhắn nhau; việc cần phối hợp do Codex làm trung gian. Mỗi agent phụ nhận một đầu việc, bộ công cụ tối thiểu và mẫu báo cáo định sẵn.
-4. **Hạn mức:** số phiên đồng thời tối đa và ngân sách token mỗi phiên (xem mục 4.2). herdr-mesh cho agent mở agent mới theo chỉ dẫn, nên nếu không giới hạn thì số phiên và chi phí dễ vượt kiểm soát; bản `herdr-mesh-safe` có lease để hỗ trợ.
+1. **Chỉ Kiến trúc sư và Codex được sinh agent** (qua `agm spawn`). Thợ, Reviewer, Audit, Hydrogen Medium và script nền không tự sinh. Độ sâu tối đa một cấp.
+2. **Hai loại:** *subagent / hỏi một lần* (`agm ask` hoặc subagent chỉ đọc trong phiên) và *phiên riêng trong `herdr-core`* (`agm spawn`, có worktree riêng cho việc sửa mã hoặc cập nhật docs/harness).
+3. **Giới hạn trao đổi:** thợ chỉ nhắn cho `codex-mgr` (qua `agm send`), không nhắn nhau; việc cần phối hợp do Codex làm trung gian. Mỗi agent phụ nhận một đầu việc, bộ công cụ tối thiểu và mẫu báo cáo định sẵn.
+4. **Hạn mức:** số thợ đồng thời tối đa (`[policy].max_workers` trong `providers.toml`) và ngân sách token/hạn mức gói (`agm budget set`) được **`agm` kiểm tra cứng trước khi `agm spawn`**.
 
 ### 3.6. Lớp ngữ cảnh mã nguồn: GitNexus (đã chọn)
 
@@ -332,11 +397,11 @@ GitNexus **không phải công cụ quản lý tác vụ**. Nó lập chỉ mụ
 
 **1. Agent đọc được**
 
-| Agent       | Mức hỗ trợ                                                 |
-| ----------- | ---------------------------------------------------------- |
-| Claude Code | MCP, skill, hook                                           |
-| Codex       | MCP, skill, hook (cài hook bằng `gitnexus setup -c codex`) |
-| OpenCode    | MCP và skill, không hook                                   |
+| Agent | Mức hỗ trợ |
+|---|---|
+| Claude Code | MCP, skill, hook |
+| Codex | MCP, skill, hook (cài hook bằng `gitnexus setup -c codex`) |
+| OpenCode | MCP và skill, không hook |
 
 **2. Cài đặt (làm một lần, trên nhánh riêng, do Codex thực hiện)**
 
@@ -348,17 +413,17 @@ GitNexus **không phải công cụ quản lý tác vụ**. Nó lập chỉ mụ
 
 **3. Phân công dùng**
 
-| Vai          | Công cụ GitNexus nên dùng                                           |
-| ------------ | ------------------------------------------------------------------- |
-| Kiến trúc sư | `impact`, `context`, `generate_map` để đánh giá phương án và rủi ro |
-| Reviewer     | `detect_changes`, `impact` để kiểm phạm vi ảnh hưởng của diff       |
-| Thợ cơ khí   | `impact` trước khi sửa; `rename` khi đổi tên; `trace` khi tìm lỗi   |
-| Tìm kiếm     | `query`, `context`                                                  |
-| Audit        | Không cần                                                           |
+| Vai | Công cụ GitNexus nên dùng |
+|---|---|
+| Kiến trúc sư / BOT-CEO | `impact`, `context`, `generate_map` để đánh giá phương án và rủi ro |
+| Reviewer (OpenCode) | `detect_changes`, `impact` qua MCP để kiểm phạm vi ảnh hưởng của diff (do OpenCode không có hook tự nhắc) |
+| Thợ cơ khí | `impact` trước khi sửa; `rename` khi đổi tên; `trace` khi tìm lỗi |
+| Tìm kiếm | `query`, `context` |
+| Audit | Không cần |
 
 **4. Giữ chỉ mục luôn mới**
 
-1. OpenCode không có hook nên không tự được nhắc làm mới chỉ mục. Sau mỗi lần tích hợp nhánh vào nhánh chung, Codex (hoặc bot) chạy `gitnexus analyze`.
+1. OpenCode không có hook nên không tự được nhắc làm mới chỉ mục. Sau mỗi lần tích hợp nhánh vào nhánh chung, GitHub Copilot làm mới chỉ mục theo quy tắc dự án (MATHY-AI: GIT_BOT §3 bước 7).
 2. Mỗi worktree là một cây làm việc riêng: khi bot tạo worktree mới, chạy `gitnexus analyze` trong worktree đó và kiểm tra chỉ mục có đúng với nhánh đang làm không (tài liệu chính không nói rõ về worktree, chỉ nói rằng bỏ tham số `branch` thì truy vấn chỉ mục theo cây làm việc đang checkout, và có thể ghim theo nhánh bằng `--branch`).
 3. Chú ý bộ nhớ khi lập chỉ mục repo lớn; nếu máy yếu, không chạy nhiều lần `analyze` đồng thời.
 4. Ghi vào nhật ký (mục 3.3) mỗi lần làm mới chỉ mục và kết quả.
@@ -367,28 +432,26 @@ GitNexus **không phải công cụ quản lý tác vụ**. Nó lập chỉ mụ
 
 **Phương án dự phòng:** nếu GitNexus không đạt (lệch chỉ mục giữa worktree, tốn bộ nhớ) thì thử codebase-memory-mcp (MIT) hoặc Serena (công cụ ngữ nghĩa dựa trên LSP).
 
-## 4. HERDR: TUI cho người, core cho bot
+## 4. HERDR, `hc` và `agm`: người điều khiển + nền tự động
 
-### 4.1. HERDR TUI (người dùng điều khiển)
+### 4.1. HERDR (APP / TUI) và `agm tui`
 
-- Dùng để mở các phiên Claude Code, Codex, OpenCode cạnh nhau, xem trạng thái (đang chạy / bị chặn / xong) và can thiệp.
-- Điều khiển từ xa: máy chủ chạy HERDR TUI; từ điện thoại dùng **Moshi** (iOS/Android) kết nối vào máy chủ rồi gắn lại (attach) phiên. HERDR TUI có chế độ attach từ xa qua SSH, phiên vẫn chạy khi ngắt kết nối.
-- Phiên của Kiến trúc sư, Reviewer, Codex nên chạy ở đây để người dùng đọc và phản hồi được.
+- Dùng HERDR để mở các phiên Claude Code, Codex, OpenCode, `agy`, `copilot` cạnh nhau, xem trạng thái và can thiệp.
+- Điều khiển từ xa: máy chủ chạy HERDR / `herdr-core`; từ điện thoại dùng **Moshi** (iOS/Android) kết nối vào máy chủ rồi gắn lại (attach) phiên (`hc attach <t>`).
+- Mở **`agm tui`** trong một pane của herdr để quan sát tổng thể: hạn mức gói 5h/7d, trạng thái từng terminal + % ngữ cảnh, ngân sách đầu việc và **hộp thư người dùng** (câu hỏi từ agent, lỗi, cảnh báo xoay vòng).
+- Phiên của Kiến trúc sư, Reviewer, Codex, Argon nên dễ quan sát ở đây để người dùng đọc và phản hồi được.
 
-### 4.2. herdr-core (bot chạy nền)
+### 4.2. Tự động hóa nền với `herdr-core` (`hc`) và `agm`
 
-- **Bot** là agent được cấu hình chạy liên tục, phản ứng theo sự kiện đã thiết lập trước (ví dụ: có issue mới, có yêu cầu từ người dùng, một nhánh vừa được đẩy lên, một lịch định kỳ).
-- Khi có sự kiện, bot thực hiện đúng thứ tự:
-  1. Tạo git worktree + nhánh mới cho đầu việc: `git worktree add ../wt-<feature> -b feat/<feature>`.
-  2. Khởi động một phiên OpenCode trong worktree đó với agent và model theo đầu việc.
-  3. Đặt tên agent `w-<feature>-<số>` và báo cho `codex-mgr` bằng `herdr_relay`.
-  4. Khi xong hoặc bị chặn, gửi tin `BÁO CÁO` / `CHẶN`; **không tự merge**.
-- Giới hạn bắt buộc cho bot chạy không người giám sát: số phiên đồng thời tối đa, giới hạn chi phí/token mỗi phiên, quyền `edit`/`bash` của OpenCode đặt rõ (chặn lệnh phá hủy, chặn ghi ngoài worktree), có cách dừng khẩn cấp.
-- Bot dọn worktree sau khi nhánh đã được tích hợp hoặc bị hủy.
-- Nên khảo sát trước các plugin cộng đồng đã làm đúng bước 1-2 (ví dụ `herdr-symphony`: đọc issue, tạo worktree, chạy một OpenCode agent cho mỗi issue) thay vì tự viết từ đầu.
-- Đường dẫn worktree theo quy ước của dự án (ví dụ MATHY-AI dùng `../MATHY-AI.wt/<slug>`); `../wt-<feature>` ở bước 1 chỉ là mặc định. Template, script giao việc/theo dõi/dọn dẹp: xem [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md).
+- **`agm daemon`** chạy nền trong `herdr-core` (`hc run --bg --no-parent --name agm-daemon agm daemon`) để lắng nghe `hc events --json`, quét token/hạn mức, kiểm ngân sách, mở hộp thư khi agent bị `blocked` và tự động xoay vòng phiên khi đầy ngữ cảnh.
+- **Lớp wrapper công việc (worktree + inbox):** khi có đầu việc mới trong `.agents/inbox/<ID>.md`, script `dispatch.sh` (xem [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md)) thực hiện:
+  1. Tạo git worktree + nhánh mới: `git worktree add .wt/<ID> -b feat/<ID>` (hoặc đường dẫn quy ước của dự án như `../MATHY-AI.wt/<slug>`).
+  2. Khởi động phiên thợ bằng **`agm spawn <template> --task <ID> --role worker --cwd <worktree> -- "..."`** (tự gắn `hc run --bg --outlive-parent`, kiểm `max_workers` và ngân sách cứng, đặt tên `w-<ID>-<số>`).
+  3. Khi thợ xong hoặc bị chặn, báo cho quản lý bằng **`agm send`** (hoặc `agm send user --type HỎI ...` nếu cần người dùng quyết); **không tự merge**.
+- Giới hạn an toàn bắt buộc: `max_workers` và ngưỡng ngữ cảnh trong `~/.agmag/providers.toml`, ngân sách token qua `agm budget set`, quyền `edit`/`bash` của OpenCode đặt rõ, nút dừng khẩn **`agm policy off`**, và **chỉ người dùng mới được `agm kill` phiên Codex/Claude**.
+- GitHub Copilot phụ trách dọn worktree/nhánh đã tích hợp và sạch; `agm cleanup` chỉ dọn các terminal cũ đã bàn giao trong `agm`/`hc` khi người dùng xác nhận.
 
-### 4.2.1. `hc` trên máy thật (đã kiểm 2026-11-17, hc 0.1.21, Windows 11)
+### 4.2.1. `hc` trên máy thật (đã kiểm 2026-11-17, bổ sung 2026-11-18, hc 0.1.21, Windows 11)
 
 CLI của herdr-core là `hc`. Thử nhanh bằng ba lệnh:
 
@@ -398,95 +461,79 @@ hc ls                                           # liệt kê terminal đang số
 hc read demo --lines 10                         # đọc 10 dòng cuối, không cần attach
 ```
 
-Những gì đã thấy trên máy thật (khác hoặc rõ hơn tài liệu công khai):
+Những gì đã thấy trên máy thật (và xác minh bổ sung trong `.agents/decisions/p0-research.md` của `agmag` ngày 2026-11-18):
 
-| Điểm                 | Kết quả thật                                                                                                                                                                                                                                                   | Hệ quả                                                                                                                                                                                  |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Core                 | Đã chạy sẵn; `hc server start\|stop\|status\|restart` tồn tại. `hc server status` trả JSON có `live`, `finished`, `uptime_ms`, `version`                                                                                                                       | Dịch vụ khởi động cùng máy có thể dùng `hc server start`; còn phải thử sau khi khởi động lại máy                                                                                        |
-| Đầu ra               | Mặc định là JSON khi đầu ra đi qua đường ống; `run` và `read` in văn bản                                                                                                                                                                                       | Script đọc được bằng `jq`/`ConvertFrom-Json` mà không cần phân tích bảng                                                                                                                |
-| Dạng `hc ls`         | Một **đối tượng** `{"hidden_finished": n, "terminals": [...]}`, **không phải mảng**                                                                                                                                                                            | Đếm thợ bằng `jq '.terminals \| length'` (đã sửa trong `dispatch.sh`, HERDR-CORE-BOT.md §1.5)                                                                                           |
-| Quan hệ cha–con      | `hc run` gọi từ trong một terminal sẽ tự gán `parent` là terminal đó (ví dụ `t3` → `t9` → `t10`); `hc get` cho thấy `die_with_parent: true` theo mặc định                                                                                                      | Thợ phải sống sót khi bot khởi động lại → bắt buộc `--outlive-parent`                                                                                                                   |
-| Báo trạng thái       | Terminal Claude Code có `reported: true`, `status: {app: "claude-code", state: "working", msg: "..."}`. Chương trình thường (`ping`, `pwsh`) có `reported: false`, `status: null`                                                                              | Claude Code tự báo trạng thái, nên `hc events`/`hc wait` dùng được. Với OpenCode, Codex: chưa kiểm, cần `ready: quiet` hoặc chuỗi đánh dấu                                              |
-| Tên terminal         | `--name` chỉ nhận 1–32 ký tự `a-z 0-9 - _`, không chữ hoa                                                                                                                                                                                                      | Mã việc phải viết thường (`test-1`, không phải `TEST-1`); `dispatch.sh` kiểm trước khi chạy                                                                                             |
-| Vị trí               | Terminal có trường `where` (ví dụ `"MATHY-AI / 1"`); `demo` nhận `where` của cha. Terminal chạy kèm `--label` thì sự kiện `created` chưa thấy `where`                                                                                                          | Biết thợ đang nằm ở workspace/tab nào; đừng dựa vào `where` để lọc, hãy dùng `--label`                                                                                                  |
-| Sự kiện              | `hc events --json`: dòng đầu là ảnh chụp `{"channel", "seq", "terminals"}`; các dòng sau theo dạng JSON-RPC `{"method":"event","params":{"type":"created"\|"finished", "terminal", "seq", "data"}}`. Sự kiện `finished` có `data: {exit_code, reason, signal}` | `watch.sh` đọc `.params.type`; xử lý cả `finished` (thợ thoát), không chỉ trạng thái                                                                                                    |
-| Template             | `hc templates` trả `{"templates": []}`                                                                                                                                                                                                                         | Phải tự tạo `worker-fast`, `worker-mid`, `worker-strong`, `auditor`, `researcher` theo HERDR-CORE-BOT.md §1.4                                                                           |
-| Dọn dẹp              | `hc kill <t>` kết thúc; `hc rm <t>` gỡ terminal đã kết thúc (trả `{"removed":"t10"}`); `hc ls --all` thấy cả terminal đã kết thúc (có `exit_code`, `reason`); `hc run --rm` tự gỡ ngay sau khi thoát                                                           | Dùng `--rm` cho lệnh ngắn (Audit, Tìm kiếm). **Không** dùng cho thợ, vì sau khi thợ thoát còn cần `hc read` để xem lỗi                                                                  |
-| Báo khi con kết thúc | Khi terminal con thoát, `hc` tự gõ vào agent cha một ghi chú `<hc>t10 demo exited (exit 0). Last lines: ... Read: hc read t10</hc>` kèm các dòng cuối                                                                                                          | Agent cha (Codex quản lý, bot) biết thợ đã thoát mà không cần chạy vòng theo dõi. Tắt cho một terminal bằng `hc run --no-notify`, hoặc tắt hẳn bằng `notes = false` trong `config.toml` |
+| Điểm | Kết quả thật | Hệ quả |
+|---|---|---|
+| Core | Đã chạy sẵn; `hc server start\|stop\|status\|restart` tồn tại. `hc server status` trả JSON có `live`, `finished`, `uptime_ms`, `version` | Dịch vụ khởi động cùng máy có thể dùng `hc server start`; còn phải thử sau khi khởi động lại máy |
+| Đầu ra | Mặc định là JSON khi đầu ra đi qua đường ống; `run` và `read` in văn bản | `agm` đọc JSON trực tiếp từ `hc <lệnh> --json` |
+| Dạng `hc ls` | Một **đối tượng** `{"hidden_finished": n, "terminals": [...]}`, **không phải mảng** | `agm` xử lý trực tiếp `.terminals`; script shell dùng `jq '.terminals \| length'` |
+| Quan hệ cha–con | `hc run` gọi từ trong một terminal sẽ tự gán `parent` là terminal đó; `die_with_parent: true` theo mặc định | `agm spawn` luôn truyền `--outlive-parent` để thợ sống sót |
+| Biến môi trường terminal | `hc` tự đặt `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE` trong mỗi terminal | `agm send` tự nhận diện người gửi qua `HC_TERMINAL_ID`, và `agm` kiểm tra người gọi fail-closed |
+| Báo trạng thái (OSC 7501) | Đã thấy các app tự báo 7501: `claude-code`, `codex`, `antigravity` (và `opencode` qua `hc ls`). Khi bị chặn có `state:"blocked"`, `kind:"question"\|"permission"`, `msg` | `agm daemon` bắt trực tiếp `status` `blocked` để đẩy nguyên văn câu hỏi vào hộp thư `agm inbox` |
+| Tên terminal | `--name` chỉ nhận 1–32 ký tự `a-z 0-9 - _`, không chữ hoa | Mã việc phải viết thường (`test-1`, không phải `TEST-1`); cả `agm spawn` và `dispatch.sh` kiểm trước khi chạy |
+| Vị trí & HERDR app | `labels` có `where` (vd `"MATHY-AI / Codex"`) và `herdr.space`/`herdr.tab` | **Terminal mở trong HERDR app hiện cả trong `hc` / `herdr-core`** |
+| Sự kiện | `hc events --json`: dòng đầu là ảnh chụp `{"channel", "seq", "terminals"}`; các dòng sau dạng JSON-RPC (`created`, `finished`, `status`, `turn`, `title`, `labels`, `size`, `foreground`, `doc`) + `heartbeat` mỗi 15s | `agm daemon` tiêu thụ toàn bộ luồng sự kiện này |
+| Template | `hc templates` ban đầu trả `{"templates": []}` | Phải tự tạo `worker-fast`, `worker-mid`, `worker-strong`, `auditor`, `researcher`, `docs-hydrogen`, `sparring-opus`, `argon-advisor` theo `HERDR-CORE-BOT.md` §1.4 |
+| Dọn dẹp | `hc kill <t>`, `hc rm <t>`, `hc ls --all`, `hc run --rm` | Dùng `--rm` cho lệnh ngắn; không dùng cho thợ vì cần giữ để đọc log/ghép phiên |
+| Báo khi con kết thúc | Khi terminal con thoát, `hc` tự gõ ghi chú `<hc>t10 demo exited...</hc>` vào agent cha (tắt bằng `--no-notify` hoặc `notes = false` trong `config.toml`) | Hữu ích khi cần biết nhanh con đã thoát; tắt nếu thấy rối prompt của agent cha |
 
-Các lệnh khác có trong `hc --help` mà tài liệu cũ chưa nêu:
+Các lệnh khác của `hc`: `hc wait <t>` (dùng thay `sleep`), `hc interrupt <t>`, `hc keys <t> enter|esc|up|ctrl+c`, `hc put <t> <file>`, `hc exec`, `hc file read|write|edit`, `hc keep <t>`, `hc label <t> k=v`.
 
-- `hc wait <t>`: chờ terminal ngừng làm việc (`--children all|any` chờ các agent con). **Dùng thay cho `sleep`.** `--output X` chờ đến khi in ra X, nhưng `--help` ghi rõ nó **dành cho chương trình, không dành cho agent**. Muốn biết một agent đã xong thì dựa vào trạng thái nó báo, hoặc cho nó thoát rồi bắt sự kiện `finished`.
-- `hc interrupt <t>`: nhấn phím dừng rồi báo kết quả. `hc keys <t> enter|esc|up|ctrl+c`: gửi phím.
-- `hc put <t> <file>`: gửi một tệp sang cạnh terminal đích.
-- `hc exec [--on m] <cmd>` và `hc file read|write|edit`: chạy lệnh hoặc sửa tệp mà không cần mở terminal (cũng dùng được trên máy từ xa).
-- `hc keep <t>`: tự thay bằng shell khi chương trình bị mất. `hc label <t> k=v`: gắn nhãn sau khi đã chạy.
-- Cấu hình `~/.config/herdr-core/config.toml`: `notes = false` để `hc` không tự gõ ghi chú vào agent cha; `draft_wait` là số giây hoãn tin gửi đến trong lúc người dùng đang gõ dở.
+### 4.3. Phạm vi giao tiếp giữa HERDR app, TUI và `herdr-core`
 
-**Lưu ý Windows:** các script mẫu trong HERDR-CORE-BOT.md viết cho bash/`jq`/`systemd`/`flock`. Máy kiểm chưa có `jq` (`winget install jqlang.jq`). Trên Windows cần viết lại bằng PowerShell và dùng Task Scheduler thay cho `systemd` (đề xuất, chưa thử).
-
-### 4.3. Lưu ý quan trọng về phạm vi giao tiếp
-
-HERDR TUI và herdr-core (cũng như ứng dụng desktop xây trên core) hiện **không dùng chung backend**: agent chạy ở bên này không hiện ở bên kia. Vì herdr-mesh hoạt động qua CLI của herdr, **hai bên không nhắn tin cho nhau được bằng herdr-mesh**. Cách xử lý, theo thứ tự ưu tiên:
-
-1. **Cùng một herdr cho toàn đội (nên thử trước):** đặt các agent cần trao đổi (Kiến trúc sư, Reviewer, Codex, thợ) vào cùng một herdr, rồi xác minh bot có tạo phiên được ở đó không.
-2. **Hai bên tách biệt, bàn giao qua git và tệp tác vụ:** bot ghi `.agents/tasks/<ID>.md`, đẩy nhánh; Codex trong TUI đọc nhánh/tệp và giao việc tiếp. Chậm hơn nhưng không phụ thuộc kênh nhắn tin.
-3. Không dựa vào việc TUI và core hợp nhất trong tương lai; kiểm tra phiên bản khi nâng cấp.
-
-**Quan sát 2026-11-17:** trên máy chạy core 0.1.21, `hc ls` thấy cùng lúc các phiên Claude Code đang mở, các shell `pwsh` và các terminal do `hc run` tạo, mỗi cái có trường `where` là tên workspace/tab. Như vậy, trong phạm vi core, mô hình "cả đội trong core" (HERDR-CORE-BOT.md §1.8, mô hình A) chạy được: agent nhắn nhau bằng `hc send`, chờ bằng `hc wait`, không cần herdr-mesh. Việc HERDR TUI có thấy các terminal này không thì vẫn chưa kiểm.
+- **Cập nhật đã xác minh (2026-11-18):** khi bắt sự kiện `hc events --json` trên Windows 11, các terminal mở trong **HERDR app** đều có mặt trong `hc` (với nhãn `herdr.space` / `herdr.tab` và `where`), nên **`agm` thấy, đo và giao tiếp (`agm send`) được với chúng**.
+- Nếu người dùng chạy **HERDR TUI** ở phiên bản hoặc máy khác mà `hc ls` không thấy terminal của nhau, vẫn dùng phương án dự phòng: bàn giao qua tệp (`.agents/inbox/`, `.agents/tasks/`, `.agents/log/`) và git, hoặc chạy cả đội trong cùng một `herdr-core`.
 
 ## 5. Quy tắc giao việc
 
-1. Tìm kiếm → agent Tìm kiếm. Kiểm tra → Audit. Sửa/soạn → Thợ cơ khí. Phân việc, đổi model → Codex.
-2. Gọi **Kiến trúc sư** khi: đổi cấu trúc lớn; việc chạm bảo mật/dữ liệu; lỗi sửa 2 lần chưa xong (kể cả sau khi đã nâng bậc model); trước phát hành.
-3. Gọi **Codex** khi: cần chia việc, chọn/đổi model, gỡ vướng kỹ thuật, tích hợp nhánh.
-4. Gọi **Reviewer** sau khi Audit đạt, cho từng nhánh/phần.
-5. Sau chẩn đoán của Kiến trúc sư vẫn chưa xong thì dừng và hỏi người dùng.
+1. Tìm kiếm & tóm tắt log dài → agent Tìm kiếm (`agy` qua `agm ask` / OpenCode `explore` dùng model miễn phí). Kiểm tra & sàng lọc quy ước → Audit (`:free` / local). Sửa/soạn code → Thợ cơ khí (ưu tiên `worker-fast` miễn phí cho việc rõ, hẹp). Phân việc, đổi model → Codex.
+2. **Claude Code chỉ mở cho Kiến trúc sư / BOT-CEO** và khi leo thang ca rủi ro cao: đổi cấu trúc lớn; việc chạm bảo mật/dữ liệu/migration DB; lỗi sửa 2 lần chưa xong (kể cả sau khi đã nâng bậc model); trước phát hành lớn.
+3. Dùng **Opus High qua `agy`** để **đồng trao đổi / phản biện** phương án hoặc diff trước khi chốt duyệt mà không tiêu hạn mức Claude Code.
+4. Gọi **Codex** khi: cần chia việc, chọn/đổi model thợ OpenCode, gỡ vướng kỹ thuật.
+5. Gọi **Gemini Argon (`agy`)** khi: cần cố vấn kỹ thuật độc lập như Codex, và **luôn giao Argon rà soát các vấn đề lớn sau phiên/giai đoạn để cập nhật và tối ưu hóa harnessing** (bao gồm tinh chỉnh bảng phân loại `tier:` cho model miễn phí) cho các phiên sau.
+6. Gọi **Gemini 4 Hydrogen Medium (`agy`)** khi có thay đổi cần cập nhật docs, thực hiện **sau khi Reviewer đã duyệt/chỉnh sửa xong và trước khi gọi GitHub Copilot**.
+7. Gọi **GitHub Copilot** khi: quản lý nhánh/lịch sử, tích hợp đúng SHA, revert/rollback và dọn nhánh đã tích hợp.
+8. Gọi **Reviewer mặc định (OpenCode, ví dụ `openai/gpt-6.1-sol`)** sau khi Audit & sàng lọc quy ước đạt (kèm đồng trao đổi với `agy` Opus High nếu cần), cho từng nhánh/phần. Chỉ kéo **Claude Code Opus 5.5 High** vào duyệt lại với ca bảo mật/dữ liệu hoặc bị `CHƯA ĐẠT` 2 lần liên tiếp.
+9. Sau chẩn đoán của Kiến trúc sư / BOT-CEO vẫn chưa xong thì dừng và hỏi người dùng (`agm send user --type HỎI ...`).
 
 ## 6. Cổng phát hành (làm đúng thứ tự)
 
-**Lưu bản / commit trên nhánh worktree** → **Audit đạt hết** → **Reviewer (Opus High) đạt** → **Codex tích hợp vào nhánh chung, Audit lại trên nhánh chung** → **Xem thử (nếu có giao diện)** → **Kiến trúc sư SẴN SÀNG** → **Phát hành (người dùng phê duyệt)** → **Xác minh môi trường thật**
+**Lưu bản / commit trên nhánh worktree** → **Audit & sàng lọc quy ước đạt hết (model miễn phí)** → *(tùy chọn: Đồng trao đổi rà trước với `agy` Opus High)* → **Reviewer OpenCode đạt / hoàn tất chỉnh sửa** *(ca bảo mật/dữ liệu/2 lần CHƯA ĐẠT: leo thang Claude Opus High)* → **Cập nhật docs nếu có thay đổi (Gemini 4 Hydrogen Medium nhận lệnh, sửa & commit trên nhánh; chạy lại kiểm nhanh nếu chạm phạm vi kiểm)** → **GitHub Copilot tích hợp đúng SHA cuối vào nhánh chung, chạy lại Audit** → **Xem thử (nếu có giao diện)** → **Kiến trúc sư / BOT-CEO SẴN SÀNG** → **Phát hành (người dùng phê duyệt)** → **Xác minh môi trường thật** → *(Sau phiên/đợt: Gemini Argon tổng kết vấn đề lớn & tối ưu harnessing cho phiên sau)*
 
 - Có lỗi ở bước nào thì sửa, lưu bản mới, chạy lại từ Audit.
 - Kiểm không chạy được thì ghi rõ lý do, không báo là đạt.
 - Trước mỗi cổng, kiểm thay đổi kiểu git theo mục 3.3 (không còn tệp chưa commit, nhật ký khớp diff, không sửa ngoài phạm vi).
-- Bot và thợ không được phát hành; chỉ Codex tích hợp, chỉ người dùng phê duyệt phát hành.
+- Bot/script nền và thợ không được phát hành; chỉ GitHub Copilot tích hợp, chỉ người dùng phê duyệt phát hành. Với MATHY-AI, Copilot triển khai theo phạm vi được cho phép và các cổng trong `GIT_BOT.md`.
 
 ## 7. Việc không phải code
 
-Giữ nguyên đội hình và cổng. Kiến trúc sư lập dàn ý; Codex chia phần; mỗi thợ soạn một phần riêng (một worktree/tệp riêng); Tìm kiếm lấy nguồn, số liệu; Audit kiểm số liệu, mẫu, chính tả; Reviewer duyệt nội dung. "Commit" là lưu bản có số phiên bản; "phát hành" là gửi bản cuối. Mẫu người dùng đưa luôn giữ nguyên bố cục.
+Giữ nguyên đội hình và cổng. Kiến trúc sư lập dàn ý; (có thể phản biện trước qua `agy` Opus High); Codex chia phần; mỗi thợ soạn một phần riêng (một worktree/tệp riêng); Tìm kiếm lấy nguồn, số liệu; Audit kiểm số liệu, mẫu, chính tả; Reviewer duyệt nội dung; Hydrogen Medium cập nhật tài liệu phụ trợ/chỉ mục liên quan trước khi Copilot chốt bản. "Commit" là lưu bản có số phiên bản; "phát hành" là gửi bản cuối. Mẫu người dùng đưa luôn giữ nguyên bố cục.
 
 ## 8. Báo cáo cuối
 
-Do Codex tổng hợp và lưu vào `.agents/reports/<ID>.md` trên nhánh, ngắn gọn: đã đổi gì, ai làm (phiên nào, model nào), kết quả kiểm (số đếm), kết luận Reviewer/Kiến trúc sư, phần chưa xác minh, việc còn lại.
+Do Codex tổng hợp và lưu vào `.agents/reports/<ID>.md` trên nhánh, ngắn gọn: đã đổi gì, ai làm (phiên nào, model nào), kết quả kiểm (số đếm), kết luận Reviewer/Kiến trúc sư, docs đã được Hydrogen Medium cập nhật gì (nếu có), phần chưa xác minh, việc còn lại, và **danh sách vấn đề lớn cần chuyển cho Gemini Argon tối ưu harnessing ở phiên sau**.
 
-> **Cách dùng:** đặt toàn bộ nội dung này vào `AGENTS.md` (Codex, OpenCode) và `CLAUDE.md` (Claude Code) của dự án; mỗi phiên bot khi khởi động cũng đọc tệp này. Khi giao việc, ghi "Việc cần làm: ...".
+> **Cách dùng:** đặt toàn bộ nội dung này (hoặc bản tóm lược kèm quy tắc `agm` ở mục 3.2) vào `AGENTS.md` (Codex, OpenCode) và `CLAUDE.md` (Claude Code) của dự án; mỗi phiên bot khi khởi động cũng đọc tệp này. Khi giao việc, ghi "Việc cần làm: ...".
 
 ## Phần chưa xác minh (cần thử trên máy thực tế)
 
-1. ~~Lệnh/cấu hình cụ thể để herdr-core kích hoạt bot theo sự kiện.~~ **Đã kiểm một phần (mục 4.2.1):** lệnh `hc`, dạng JSON của `hc ls`/`hc get`/`hc events` (sự kiện `created`, `finished`), quan hệ cha–con, Claude Code tự báo trạng thái, `hc server`, `hc rm`, `--rm`, `--no-parent`, `--no-notify`, quy tắc tên. **Còn phải kiểm:** dạng `data` của sự kiện đổi trạng thái; OpenCode và Codex có tự báo trạng thái không; `hc wait --output` có dùng được với thợ OpenCode không; core và thợ có tự lên lại sau khi khởi động lại máy không; script bot chạy trên Windows.
-2. herdr-mesh có hoạt động với herdr-core hay chỉ với HERDR TUI; và tương thích với phiên bản herdr đang dùng (có bản fork riêng cho herdr 0.9.5, ghi chú bản sửa đang chờ upstream). Nếu dùng mô hình "cả đội trong core" (mục 4.3) thì câu hỏi này không còn chặn công việc.
-3. Việc herdr-mesh có nhắn tin được giữa các máy (qua attach SSH) hay chỉ trong một máy.
-4. Việc tin nhắn có được lưu lại bền vững hay không (tài liệu không nêu; vì vậy mục 3.2 buộc ghi thông tin quan trọng vào tệp).
-5. Cách đăng ký herdr-mesh cho OpenCode (trình cài đặt tự dò agent; cần thử xem OpenCode có được nhận không).
-6. Nguồn model: mã provider thực tế của Ollama Cloud trong OpenCode (`opencode models`); model nào gọi công cụ ổn định trong worktree; giới hạn đồng thời và giá của Ollama Cloud (các trang không thống nhất, có thay đổi ngày 31/08/2026).
-7. Model Google (mục 2.2): script gọi API tạo ảnh/video chưa viết, chưa thử một lượt tạo thật; giá mỗi lượt; `agy` ở chế độ tương tác trong herdr-core có báo trạng thái (OSC 7501) không; Space image-to-3D nào trên Hugging Face cho kết quả dùng được.
-8. GitNexus: chỉ mục có đồng bộ đúng giữa nhiều worktree không (trang chính không nói rõ về worktree); `analyze` ghi đè hay hợp nhất `AGENTS.md`/`CLAUDE.md` ra sao (cần xem `git diff` sau khi chạy); OpenCode không có hook nên phải làm mới chỉ mục thủ công.
-9. Các ngưỡng ở mục 3.4 (ví dụ "ngữ cảnh đầy quá nửa") và ở mục 1.1 (1 đến 3 skill, thợ tối đa 2) là kinh nghiệm, chưa có nguồn kiểm chứng; cần hiệu chỉnh theo thực tế.
-10. Thư mục agent của OpenCode: tài liệu này ghi `.opencode/agents/`, còn repo MATHY-AI đang dùng `.opencode/agent/`; cần xác nhận bản OpenCode đang cài nhận thư mục nào (hoặc cả hai).
+1. Lệnh dịch vụ khởi động cùng máy (`Task Scheduler` trên Windows hoặc `systemd` trên Linux) có tự khởi động `hc server start`, `agm daemon` và khôi phục ổn định sau khi reboot không.
+2. Tên model slug chính xác của **Opus High trên `agy`** (kiểm bằng `agy models`).
+3. `agy` chạy tương tác cho **Hydrogen Medium** (sửa docs) và **Gemini Argon** (sửa harness) trong `hc`: độ ổn định của `hc send` vào phiên `agy` đang mở, và cấu hình quyền ghi thư mục worktree cho `agy`.
+4. `herdr-mesh` (chỉ cần nếu dùng HERDR TUI tách biệt với `herdr-core`; với đội chạy trong `herdr-core`, `agm` đã thay thế phần nhắn tin, theo dõi và điều phối).
+5. Nguồn model OpenCode: mã provider thực tế của Ollama Cloud (`opencode models`), model nào gọi công cụ ổn định trong worktree, giới hạn đồng thời và giá hiện hành của Ollama Cloud.
+6. GitNexus: chỉ mục đồng bộ giữa nhiều worktree, mức độ `analyze` ghi đè `AGENTS.md`/`CLAUDE.md`, thao tác làm mới thủ công cho OpenCode.
+7. Các ngưỡng kinh nghiệm ở mục 1.1 (1–3 skill, thợ tối đa 2) và mục 3.4 / `providers.toml` (`ctx_warn = 50`, `ctx_rotate = 70`) — cần hiệu chỉnh theo số liệu thực tế từ `agm cost` và `agm ls`.
+8. Thư mục agent của OpenCode: `.opencode/agents/` hay `.opencode/agent/` (như repo MATHY-AI và `agmag`) theo bản OpenCode đang cài.
 
 ## Nguồn tham khảo
 
-- herdr-mesh (MCP bọc CLI herdr, đăng ký theo từng agent, đích là tên agent/mã pane, `herdr_relay`): https://github.com/runchr-works/herdr-mesh ; https://github.com/wquesadac/herdr-mesh
-- herdr-mesh-safe (lease cho controller/reviewer/writer): https://glama.ai/mcp/servers/pfoe5pzsjj
-- Quy trình gửi tin an toàn giữa agent trong herdr (kiểm trạng thái, chờ idle/done/blocked, `herdr agent prompt`): https://claudskills.com/skills/herdr-agent-comms/SKILL.md
-- Plugin cộng đồng cho worktree + OpenCode trong herdr (herdr-symphony, worktender): https://github.com/yigitkonur/awesome-herdr/blob/main/README.md
-- herdr-core (`hc`): `hc --help`, `hc <lệnh> --help`, `hc --skill` trên máy; https://github.com/herdrdev/herdr-core ; kết quả chạy thật ghi ở mục 4.2.1
-- HERDR (kiến trúc TUI/core/app, attach từ xa): https://herdr.dev/app ; https://www.eesel.ai/blog/herdr ; https://notes.dsebastien.net/30+Areas/33+Permanent+notes/33.02+Content/Herdr ; https://betterstack.com/community/guides/ai/herdr-ai-agent/
-- GitNexus (đồ thị tri thức mã nguồn qua MCP, mức hỗ trợ từng agent, giấy phép, hook): https://github.com/abhigyanpatwari/GitNexus ; https://unpkg.com/gitnexus@latest/README.md ; https://socket.dev/npm/package/gitnexus
-- Nguồn model cho OpenCode: https://mintlify.com/ollama/ollama/integrations/opencode ; https://git.joshthomas.dev/mirrors/opencode/commit/883ed4d424082a8b132d6c7ba985161bb0d7e7a7 (thêm Ollama Cloud vào OpenCode) ; https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration ; https://www.developersdigest.tech/setup/openrouter/opencode ; https://opencode.ai/v1/docs/providers.md
-- Gói và giá Ollama Cloud (không thống nhất giữa các trang, cần xem lại): https://registry.ollama.ai/cloud ; https://www.spheron.network/blog/ollama-cloud-pricing/ ; https://www.lilachbullock.com/is-ollama-free/
-- OpenCode (agent theo model/quyền, `.opencode/agents/`, `opencode.json`): https://opencode.ai/docs/agents/ ; https://opencode.ai/docs/config.md
-- OpenCode v2 trên máy (2026-11-18): `opencode --version`, `opencode debug paths`, `opencode upgrade --help`, `npm view @opencode/cli version`
-- Antigravity CLI: `agy --help`, `agy models` trên máy (agy 1.5.10, 2026-11-18)
-- Model Google tạo ảnh/video qua OpenRouter: https://openrouter.ai/api/v1/models (trường `architecture.output_modalities`)
+- `agmag` (`agm` v0.2.0): https://github.com/wosonday/agmag/ (`README_vi.md`, `src/main.rs`, `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
+- GitHub Copilot CLI (khởi động và prompt `-p`): https://docs.github.com/en/copilot/get-started/cli-quickstart ; https://docs.github.com/en/copilot/how-tos/copilot-cli/automate-copilot-cli/run-cli-programmatically
+- herdr-core (`hc`): `hc --help`, `hc <lệnh> --help`, `hc --skill`; https://github.com/herdrdev/herdr-core
+- HERDR (kiến trúc TUI/core/app, attach từ xa): https://herdr.dev/app ; https://github.com/yigitkonur/awesome-herdr/blob/main/README.md
+- herdr-mesh & herdr-mesh-safe (nếu dùng với TUI độc lập): https://github.com/runchr-works/herdr-mesh ; https://glama.ai/mcp/servers/pfoe5pzsjj
+- GitNexus: https://github.com/abhigyanpatwari/GitNexus ; https://unpkg.com/gitnexus@latest/README.md
+- Nguồn model OpenCode (Ollama, Ollama Cloud, OpenRouter): https://opencode.ai/docs/agents/ ; https://opencode.ai/docs/config.md ; https://mintlify.com/ollama/ollama/integrations/opencode ; https://openrouter.ai/docs/cookbook/coding-agents/opencode-integration
+- Antigravity CLI (`agy`): `agy --help`, `agy models` (agy 1.5.10, 2026-11-18)

@@ -1,0 +1,201 @@
+# BOT-CEO — Điều phối đa mảng (lane) độc lập để tránh phình ngữ cảnh
+
+Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (phiên bản 3.4) và [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md). Lấy ý tưởng từ mô hình `HARNESSING.md` + `BRANCHES.md` của dự án `MATHY-AI` (`/mnt/d/Project/MATHY-AI/`), chuẩn hóa lại để dùng chung cho mọi dự án chạy cùng **`agm` (`agmag` v0.2.0)**, **`hc` (`herdr-core`)**, **Antigravity CLI (`agy`)** và **GitHub Copilot**.
+
+> **Thứ tự ưu tiên tài liệu:** `AGENTS.md` / `CLAUDE.md` của dự án **>** `AGENTS-TUTORIAL.md` (quy tắc cứng & cổng phát hành) **>** `BOT-CEO.md` (mở rộng cơ chế đa lane & `BRANCHES.md`) **>** `HERDR-CORE-BOT.md` (hạ tầng `agm`/`hc`).
+
+> **Quy tắc trao đổi với người dùng:** **1 lane = 1 BOT-CEO kiêm luôn vai Kiến trúc sư của lane đó** (không đặt thêm một Kiến trúc sư trung gian lên trên từng BOT-CEO). Khi cần trao đổi sâu, bạn **mở thẳng phiên BOT-CEO trong HERDR** và chat trực tiếp (gắn `agm manage <tên-terminal>` để tự xoay vòng ngữ cảnh); chỉ khi có thay đổi kiến trúc xương sống **liên mảng** mới chốt trước với 1 phiên Kiến trúc sư tổng (hoặc `agy` Opus High / Gemini Argon) rồi chia xuống từng lane.
+
+---
+
+## 1. Vì sao phải tách thành nhiều BOT-CEO?
+
+Trong dự án chỉ có 1–2 tính năng nhỏ, một phiên Kiến trúc sư + Codex quản lý là đủ. Nhưng khi dự án phình lớn với nhiều mảng nghiệp vụ khác nhau (ví dụ trong `MATHY-AI`: tồn kho/tạp hóa, thanh toán, chatbox, AI/RAG, nền tảng/DB), nếu dồn toàn bộ đề bài, lịch sử đọc mã, brief, log lỗi và kết quả test của mọi mảng vào **một agent điều phối duy nhất**, bạn sẽ gặp 3 vấn đề:
+
+1. **Phình to ngữ cảnh (context bloat):** token tăng vọt, ngữ cảnh nhanh đầy (≥ 70%), chi tiết của mảng A làm nhiễu suy luận ở mảng B.
+2. **Nghẽn hàng đợi tuần tự:** một phiên duy nhất không thể theo dõi sâu nhiều cụm worktree cùng lúc.
+3. **Khó cô lập trách nhiệm:** khi có sự cố hoặc cần kiểm chứng lại, một phiên ôm quá nhiều nhánh dễ sót test hoặc nhầm phạm vi tệp.
+
+**Giải pháp:** **một mảng (lane) = một BOT-CEO riêng** (mỗi BOT-CEO là một agent/terminal độc lập trong `herdr-core`). Mỗi BOT-CEO chỉ nạp và giữ ngữ cảnh của đúng mảng mình phụ trách, giao việc xuống worktree riêng, tự kiểm chứng nhánh của mảng mình, rồi đăng ký vào sổ hàng đợi chung **`BRANCHES.md`** để **một GitHub Copilot duy nhất** merge tuần tự.
+
+---
+
+## 2. Kiến trúc tổng thể nhiều BOT-CEO
+
+```
+                          Người dùng (chủ dự án)
+                    Giao đề bài theo mảng · Duyệt phát hành
+                                    │
+          ┌─────────────────────────┼─────────────────────────┐
+          ▼                         ▼                         ▼
+   BOT-CEO lane A            BOT-CEO lane B            BOT-CEO lane C
+  (vd: ceo-tap-hoa)         (vd: ceo-chatbox)         (vd: ceo-platform)
+   Claude / Codex            Claude / Codex            Claude / Codex
+   Chỉ giữ ngữ cảnh A        Chỉ giữ ngữ cảnh B        Chỉ giữ ngữ cảnh C
+          │                         │                         │
+          ├──► Research / Tóm tắt log: Gemini (agm ask) · OpenCode explore (:free) · GitNexus (chỉ đọc)
+          ├──► Worktree nhánh riêng: agm spawn (worker-fast :free/local; khó -> mid/strong/Codex)
+          ├──► Audit & Pre-check: test/build/lint + kiểm diff & log (model miễn phí)
+          ├──► Pre-review (tùy chọn giữ góc nhìn Opus): agy Opus High
+          ├──► Reviewer mặc định: OpenCode Reviewer (vd. openai/gpt-6.1-sol)
+          │                       *(bảo mật/dữ liệu/2 lần CHƯA ĐẠT -> leo thang Claude Opus High)*
+          └──► Cập nhật docs (nếu có đổi): agy Gemini 4 Hydrogen Medium
+                                    │
+          ▼  Khóa nguyên tử (mkdir) khi ghi BRANCHES.md (status: wip -> ready)
+      BRANCHES.md  ◄── sổ đăng ký & điểm chạm duy nhất giữa các lane
+          │
+          ▼  Đúng 1 phiên GitHub Copilot (copilot-git) đọc hàng đợi tuần tự
+    Merge đúng head SHA -> Chạy lại Audit/Build -> Deploy (nếu được phép)
+          │
+          ▼  Tổng hợp vấn đề lớn giữa các lane / phiên
+    Gemini Argon (agy): cập nhật & tối ưu hóa harnessing cho các phiên sau
+```
+
+### Nguyên tắc vàng để các BOT-CEO không dẫm chân lên nhau
+
+1. **Cô lập ngữ cảnh:** BOT-CEO của lane A **không** đọc lịch sử chat hay code chi tiết của lane B; nó chỉ đọc trạng thái `wip`/`ready` và trường `touches_hotspot` / `depends_on` trong `BRANCHES.md`.
+2. **Cô lập cây làm việc:**
+   - Checkout chính (trên nhánh chung `main`): BOT-CEO **chỉ đọc mã** và **chỉ được ghi `BRANCHES.md` dưới khóa**; chỉ `copilot-git` được merge/ghi mã vào checkout chính.
+   - Worktree tách rời: đặt ngoài thư mục quét (hoặc trong `.wt/` đã thêm vào `.gitignore`), theo quy ước `<lane>--<slug>` (ví dụ `/mnt/d/Project/<repo>.wt/tap-hoa--low-stock`), nhánh `<lane>/<slug>`.
+3. **Mỗi lane một nhóm tệp/điểm nóng ưu tiên:** gom các tính năng chạm cùng nhóm tệp vào **cùng một BOT-CEO** để nó tự xếp nối tiếp (`depends_on`), tránh hai lane sửa cùng một tệp rồi kẹt `needs-rebase`.
+
+---
+
+## 3. Phân vai khi áp dụng cùng `AGENTS-TUTORIAL.md` v3.4
+
+| Vai trò | Công cụ / Model | Số lượng | Trách nhiệm chính | Không được làm |
+|---|---|---|---|---|
+| **BOT-CEO (theo lane)** | Claude Code (`claude-opus-5-5` / `claude-fable-5-2`) hoặc Codex tùy mức khó của mảng *(đây là vai chính duy nhất mở Claude Code)* | 1 agent / lane (khuyến nghị ≤ 4–5 lane đồng thời) | Kiêm Kiến trúc sư của lane: đọc mã mảng mình, chia nhánh nhỏ (< ~400 dòng diff), giữ chỗ `wip` trên `BRANCHES.md`, gọi `agm spawn` giao thợ, đọc diff + chạy kiểm chứng, đưa qua Pre-review / Reviewer / Docs, đặt `ready` với `head` SHA cố định | Merge vào `main`, push `main`, deploy, sửa code thay thợ (trừ 1 dòng kiểm chứng), tự ý sửa quy tắc harness cấp B |
+| **Đồng trao đổi / Phản biện** | **Opus High qua `agy`** (`agm ask`) | Theo nhu cầu | Trao đổi phương án thiết kế với BOT-CEO hoặc rà trước diff để giữ góc nhìn Opus mà không tiêu hạn mức Claude Code | Sửa tệp dự án |
+| **Reviewer (mặc định)** | **OpenCode** (`openai/gpt-6.1-sol` hoặc model mạnh) *(leo thang Claude Opus 5.5 High khi rủi ro cao / 2 lần `CHƯA ĐẠT`)* | Theo lượt duyệt | Duyệt độc lập từng nhánh của BOT-CEO trước khi sang docs / `ready` | Sửa code nghiệp vụ |
+| **Cập nhật docs** | **Gemini 4 Hydrogen Medium** (`agy`) | Theo nhánh có đổi docs | Nhận lệnh **sau khi Reviewer duyệt/chỉnh sửa xong, trước khi đặt `ready` gọi Copilot** để cập nhật docs và commit lên cùng nhánh | Sửa code nghiệp vụ, merge |
+| **Audit & Thợ cơ khí** | **Miễn phí (`:free` / Ollama local)** cho Audit, `explore`/tóm tắt log, sàng lọc quy ước, `worker-fast`; lỗi 2 lần hoặc việc khó nâng lên `mid`/`strong`/Codex | ≤ `[policy].max_workers` toàn máy | Audit, tóm tắt log dài, code & viết test đúng phạm vi `.agents/tasks/<ID>.md`, ghi `.agents/log/<ID>.md` và commit trên worktree | Chạm `BRANCHES.md`, rời worktree, merge |
+| **Bot GIT** | GitHub Copilot CLI (`copilot`) | **Đúng 1 phiên** (`copilot-git`) | Đọc `BRANCHES.md`, merge tuần tự đúng `head` SHA, chạy lại cổng kiểm tra, dọn worktree/nhánh đã merge | Tự sửa logic tính năng; bỏ qua `depends_on` hoặc cổng kiểm |
+| **Cố vấn kỹ thuật & Tối ưu Harness** | **Gemini Argon** (`gemini-4-argon-*` qua `agy`) | 1 vai cố vấn liên lane | Cố vấn kỹ thuật giống Codex; **tổng hợp các vấn đề lớn từ các BOT-CEO sau mỗi đợt** để cập nhật và tối ưu hóa harnessing chung (`AGENTS.md`, `CLAUDE.md`, template, skill, `BRANCHES.md`) | Đụng vào luồng code đang chạy dở của từng lane |
+
+---
+
+## 4. Giao thức `BRANCHES.md` và khóa ghi song song
+
+### 4.1. Cấu trúc một mục trong `BRANCHES.md`
+
+Mỗi nhánh là một khối `### <lane>/<slug>` dùng cặp `- khóa: giá trị` để cả người và script/Copilot đều đọc được:
+
+```markdown
+### tap-hoa/low-stock
+- status: ready
+- lane: ceo-tap-hoa
+- tier: vừa
+- head: 9f8e7d6c5b4a      # SHA cuối (đã gồm commit docs của Hydrogen nếu có); Copilot merge ĐÚNG SHA này
+- base: 1a2b3c4d5e6f      # SHA của main khi tách nhánh
+- depends_on: -           # nhánh khác phải merged/deployed trước, cách nhau dấu phẩy
+- migration: no           # yes nếu có migration DB
+- touches_hotspot: -      # tệp dùng chung dễ đụng giữa các lane (vd: core/models.py)
+- summary: Cảnh báo hàng sắp hết khi tồn dưới ngưỡng cấu hình
+- verify: <lệnh test/build thực tế đã chạy và kết quả số đếm>
+- pre_review: agy opus-high (tùy chọn) - tóm tắt / đường dẫn
+- review: opencode (openai/gpt-6.1-sol), 0 bắt buộc sửa, .agents/reviews/tap-hoa--low-stock-1.md
+- docs: gemini-4-hydrogen-medium (đã cập nhật docs/inventory.md) | không đổi
+- registered: 2026-11-19T08:40+07:00
+- git: -                  # copilot-git ghi: merge SHA, log, trạng thái deploy hoặc lý do lỗi
+```
+
+### 4.2. Bảng chuyển trạng thái
+
+| Trạng thái | Ai đặt | Ý nghĩa & quy tắc |
+|---|---|---|
+| `wip` | BOT-CEO | **Giữ chỗ ngay khi bắt đầu chia việc** — để các BOT-CEO khác thấy vùng đang làm và tránh đụng tệp. `copilot-git` bỏ qua. |
+| `blocked` | BOT-CEO | Chờ người dùng quyết định hoặc chờ nhánh thuộc lane khác (`depends_on`). |
+| `ready` | BOT-CEO | Đã qua Audit + (Pre-review) + Reviewer + Hydrogen cập nhật docs + rebase lên `main` + chạy lại kiểm; `head` SHA cố định. **Cấm commit thêm sau khi đặt `ready`.** |
+| `merging` | `copilot-git` | Đang tích hợp vào nhánh chung và chạy lại cổng kiểm. |
+| `merged` / `deployed` | `copilot-git` | Đã vào `main` (và deploy xong nếu bật). Trạng thái cuối; Copilot dọn worktree/nhánh. |
+| `needs-rebase` | `copilot-git` | Xung đột merge, SHA lệch hoặc >1 migration head → trả về đúng `lane` của BOT-CEO xử lý. |
+| `failed` | `copilot-git` | Cổng kiểm sau merge hoặc deploy lỗi (kèm đường dẫn log) → trả về BOT-CEO giao lại thợ sửa. |
+
+### 4.3. Khóa nguyên tử khi nhiều BOT-CEO và Copilot cùng ghi `BRANCHES.md`
+
+Dùng thao tác tạo thư mục (nguyên tử trên cả Windows và Linux/WSL) tại `.agents/locks/branches` (hoặc `.harness/locks/branches`):
+
+```bash
+# Lấy khóa (thử lại tối đa 30 giây)
+for i in $(seq 30); do mkdir .agents/locks/branches 2>/dev/null && break; sleep 1; done
+# ... chỉ sửa đúng mục của lane mình trong BRANCHES.md ...
+rmdir .agents/locks/branches   # nhả khóa ngay sau khi ghi xong
+```
+
+Nếu thư mục khóa tồn tại quá 10 phút (do tiến trình chết giữa chừng), người dùng kiểm tra không có agent nào đang ghi rồi xóa tay.
+
+---
+
+## 5. Vòng đời một đầu việc trong BOT-CEO (kết hợp `agm` + `hc`)
+
+Mỗi BOT-CEO vận hành theo 9 bước gọn:
+
+1. **Khởi động, trao đổi trực tiếp & quản lý vòng đời BOT-CEO qua `agm`:**
+   - Mở thẳng phiên BOT-CEO trong HERDR / `herdr-core` với tên chuẩn theo lane (tối đa 32 ký tự `a-z 0-9 - _`), ví dụ `ceo-tap-hoa`, `ceo-platform`, để bạn chat/trao đổi nhiều lượt trực tiếp ngay trong phiên đó.
+   - Bật **`agm manage ceo-tap-hoa`** (cài `agm hook install` một lần nếu dùng Claude Code): khi BOT-CEO làm dài và ngữ cảnh chạm `ctx_rotate` (mặc định 70%), `agm daemon` tự nhắc ghi bàn giao vào `.agents/handoff/` rồi mở phiên BOT-CEO kế nhiệm sạch ngữ cảnh — **không bao giờ kill phiên cũ**, vừa tránh phình ngữ cảnh vừa giữ nguyên mạch công việc của lane.
+2. **Research (chỉ đọc, trong checkout chính):**
+   - Dùng GitNexus (`query`, `context`, `impact`) để giảm tối đa số tệp phải đọc; kiểm `BRANCHES.md` xem các lane khác có mục `wip`/`ready` nào chạm cùng điểm nóng không.
+   - Tra cứu web / phản biện 1 lượt: gọi `agm ask --model gemini-4-argon-medium ...` (hoặc `agy` Opus High); đọc mã/tóm tắt log dài có thể dùng OpenCode `explore` model miễn phí.
+3. **Giữ chỗ trên `BRANCHES.md`:** ghi mục `status: wip`, `lane`, `touches_hotspot`, `depends_on` (dưới khóa thư mục).
+4. **Tạo worktree & giao thợ qua `agm spawn`:**
+   - Tạo `.agents/tasks/<ID>.md` (mục tiêu, phạm vi tệp được phép sửa, `tier:`, `skills:` tối đa 2, lệnh kiểm chứng). Mặc định dùng `tier: nhanh` (model `:free` / local) cho việc hẹp 1–2 tệp có test sẵn; chỉ nâng bậc khi fail 2 lần hoặc việc phức tạp.
+   - Chạy `dispatch.sh <ID>` (gọi `agm spawn`): tự kiểm `max_workers` và ngân sách `task:<ID>`, tạo worktree riêng, gắn nhãn `agm.task`/`agm.role`.
+5. **Theo dõi & gỡ vướng:**
+   - Thợ báo cáo hoặc hỏi qua `agm send`; câu hỏi cần người dùng quyết đi thẳng vào `agm send user --type HỎI ...` (bạn trả lời tập trung trong `agm tui` hoặc `agm reply`).
+   - Nếu thợ chạm `ctx_rotate`, `agm daemon` tự xoay vòng OpenCode worker sau khi thợ commit `.agents/log/<ID>.md`.
+6. **Cổng kiểm chất lượng của lane:**
+   - **Audit & Pre-check (model miễn phí):** chạy test/lint/build + kiểm quy ước (`git diff` trong phạm vi, có `.agents/log/<ID>.md` & test mới).
+   - **Pre-review (tùy chọn giữ góc nhìn Opus):** gửi diff cho **`agy` Opus High** (`agm ask` / `sparring-opus`) rà lỗi trước.
+   - **Reviewer mặc định (OpenCode):** gọi **OpenCode Reviewer** (`openai/gpt-6.1-sol` hoặc model mạnh) duyệt chính thức; nếu CHƯA ĐẠT, chuyển nguyên văn lỗi về thợ sửa. Chỉ leo thang về **Claude Opus 5.5 High** với ca bảo mật/dữ liệu/migration hoặc khi bị `CHƯA ĐẠT` 2 lần liên tiếp.
+   - **Cập nhật docs (khi có thay đổi):** gọi **Gemini 4 Hydrogen Medium** (`docs-hydrogen`) trên chính worktree đó để cập nhật tài liệu liên quan và commit trên nhánh.
+7. **Rebase & chốt `ready`:**
+   - Rebase nhánh lên `main` mới nhất (nếu xung đột hoặc lệch migration head thì xử lý ngay trong worktree), chạy lại lệnh kiểm chứng, lấy `HEAD_SHA=$(git rev-parse --short=12 HEAD)`.
+   - Cập nhật mục trên `BRANCHES.md` (dưới khóa): `status: ready`, `head: $HEAD_SHA`, `verify`, `review`, `docs`, `registered`.
+8. **Bàn giao cho `copilot-git`:**
+   - Nhắn ngắn qua `agm send copilot-git --type GIAO --task <ID> "Nhánh <lane>/<slug> ready tại SHA $HEAD_SHA, xem BRANCHES.md"`.
+   - Nếu `copilot-git` trả `needs-rebase` hoặc `failed`, BOT-CEO chuyển về `wip`, xử lý trên worktree và đăng ký `ready` lại với SHA mới.
+   - Khi `deployed`/`merged`, BOT-CEO dọn hoặc để `cleanup-wt.sh` dọn worktree; `agm cleanup` dọn terminal BOT-CEO đã bàn giao cũ (do người dùng xác nhận).
+9. **Chuyển bài học lớn cho Gemini Argon:**
+   - Cuối đợt, nếu lane gặp lỗi lặp lại ≥ 2 lần (brief mơ hồ, xung đột điểm nóng, sai cổng, model hay vướng), BOT-CEO ghi ngắn nguyên nhân + đường dẫn bằng chứng vào `.agents/decisions/` (hoặc báo cho `argon-adv`) để **Gemini Argon** tổng hợp và tối ưu harnessing cho các phiên sau.
+
+---
+
+## 6. Giới hạn & quy tắc cứng khi vận hành nhiều BOT-CEO
+
+| Tham số | Khuyến nghị | Cách thực thi |
+|---|---|---|
+| Số BOT-CEO đồng thời | ≤ 4–5 lane | Mỗi lane mở một terminal `ceo-<lane>` có `agm manage` |
+| Tổng thợ OpenCode đồng thời trên máy | Theo `[policy].max_workers` trong `~/.agmag/providers.toml` | `agm spawn` chặn cứng khi chạm trần |
+| Ngân sách token mỗi việc / lane | Đặt bằng `agm budget set task:<ID> --soft ... --hard ...` | `agm daemon` cảnh báo hoặc chặn `agm spawn` |
+| Số migration đang `wip`/`ready` mỗi lane | Tối đa 1 | Kiểm tra khi viết mục `BRANCHES.md` |
+| Số `copilot-git` | **Đúng 1** | Hàng đợi merge/deploy luôn tuần tự |
+| Quyền dừng BOT-CEO (Claude/Codex) | **Chỉ người dùng** | `agm kill` từ chối mọi agent tự ý kill Claude/Codex |
+
+### Điều BOT-CEO không bao giờ làm
+- Không đọc sâu mã của lane khác nếu không liên quan điểm chạm (tránh phình ngữ cảnh).
+- Không sửa `BRANCHES.md` khi chưa giữ khóa thư mục.
+- Không đặt `ready` khi chưa có kết quả Audit + Reviewer (+ cập nhật docs của Hydrogen Medium nếu có thay đổi).
+- Không tự merge, push `main` hoặc deploy (giao `copilot-git`).
+- Không tự nới lỏng quy tắc cứng của harness; đề xuất cải tiến harness chuyển qua **Gemini Argon** và cần người dùng duyệt đối với thay đổi cấp độ quy tắc cứng/quyền.
+
+---
+
+## 7. Mẫu prompt khởi động một BOT-CEO
+
+```text
+Bạn là BOT-CEO phụ trách lane <tên-lane> (terminal: ceo-<tên-lane>).
+Hãy đọc AGENTS.md, BOT-CEO.md và kiểm tra trạng thái wip/ready hiện có trong BRANCHES.md.
+Đề bài của lane <tên-lane>:
+1. ...
+2. ...
+Quy tắc: chỉ giữ ngữ cảnh trong phạm vi lane này; giữ chỗ `wip` có khóa trên BRANCHES.md; giao thợ qua `agm spawn`; gửi tin qua `agm send`; khi cần người dùng quyết dùng `agm send user --type HỎI`; sau Reviewer gọi Gemini 4 Hydrogen Medium cập nhật docs nếu có thay đổi; chỉ đặt `ready` khi đã có SHA cuối và đầy đủ kiểm chứng để bàn giao cho `copilot-git`.
+```
+
+---
+
+## Nguồn tham khảo
+
+- Mô hình gốc đa lane + `BRANCHES.md` + khóa thư mục: `/mnt/d/Project/MATHY-AI/HARNESSING.md`, `/mnt/d/Project/MATHY-AI/BRANCHES.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CEO_BOT.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CAI_TIEN_HARNESS.md`
+- Bộ điều phối `agm` (`agmag` v0.2.0): `/mnt/d/Project/agmag/README_vi.md` (hoặc https://github.com/wosonday/agmag/)
+- Tài liệu cùng bộ: [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md), [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md)

@@ -197,3 +197,30 @@ fn reply_only_to_agent_questions_and_done_dismisses() -> Result<()> {
     assert!(store.inbox(true)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn set_managed_launch_blocks_agents_and_unconfirmed_users() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    term(&store, "t11", "claude-code", None);
+    let spec = agmag::launch::parse_launch_spec(
+        "claude-code",
+        &["claude".into(), "--dangerously-skip-permissions".into()],
+        &cwd,
+    )?;
+
+    // Agent không thể tự bật `manage` để gắn cờ bỏ qua quyền cho phiên kế nhiệm.
+    assert!(agmag::actions::set_managed_launch(&store, &Caller::Agent(Some("t11".into())), "t11", &spec, 10).is_err());
+    assert!(!store.terminal("t11")?.unwrap().managed);
+    assert!(store.inbox(true)?.iter().any(|i| i.source == "request" && i.kind.as_deref() == Some("manage")));
+
+    // Người dùng chưa xác nhận cũng bị từ chối.
+    assert!(agmag::actions::set_managed_launch(&store, &Caller::User { confirmed: false }, "t11", &spec, 11).is_err());
+    assert!(!store.terminal("t11")?.unwrap().managed);
+
+    // Chỉ User { confirmed: true } mới bật được.
+    agmag::actions::set_managed_launch(&store, &Caller::User { confirmed: true }, "t11", &spec, 12)?;
+    assert!(store.terminal("t11")?.unwrap().managed);
+    Ok(())
+}

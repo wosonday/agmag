@@ -8,6 +8,7 @@ pub mod git;
 pub mod hc;
 pub mod hook;
 pub mod ingest;
+pub mod launch;
 pub mod model;
 pub mod opencode;
 pub mod parse;

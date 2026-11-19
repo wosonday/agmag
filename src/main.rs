@@ -126,6 +126,16 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay
+    Manage {
+        target: String,
+        #[arg(long)]
+        off: bool,
+        #[arg(long)]
+        cmd: Option<String>,
+        #[arg(last = true)]
+        argv: Vec<String>,
+    },
     /// Ngân sách: task:<ID> (token) hoặc provider:<tên>:<phút> (% hạn mức)
     Budget {
         #[command(subcommand)]
@@ -267,6 +277,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Kill { target, yes } => ops::stop(&store, &target, "kill", yes, now),
         Cmd::Interrupt { target, yes } => ops::stop(&store, &target, "interrupt", yes, now),
         Cmd::Rotate { target, yes } => ops::rotate(&store, &target, yes, now),
+        Cmd::Manage { target, off, cmd, argv } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
         Cmd::Budget { cmd: BudgetCmd::Set { scope, soft, hard, action } } => ops::budget_set(&store, &scope, soft, hard, &action),
         Cmd::Budget { cmd: BudgetCmd::Ls } => ops::budget_ls(&store, json),
         Cmd::Budget { cmd: BudgetCmd::Rm { scope } } => {

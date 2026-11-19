@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 
 use crate::config::Config;
 use crate::hc::{terminal_row_from, Hc, RunSpec};
+use crate::launch::LaunchSpec;
 use crate::store::{MessageRow, Store};
 
 pub const KINDS: [&str; 7] = ["GIAO", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "CHƯA ĐẠT"];
@@ -239,6 +240,36 @@ fn authorize(store: &Store, hc: &dyn Hc, caller: &Caller, target: &str, verb: &s
         bail!("{reason}");
     }
     Ok(())
+}
+
+/// Bật `managed=1` + lưu `LaunchSpec` sau khi kiểm tra nghiêm ngặt người gọi (chỉ User đã xác nhận `y`).
+pub fn set_managed_launch(store: &Store, caller: &Caller, target: &str, spec: &LaunchSpec, now: i64) -> Result<()> {
+    let who = caller_name(caller);
+    let detail = format!("exe={}, args={:?}, cwd={}", spec.executable, spec.argv, spec.cwd);
+    match caller {
+        Caller::User { confirmed: true } => {
+            let json = spec.to_json()?;
+            store.set_terminal_launch(target, true, Some(&json))?;
+            store.log_action(&who, "manage", target, &detail, true, now)?;
+            Ok(())
+        }
+        Caller::User { confirmed: false } => {
+            store.log_action(&who, "manage", target, "chưa xác nhận", false, now)?;
+            bail!("chưa xác nhận bật quản lý cho {target}");
+        }
+        Caller::Agent(_) => {
+            let reason = format!("chỉ người dùng ở terminal mới được bật quản lý `agm manage` cho {target}");
+            store.log_action(&who, "manage", target, &format!("từ chối: {reason}"), false, now)?;
+            store.open_inbox(
+                Some(target),
+                "request",
+                Some("manage"),
+                &format!("{who} đề nghị bật quản lý {target} ({detail})"),
+                now,
+            )?;
+            bail!("{reason}");
+        }
+    }
 }
 
 pub fn kill(store: &Store, hc: &dyn Hc, caller: &Caller, target: &str, now: i64) -> Result<()> {

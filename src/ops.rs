@@ -12,7 +12,8 @@ use serde_json::{json, Value};
 use agmag::actions::{self, classify_caller, Caller, SpawnReq};
 use agmag::config::Config;
 use agmag::git::GitCli;
-use agmag::hc::HcCli;
+use agmag::hc::{terminal_row_from, Hc, HcCli};
+use agmag::launch::{check_claude_hook_installed, extract_launch_argv, parse_cmd_tokens, parse_launch_spec};
 use agmag::store::{BudgetRow, Store};
 use agmag::{correlate, daemon, policy, report, rotation};
 
@@ -192,6 +193,77 @@ pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
     } else {
         println!("{target} đang trong một vòng xoay.");
     }
+    Ok(())
+}
+
+fn claude_settings_home() -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("AGM_CLAUDE_HOME") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    dirs::home_dir()
+}
+
+pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_argv: &[String], now: i64) -> Result<()> {
+    let Some(mut t) = store.terminal(target)? else {
+        bail!("không biết terminal {target} (chạy `agm daemon` hoặc `agm ps` trước)");
+    };
+    if off {
+        store.clear_terminal_managed(&t.address)?;
+        // Tắt quản lý là hạ quyền nên ai cũng được làm, nhưng nhật ký phải ghi đúng người gọi.
+        let who = hc_terminal().unwrap_or_else(|| "user".into());
+        store.log_action(&who, "manage", &t.address, "off", true, now)?;
+        println!("Đã tắt quản lý tự động cho {}.", t.address);
+        return Ok(());
+    }
+    let hc = HcCli::default();
+    let hc_info = hc.get(&t.address).ok();
+    if let Some(v) = &hc_info {
+        let fresh = terminal_row_from(v);
+        if let Some(app) = fresh.app {
+            t.app = Some(app);
+        }
+        if let Some(cwd) = fresh.cwd {
+            t.cwd = Some(cwd);
+        }
+    }
+    let Some(app) = t.app.as_deref().filter(|a| matches!(*a, "claude-code" | "codex")) else {
+        bail!(
+            "agm manage chỉ hỗ trợ claude-code và codex ({} là {})",
+            t.address,
+            t.app.as_deref().unwrap_or("không rõ app")
+        );
+    };
+    let Some(cwd) = t.cwd.as_deref().filter(|c| !c.trim().is_empty()) else {
+        bail!("không biết cwd của {}", t.address);
+    };
+    if app == "claude-code" {
+        let home = claude_settings_home().context("không tìm thấy thư mục home cho .claude/settings.json")?;
+        check_claude_hook_installed(&home)?;
+    }
+    let argv = if !raw_argv.is_empty() {
+        raw_argv.to_vec()
+    } else if let Some(c) = cmd {
+        parse_cmd_tokens(c)?
+    } else if let Some(v) = &hc_info
+        && let Some(found) = extract_launch_argv(v, app)
+    {
+        found
+    } else {
+        let bin = if app == "claude-code" { "claude" } else { "codex" };
+        bail!("không đọc được lệnh chạy {app} trực tiếp từ {} — hãy truyền lệnh tường minh qua `agm manage {target} -- {bin} ...`", t.address);
+    };
+    let spec = parse_launch_spec(app, &argv, cwd)?;
+    let question = format!(
+        "Bật quản lý tự động cho {} ({app}): exe={}, args={:?}, cwd={}?",
+        t.address, spec.executable, spec.argv, spec.cwd
+    );
+    // Không nhận --yes: agent chạy ngầm có thể tự truyền --yes để nâng quyền argv cho phiên kế nhiệm.
+    let c = caller(store, false, Some(&question))?;
+    actions::set_managed_launch(store, &c, &t.address, &spec, now)?;
+    println!(
+        "Đã bật quản lý cho {} ({app}): exe={}, args={:?}, cwd={}",
+        t.address, spec.executable, spec.argv, spec.cwd
+    );
     Ok(())
 }
 

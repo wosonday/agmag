@@ -127,6 +127,42 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_session_identity(&self, sid: i64, session_id: &str, cwd: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions
+             SET session_id = ?2,
+                 cwd = COALESCE(?3, cwd),
+                 started_ms = COALESCE(
+                     started_ms,
+                     (SELECT MIN(ts_ms) FROM turns WHERE session = ?1),
+                     (SELECT MIN(ts_ms) FROM usage WHERE session = ?1)
+                 )
+             WHERE id = ?1",
+            params![sid, session_id, cwd],
+        )?;
+        Ok(())
+    }
+
+    /// Gộp và xóa các phiên dạng tệp của `agy` trùng `session_id` khi `agm ask` ghi bản `agy://<id>` chuẩn xác hơn.
+    pub fn dedupe_agy_ask_session(&self, keep_sid: i64, conv_id: &str) -> Result<()> {
+        self.with_savepoint(|tx| {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM sessions WHERE source = 'agy' AND session_id = ?1 AND id != ?2",
+            )?;
+            let old_ids: Vec<i64> = stmt
+                .query_map(params![conv_id, keep_sid], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            drop(stmt);
+            for old_sid in old_ids {
+                tx.execute("UPDATE terminals SET session = ?1 WHERE session = ?2", params![keep_sid, old_sid])?;
+                tx.execute("DELETE FROM usage WHERE session = ?1", [old_sid])?;
+                tx.execute("DELETE FROM turns WHERE session = ?1", [old_sid])?;
+                tx.execute("DELETE FROM sessions WHERE id = ?1", [old_sid])?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn set_model(&self, sid: i64, model: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE sessions SET model=?2 WHERE id=?1",
@@ -256,6 +292,17 @@ impl Store {
             [sid],
         )?;
         Ok(())
+    }
+
+    pub fn session_last_ts(&self, sid: i64) -> Result<Option<i64>> {
+        Ok(self.conn.query_row(
+            "SELECT MAX(ts_ms) FROM (
+                SELECT ts_ms FROM usage WHERE session = ?1
+                UNION ALL SELECT ts_ms FROM turns WHERE session = ?1
+             )",
+            [sid],
+            |r| r.get(0),
+        )?)
     }
 
     pub fn add_line_stats(&self, sid: i64, unknown: u64, bad: u64) -> Result<()> {

@@ -86,7 +86,7 @@ Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọ
 | **Claude Code** | Không bắt buộc. Muốn có **% hạn mức gói 5h/7d** thì chạy **một lần** `agm hook install` (áp dụng cho mọi session Claude) | Thanh trạng thái dưới cùng của Claude Code: `Opus 5.5 · ctx 34% · 5h 24% · 7d 41%`; và mọi lệnh `agm` |
 | **Codex** | Không gì cả (hạn mức gói có sẵn trong log Codex) | `agm quota / ls / tui` |
 | **OpenCode** | Không gì cả (agm đọc `opencode.db`, chỉ đọc) | `agm ls / cost / tui` |
-| **agy (Gemini)** | agy không lưu token trên máy → chỉ đo được khi hỏi qua `agm ask "…"` | `agm cost` |
+| **agy (Gemini)** | Không gì cả (agm đọc `transcript.jsonl` và `conversation_summaries.db` của `antigravity-cli`, và ghi `agm ask`) | `agm ls / cost / tui` |
 
 > `agm hook install` thêm `statusLine` vào `~/.claude/settings.json`. Nếu bạn đã có statusLine riêng, lệnh từ chối và không ghi đè — gọi `agm hook statusline` từ script của bạn.
 
@@ -264,7 +264,7 @@ Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.
 ## 11. Giới hạn đã biết
 
 - Phiên chạy trong HERDR TUI (app) được đo token qua log, nhưng chỉ terminal của **herdr-core** mới can thiệp được.
-- Token của agy chỉ đo được qua `agm ask`.
+- Token của `agy` ngoài `antigravity-cli` (ví dụ phiên IDE không ghi `transcript.jsonl`) chỉ đo được qua `agm ask`.
 - Hạn mức ChatGPT do OpenCode tiêu không có trong log; agm thấy gián tiếp qua lần ghi `rate_limits` kế tiếp của Codex.
 - Ngân sách theo provider chỉ cảnh báo, chưa chặn `spawn` (agm chưa biết template dùng provider nào).
 - Agent có TTY, tự xóa `HC_TERMINAL_ID` rồi tự gõ `y` về lý thuyết vẫn được coi là người dùng (agm không kiểm cây tiến trình cha).

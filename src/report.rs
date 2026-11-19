@@ -471,7 +471,7 @@ pub fn usage_summary_with_offset(
 pub fn coverage_status(store: &Store, required_since_ms: i64) -> Result<(Option<i64>, bool)> {
     let mut max_covered: Option<i64> = None;
     let mut incomplete = false;
-    for src in ["codex", "claude"] {
+    for src in ["codex", "claude", "agy"] {
         match store.covered_since(src)? {
             Some(c) => {
                 if c > required_since_ms {

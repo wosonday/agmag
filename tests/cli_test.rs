@@ -29,6 +29,7 @@ fn agm(tmp: &Path, args: &[&str]) -> Output {
         .env("AGM_CODEX_DIR", tmp.join("codex"))
         .env("AGM_CLAUDE_DIR", tmp.join("claude"))
         .env("AGM_OPENCODE_DB", tmp.join("opencode.db"))
+        .env("AGM_AGY_DIR", tmp.join("agy"))
         .output()
         .unwrap()
 }
@@ -84,6 +85,7 @@ fn agm_env(tmp: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
         .env("AGM_CODEX_DIR", tmp.join("codex"))
         .env("AGM_CLAUDE_DIR", tmp.join("claude"))
         .env("AGM_OPENCODE_DB", tmp.join("opencode.db"))
+        .env("AGM_AGY_DIR", tmp.join("agy"))
         .env("AGM_HC_BIN", tmp.join("khong-co-hc"))
         .env_remove("HC_TERMINAL_ID");
     for (k, v) in env {
@@ -179,6 +181,7 @@ fn cli_tui_with_piped_stdin_cannot_kill_codex() {
         .env("AGM_CODEX_DIR", tmp.path().join("codex"))
         .env("AGM_CLAUDE_DIR", tmp.path().join("claude"))
         .env("AGM_OPENCODE_DB", tmp.path().join("opencode.db"))
+        .env("AGM_AGY_DIR", tmp.path().join("agy"))
         .env("AGM_HC_BIN", tmp.path().join("khong-co-hc"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -217,6 +220,33 @@ fn cli_rotate_refuses_unknown_app_and_budget_rejects_nan() {
     assert_eq!(agm_env(tmp.path(), &["rotate", "t7"], &[]).status.code(), Some(1));
     assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "NaN", "--hard", "5"], &[]).status.success());
     assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "-1", "--hard", "5"], &[]).status.success());
+}
+
+#[test]
+fn cli_agy_scan_ls_and_cost() {
+    let tmp = sandbox(None);
+    let agy_logs = tmp.path().join("agy/brain/conv-cli/.system_generated/logs");
+    fs::create_dir_all(&agy_logs).unwrap();
+    fs::write(
+        agy_logs.join("transcript.jsonl"),
+        concat!(
+            "{\"step_index\":0,\"type\":\"USER_INPUT\",\"created_at\":\"2026-11-18T13:09:38Z\",\"content\":\"<USER_REQUEST>\\nhi\\n</USER_REQUEST>\"}\n",
+            "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"2026-11-18T13:09:40Z\",\"model\":\"gemini-4-hydrogen-high\",\"input_tokens\":500,\"cache_read_tokens\":200,\"output_tokens\":40,\"content\":\"ok\"}\n"
+        ),
+    )
+    .unwrap();
+
+    let scan = json(&agm(tmp.path(), &["scan", "--days", "36500", "--json"]));
+    assert!(scan["events"].as_u64().unwrap() >= 4);
+
+    let sessions = json(&agm(tmp.path(), &["ls", "--days", "36500", "--json"]));
+    assert!(sessions.as_array().unwrap().iter().any(|r| r["source"] == "agy" && r["session_id"] == "conv-cli"));
+
+    let cost = json(&agm(tmp.path(), &["cost", "--by", "source", "--days", "36500", "--json"]));
+    let agy_row = cost.as_array().unwrap().iter().find(|r| r["key"] == "agy").expect("agy cost row");
+    assert_eq!(agy_row["usage"]["input_uncached"], 500);
+    assert_eq!(agy_row["usage"]["cache_read"], 200);
+    assert_eq!(agy_row["usage"]["output"], 40);
 }
 
 #[test]

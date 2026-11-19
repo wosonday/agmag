@@ -14,8 +14,8 @@ fn ask_records_agy_usage() -> anyhow::Result<()> {
         [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
     )?;
-    // thinking không nằm trong output_tokens của agy (input + output = total) → cộng vào output.
-    assert_eq!(row, ("agy://conv-1".into(), "gemini-4-argon-medium".into(), 10000, 682, 411, 54));
+    // `output_tokens` của agy đã gồm `thinking_tokens` (10682 + 357 == 11039 total_tokens).
+    assert_eq!(row, ("agy://conv-1".into(), "gemini-4-argon-medium".into(), 10000, 682, 357, 54));
     let turns: i64 = store.conn().query_row("SELECT COUNT(*) FROM turns", [], |r| r.get(0))?;
     assert_eq!(turns, 2);
     Ok(())

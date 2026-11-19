@@ -186,6 +186,9 @@ pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestS
         if let Some(model) = model {
             parser.seed_model(&model);
         }
+        if let Some(ts_ms) = store.session_last_ts(sid)? {
+            parser.seed_last_ts(ts_ms);
+        }
     }
     let mut stats = IngestStats {
         files: 1,

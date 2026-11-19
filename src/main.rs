@@ -33,7 +33,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Quét log Codex/Claude mới vào CSDL
+    /// Quét log Codex/Claude/agy mới vào CSDL
     Scan {
         #[arg(long, default_value_t = 7)]
         days: i64,
@@ -437,6 +437,18 @@ fn scan(store: &Store, since_ms: i64) -> Result<agmag::ingest::IngestStats> {
         Ok(oc) => stats.add(&oc),
         Err(err) => {
             eprintln!("agm: bỏ qua opencode.db: {err:#}");
+            stats.skipped += 1;
+        }
+    }
+    match agmag::agy::ingest_agy(store, &agmag::agy::default_dir(), since_ms) {
+        Ok(ag) => {
+            if ag.skipped == 0 {
+                store.update_covered_since("agy", since_ms)?;
+            }
+            stats.add(&ag);
+        }
+        Err(err) => {
+            eprintln!("agm: bỏ qua agy: {err:#}");
             stats.skipped += 1;
         }
     }

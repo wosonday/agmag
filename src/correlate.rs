@@ -26,6 +26,7 @@ fn source_for_app(app: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "claude-code" => Some("claude"),
         "opencode" => Some("opencode"),
+        "antigravity" => Some("agy"),
         _ => None,
     }
 }

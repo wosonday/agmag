@@ -1,5 +1,5 @@
 //! `agm ask`: gọi agy (Gemini) một lần ở chế độ chỉ đọc và ghi lại token.
-//! Phiên agy tương tác không để lại token trong máy (P0), nên đây là cách duy nhất đo được agy.
+//! Phiên agy tương tác được quét riêng từ `~/.gemini/antigravity-cli/brain/` (`src/agy.rs`).
 
 use std::process::Command;
 
@@ -16,6 +16,8 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
     let conv = out["conversation_id"].as_str().map(String::from).unwrap_or_else(|| format!("ask-{now}"));
     let sid = store.session_id_for_path(Source::Agy, &format!("agy://{conv}"))?;
     store.set_meta(sid, &SessionMeta { session_id: conv.clone(), cwd: None, cli_version: None, started_ms: Some(now) })?;
+    // Nếu daemon/TUI vừa quét transcript của chính lượt ask này thành phiên dạng tệp thì xóa bản trùng.
+    store.dedupe_agy_ask_session(sid, &conv)?;
     // Model: theo tham số hoặc đầu ra agy; không biết thì để trống (không bịa tên).
     let model = model.map(String::from).or_else(|| out["model"].as_str().map(String::from));
     if let Some(m) = &model {
@@ -43,8 +45,9 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
                 input_uncached: n("input_tokens").saturating_sub(cache),
                 cache_read: cache,
                 cache_write: 0,
-                // agy: input + output = total, thinking tách riêng → tính vào output (tính phí như output).
-                output: n("output_tokens") + thinking,
+                // Đã kiểm thực tế với `agy --output-format json`: `output_tokens` đã gồm `thinking_tokens`
+                // (`input_tokens + output_tokens == total_tokens`). Giữ `reasoning ⊂ output` (config.rs).
+                output: n("output_tokens").max(thinking),
                 reasoning: thinking,
             },
         },
@@ -58,9 +61,14 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
     Ok(response)
 }
 
+/// Thư mục làm việc tạm cho `agm ask` (dùng chung để `agy::ingest_agy` lọc bỏ phiên one-shot).
+pub fn ask_workdir() -> std::path::PathBuf {
+    std::env::temp_dir().join("agmag-ask")
+}
+
 /// Chạy agy một lần (chỉ đọc, sandbox) trong thư mục tạm ngoài repo.
 pub fn run_agy(question: &str, model: Option<&str>, timeout_s: u64) -> Result<Value> {
-    let dir = std::env::temp_dir().join("agmag-ask");
+    let dir = ask_workdir();
     std::fs::create_dir_all(&dir)?;
     let mut cmd = Command::new(std::env::var("AGM_AGY_BIN").unwrap_or_else(|_| "agy".into()));
     cmd.current_dir(&dir)

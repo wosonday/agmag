@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
-use agmag::actions::{self, classify_caller, Caller, SpawnReq};
+use agmag::actions::{self, classify_caller, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate, SpawnReq};
 use agmag::config::Config;
 use agmag::git::GitCli;
 use agmag::hc::{terminal_row_from, Hc, HcCli};
@@ -281,6 +281,122 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
         t.address, spec.executable, spec.argv, spec.cwd
     );
     Ok(())
+}
+
+pub fn cleanup(store: &Store, targets: &[String], all: bool, yes: bool, json_out: bool, now: i64) -> Result<()> {
+    let candidates = eligible_cleanups(store)?;
+    if json_out && targets.is_empty() && !all {
+        return print_json(&candidates);
+    }
+    if candidates.is_empty() {
+        if json_out {
+            return print_json(&serde_json::json!({"done": 0, "skipped": [], "errors": []}));
+        }
+        println!("Không có phiên đã bàn giao nào đủ điều kiện dọn dẹp.");
+        return Ok(());
+    }
+
+    let selected: Vec<CleanupCandidate> = if all {
+        candidates.clone()
+    } else if !targets.is_empty() {
+        let mut chosen = Vec::new();
+        for t in targets {
+            let Some(item) = candidates.iter().find(|c| c.old_terminal == *t || c.old_name.as_deref() == Some(t.as_str())) else {
+                bail!("terminal '{t}' không nằm trong danh sách đủ điều kiện dọn dẹp");
+            };
+            if !chosen.iter().any(|x: &CleanupCandidate| x.rotation_id == item.rotation_id) {
+                chosen.push(item.clone());
+            }
+        }
+        chosen
+    } else {
+        print_cleanup_candidates(&candidates);
+        if !std::io::stdin().is_terminal() {
+            bail!("cần chỉ định terminal, `--all` hoặc chạy ở terminal tương tác để chọn");
+        }
+        eprint!("Chọn số mục cần dọn (vd 1,2 hoặc all; Enter để hủy): ");
+        std::io::stderr().flush()?;
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        let indices = parse_selection(line.trim(), candidates.len())?;
+        if indices.is_empty() {
+            println!("Đã hủy.");
+            return Ok(());
+        }
+        indices.into_iter().map(|idx| candidates[idx].clone()).collect()
+    };
+
+    if targets.is_empty() && !all {
+        // Đã hiển thị bảng ở trên; giờ chỉ hiện danh sách đã chốt.
+        println!("Sẽ dọn {} mục:", selected.len());
+    } else {
+        print_cleanup_candidates(&selected);
+    }
+    let prompt = format!("Xác nhận dọn {} phiên cũ đã bàn giao?", selected.len());
+    let c = caller(store, yes, Some(&prompt))?;
+    if !matches!(c, Caller::User { confirmed: true }) {
+        println!("Đã hủy.");
+        return Ok(());
+    }
+    let report = execute_cleanup_batch(store, &HcCli::default(), &c, &selected, now)?;
+    if json_out {
+        return print_json(&report);
+    }
+    println!(
+        "Hoàn tất dọn dẹp: {} đã dọn, {} bỏ qua, {} lỗi.",
+        report.done,
+        report.skipped.len(),
+        report.errors.len()
+    );
+    for s in &report.skipped {
+        println!("  [bỏ qua] {s}");
+    }
+    for e in &report.errors {
+        println!("  [lỗi] {e}");
+    }
+    Ok(())
+}
+
+pub fn parse_selection(input: &str, max: usize) -> Result<Vec<usize>> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    if trimmed.eq_ignore_ascii_case("all") {
+        return Ok((0..max).collect());
+    }
+    let mut out = Vec::new();
+    for part in trimmed.split([',', ' ']).filter(|s| !s.is_empty()) {
+        let idx: usize = part.parse().with_context(|| format!("số mục không hợp lệ: '{part}'"))?;
+        if idx == 0 || idx > max {
+            bail!("mục #{idx} nằm ngoài phạm vi 1..={max}");
+        }
+        if !out.contains(&(idx - 1)) {
+            out.push(idx - 1);
+        }
+    }
+    Ok(out)
+}
+
+fn print_cleanup_candidates(items: &[CleanupCandidate]) {
+    for (i, c) in items.iter().enumerate() {
+        let old_st = if c.old_live { "live" } else { "exited" };
+        let new_desc = match (&c.new_terminal, c.new_live) {
+            (Some(a), true) => format!("{a} (live)"),
+            (Some(a), false) => format!("{a} (không live)"),
+            (None, _) => "-".into(),
+        };
+        println!(
+            "#{} {} ({}, {}) → {}  [rot #{} · {}]",
+            i + 1,
+            c.old_terminal,
+            c.old_app.as_deref().unwrap_or("?"),
+            old_st,
+            new_desc,
+            c.rotation_id,
+            c.handoff_path.as_deref().unwrap_or("-"),
+        );
+    }
 }
 
 // ---------- ngân sách, policy, ghép tay ----------

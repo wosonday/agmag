@@ -1,5 +1,5 @@
 //! `agm tui`: bảng điều khiển vẽ lại theo chu kỳ (mã ANSI) + dòng lệnh ngắn.
-//! Không dùng thư viện TUI (máy đang offline); phím được thay bằng lệnh một chữ: r s i k p q.
+//! Không dùng thư viện TUI (máy đang offline); phím được thay bằng lệnh một chữ: r s c i k p q.
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::sync::mpsc;
@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use agmag::actions::{self, Caller};
+use agmag::actions::{self, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate};
 use agmag::config::Config;
 use agmag::dashboard::{parse_command, render, snapshot, TuiCmd};
 use agmag::hc::HcCli;
@@ -40,6 +40,9 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
     }
     let mut note = String::new();
     let mut pending: Option<TuiCmd> = None;
+    let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;
+    let mut cleanup_selected: Option<Vec<CleanupCandidate>> = None;
+
     loop {
         let _ = scan(store);
         let now = crate::now_ms();
@@ -47,8 +50,16 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
             Ok(s) => render(&s, width()),
             Err(e) => format!("không đọc được CSDL: {e:#}\n"),
         };
-        // Xóa màn hình + về góc trên; vẽ; in ghi chú lần trước và dấu nhắc.
+        // Xóa màn hình + về góc trên; vẽ; in danh sách cleanup/ghi chú và dấu nhắc.
         print!("\x1b[2J\x1b[H{text}");
+        if let Some(list) = &cleanup_list {
+            println!("── DỌN DẸP THỦ CÔNG (nhập `c 1,2` hoặc `c all`; Enter để làm mới) ──");
+            for (i, c) in list.iter().enumerate() {
+                let st = if c.old_live { "live" } else { "exited" };
+                let succ = c.new_terminal.as_deref().unwrap_or("-");
+                println!("  #{} {} ({st}) → {succ}", i + 1, c.old_terminal);
+            }
+        }
         if !note.is_empty() {
             println!("» {note}");
         }
@@ -59,7 +70,29 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         };
+        let now = crate::now_ms();
         note.clear();
+
+        if let Some(sel) = cleanup_selected.take() {
+            if line.trim() == "y" {
+                let user = match &who {
+                    Caller::User { .. } => Caller::User { confirmed: true },
+                    agent => agent.clone(),
+                };
+                note = match execute_cleanup_batch(store, &hc, &user, &sel, now) {
+                    Ok(rep) => {
+                        cleanup_list = None;
+                        format!("đã dọn {}, bỏ qua {}, lỗi {}", rep.done, rep.skipped.len(), rep.errors.len())
+                    }
+                    Err(e) => format!("lỗi dọn dẹp: {e:#}"),
+                };
+            } else {
+                cleanup_list = None;
+                note = "đã hủy dọn dẹp".into();
+            }
+            continue;
+        }
+
         // Kill/ngắt cần xác nhận: lệnh trước đặt `pending`, dòng này phải là "y".
         if let Some(cmd) = pending.take() {
             if line.trim() == "y" {
@@ -81,9 +114,51 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
             }
             continue;
         }
+
         match parse_command(&line) {
             Ok(TuiCmd::Quit) => return Ok(()),
             Ok(TuiCmd::Refresh) => {}
+            Ok(TuiCmd::Cleanup(arg)) => {
+                if let Some(sel_expr) = arg {
+                    let list = match cleanup_list.take() {
+                        Some(l) => l,
+                        None => eligible_cleanups(store).unwrap_or_default(),
+                    };
+                    if list.is_empty() {
+                        note = "không có phiên đã bàn giao cần dọn".into();
+                    } else {
+                        match crate::ops::parse_selection(&sel_expr, list.len()) {
+                            Ok(indices) if !indices.is_empty() => {
+                                let chosen: Vec<CleanupCandidate> = indices.into_iter().map(|i| list[i].clone()).collect();
+                                let items: Vec<String> = chosen
+                                    .iter()
+                                    .map(|c| format!("{}→{}", c.old_terminal, c.new_terminal.as_deref().unwrap_or("-")))
+                                    .collect();
+                                note = format!(
+                                    "xác nhận dọn {} phiên ({})? gõ y rồi Enter (khác: hủy)",
+                                    chosen.len(),
+                                    items.join(", ")
+                                );
+                                cleanup_selected = Some(chosen);
+                            }
+                            Ok(_) => note = "chưa chọn mục nào".into(),
+                            Err(e) => {
+                                cleanup_list = Some(list);
+                                note = format!("lỗi chọn: {e:#}");
+                            }
+                        }
+                    }
+                } else {
+                    match eligible_cleanups(store) {
+                        Ok(list) if list.is_empty() => {
+                            cleanup_list = None;
+                            note = "không có phiên đã bàn giao cần dọn".into();
+                        }
+                        Ok(list) => cleanup_list = Some(list),
+                        Err(e) => note = format!("lỗi: {e:#}"),
+                    }
+                }
+            }
             Ok(cmd @ (TuiCmd::Kill(_) | TuiCmd::Interrupt(_))) => {
                 note = format!("xác nhận {cmd:?}? gõ y rồi Enter (khác: hủy)");
                 pending = Some(cmd);

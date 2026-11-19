@@ -212,6 +212,58 @@ fn spawn_successor_precheck_allows_no_task_and_checks_budget() -> Result<()> {
 }
 
 #[test]
+fn cleanup_batch_requires_confirmation_handles_live_and_exited_and_keeps_history() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    // Cặp 1: t1 (live, handed_off) -> t2 (live, linked)
+    term(&store, "t1", "claude-code", None);
+    store.set_terminal_handoff_state("t1", "handed_off")?;
+    term(&store, "t2", "claude-code", None);
+    let sid1 = store.session_id_for_path(agmag::model::Source::Claude, "c1.jsonl")?;
+    let sid2 = store.session_id_for_path(agmag::model::Source::Claude, "c2.jsonl")?;
+    store.upsert_usage(sid1, &agmag::model::UsageRecord { dedupe_key: "u1".into(), ts_ms: 10, model: None, usage: agmag::model::Usage { output: 99, ..Default::default() } })?;
+    store.link_terminal("t1", sid1, "hook")?;
+    store.link_terminal("t2", sid2, "hook")?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal, new_terminal, app, state, handoff_path, updated_ms)
+         VALUES ('t1', 't2', 'claude-code', 'done', '.agents/handoff/1-10.md', 10)",
+        [],
+    )?;
+    // Cặp 2: t3 (exited, handed_off) -> t4 (cũng không còn live) vẫn dọn được bản ghi cũ
+    term(&store, "t3", "codex", None);
+    store.set_terminal_handoff_state("t3", "handed_off")?;
+    store.finish_terminal("t3", Some(0), 20)?;
+    store.open_inbox(Some("t3"), "rotation", Some("needs_attention"), "chú ý", 21)?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal, new_terminal, app, state, handoff_path, updated_ms)
+         VALUES ('t3', 't4', 'codex', 'done', '.agents/handoff/2-20.md', 20)",
+        [],
+    )?;
+
+    let list = actions::eligible_cleanups(&store)?;
+    assert_eq!(list.len(), 2);
+
+    // Chưa xác nhận → từ chối
+    assert!(actions::execute_cleanup_batch(&store, &hc, &Caller::User { confirmed: false }, &list, 30).is_err());
+
+    // Xác nhận một lần → dọn cả hai (t1 bị kill qua hc, t3 chỉ remove khỏi DB)
+    let rep = actions::execute_cleanup_batch(&store, &hc, &Caller::User { confirmed: true }, &list, 30)?;
+    assert_eq!(rep.done, 2);
+    assert!(rep.skipped.is_empty() && rep.errors.is_empty());
+    assert_eq!(hc.calls.borrow().as_slice(), ["kill t1"]);
+    assert_eq!(store.terminal("t3")?.unwrap().state, "removed");
+    assert!(store.inbox(true)?.is_empty());
+    // Lịch sử session, usage, rotations vẫn còn nguyên.
+    let kept: (i64, i64) = store.conn().query_row(
+        "SELECT (SELECT COUNT(*) FROM usage WHERE session = ?1), (SELECT COUNT(*) FROM rotations)",
+        [sid1],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    assert_eq!(kept, (1, 2));
+    Ok(())
+}
+
+#[test]
 fn set_managed_launch_blocks_agents_and_unconfirmed_users() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let cwd = tmp.path().to_string_lossy().to_string();

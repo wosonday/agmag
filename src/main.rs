@@ -136,6 +136,14 @@ enum Cmd {
         #[arg(last = true)]
         argv: Vec<String>,
     },
+    /// Dọn dẹp thủ công các phiên cũ đã bàn giao (1 lần xác nhận y/N)
+    Cleanup {
+        targets: Vec<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Ngân sách: task:<ID> (token) hoặc provider:<tên>:<phút> (% hạn mức)
     Budget {
         #[command(subcommand)]
@@ -278,6 +286,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Interrupt { target, yes } => ops::stop(&store, &target, "interrupt", yes, now),
         Cmd::Rotate { target, yes } => ops::rotate(&store, &target, yes, now),
         Cmd::Manage { target, off, cmd, argv } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
+        Cmd::Cleanup { targets, all, yes } => ops::cleanup(&store, &targets, all, yes, json, now),
         Cmd::Budget { cmd: BudgetCmd::Set { scope, soft, hard, action } } => ops::budget_set(&store, &scope, soft, hard, &action),
         Cmd::Budget { cmd: BudgetCmd::Ls } => ops::budget_ls(&store, json),
         Cmd::Budget { cmd: BudgetCmd::Rm { scope } } => {

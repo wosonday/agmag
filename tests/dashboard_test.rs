@@ -53,6 +53,22 @@ fn render_contains_all_sections() -> anyhow::Result<()> {
 }
 
 #[test]
+fn render_shows_red_warning_for_live_rotation_pair() -> anyhow::Result<()> {
+    let store = seeded()?;
+    store.upsert_terminal(&TerminalRow { address: "t6".into(), app: Some("claude-code".into()), cwd: Some(r"D:\repo".into()), state: "live".into(), ..Default::default() })?;
+    store.upsert_terminal(&TerminalRow { address: "t7".into(), app: Some("claude-code".into()), cwd: Some(r"D:\repo".into()), state: "live".into(), ..Default::default() })?;
+    store.set_terminal_handoff_state("t6", "handed_off")?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal, new_terminal, app, cwd, state, updated_ms) VALUES ('t6', 't7', 'claude-code', 'D:\\repo', 'done', 10)",
+        [],
+    )?;
+    let text = render(&snapshot(&store, &Config::builtin(), 1_000_000)?, 120);
+    assert!(text.contains("CẢNH BÁO: t6 (đã bàn giao) và t7 cùng đang chạy"), "{text}");
+    assert!(text.contains("[ĐÃ BÀN GIAO]"), "{text}");
+    Ok(())
+}
+
+#[test]
 fn parse_commands() {
     assert_eq!(parse_command("r 3 có, chạy đi"), Ok(TuiCmd::Reply(3, "có, chạy đi".into())));
     assert_eq!(parse_command("s t5 GIAO làm tiếp"), Ok(TuiCmd::Send("t5".into(), "GIAO".into(), "làm tiếp".into())));
@@ -67,4 +83,7 @@ fn parse_commands() {
     assert_eq!(parse_command("s t5  GIAO  làm"), Ok(TuiCmd::Send("t5".into(), "GIAO".into(), "làm".into())));
     assert!(parse_command("s t5 GIAOX làm").is_err());
     assert_eq!(parse_command("d 4"), Ok(TuiCmd::Done(4)));
+    assert_eq!(parse_command("c"), Ok(TuiCmd::Cleanup(None)));
+    assert_eq!(parse_command("c 1,3"), Ok(TuiCmd::Cleanup(Some("1,3".into()))));
+    assert_eq!(parse_command("c all"), Ok(TuiCmd::Cleanup(Some("all".into()))));
 }

@@ -218,3 +218,72 @@ fn cli_rotate_refuses_unknown_app_and_budget_rejects_nan() {
     assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "NaN", "--hard", "5"], &[]).status.success());
     assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "-1", "--hard", "5"], &[]).status.success());
 }
+
+#[test]
+fn cli_manage_rotate_and_cleanup() {
+    let tmp = sandbox(None);
+    let work = tmp.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    let claude_home = tmp.path().join("claude_home");
+    fs::create_dir_all(claude_home.join(".claude")).unwrap();
+    fs::write(
+        claude_home.join(".claude/settings.json"),
+        r#"{"statusLine":{"type":"command","command":"\"agm\" hook statusline"}}"#,
+    )
+    .unwrap();
+
+    let events = tmp.path().join("ev.jsonl");
+    let ev = serde_json::json!({
+        "channel": null,
+        "seq": 1,
+        "terminals": [{
+            "address": "t11",
+            "argv": ["claude", "--model", "opus"],
+            "cwd": work.to_string_lossy(),
+            "created_ms": 1,
+            "labels": {},
+            "state": "live",
+            "reported": true,
+            "status": {"app": "claude-code", "state": "done"}
+        }]
+    });
+    fs::write(&events, format!("{ev}\n")).unwrap();
+    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
+
+    // Chạy qua pipe (không TTY / như agent) phải bị từ chối khi bật `agm manage`.
+    let claude_home_str = claude_home.to_string_lossy().to_string();
+    let m_out = agm_env(
+        tmp.path(),
+        &["manage", "t11", "--", "claude", "--model", "opus"],
+        &[("AGM_CLAUDE_HOME", &claude_home_str)],
+    );
+    assert!(!m_out.status.success(), "agm manage không TTY phải bị từ chối fail-closed");
+    let m_err = String::from_utf8_lossy(&m_out.stderr);
+    assert!(m_err.contains("chỉ người dùng"), "phải bị từ chối vì không phải người dùng, stderr: {m_err}");
+
+    // Khi người dùng xác nhận trong phiên tương tác (giả lập qua Store + Caller::User { confirmed: true }),
+    // `rotate` và `cleanup --json` hoạt động bình thường.
+    {
+        let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+        let spec = agmag::launch::parse_launch_spec(
+            "claude-code",
+            &["claude".into(), "--model".into(), "opus".into()],
+            &work.to_string_lossy(),
+        )
+        .unwrap();
+        agmag::actions::set_managed_launch(
+            &store,
+            &agmag::actions::Caller::User { confirmed: true },
+            "t11",
+            &spec,
+            10,
+        )
+        .unwrap();
+    }
+
+    let r_out = agm_env(tmp.path(), &["rotate", "t11"], &[]);
+    assert!(r_out.status.success(), "{}", String::from_utf8_lossy(&r_out.stderr));
+
+    let c_out = agm_env(tmp.path(), &["cleanup", "--json"], &[]);
+    assert_eq!(json(&c_out).as_array().unwrap().len(), 0);
+}

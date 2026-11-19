@@ -37,6 +37,7 @@ pub struct Snapshot {
     pub policy_on: bool,
     pub quota: Vec<QuotaRow>,
     pub terminals: Vec<TermView>,
+    pub live_rotation_pairs: Vec<(String, String, String)>,
     pub budgets: Vec<BudgetView>,
     pub inbox: Vec<InboxRow>,
     pub messages: Vec<MessageRow>,
@@ -76,6 +77,17 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
             handoff_state: t.handoff_state,
         });
     }
+    let mut stmt = store.conn().prepare(
+        "SELECT r.old_terminal, r.new_terminal, COALESCE(r.cwd, o.cwd, '')
+         FROM rotations r
+         JOIN terminals o ON o.address = r.old_terminal
+         JOIN terminals n ON n.address = r.new_terminal
+         WHERE r.state = 'done' AND o.state = 'live' AND n.state = 'live'
+         ORDER BY r.id",
+    )?;
+    let live_rotation_pairs = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
     let mut budgets = Vec::new();
     for b in store.budgets()? {
         budgets.push(BudgetView { value: budget_value(store, &b)?, scope: b.scope, unit: b.unit, soft: b.soft, hard: b.hard });
@@ -85,6 +97,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
         policy_on: enabled(store)?,
         quota: quota(store, now_ms / 1000)?,
         terminals,
+        live_rotation_pairs,
         budgets,
         inbox: store.inbox(true)?,
         messages: store.messages(5)?,
@@ -136,6 +149,11 @@ pub fn render(s: &Snapshot, width: usize) -> String {
     }
 
     out += &section("TERMINALS", width);
+    for (old, new, cwd) in &s.live_rotation_pairs {
+        out += &format!(
+            "\x1b[31m  ! CẢNH BÁO: {old} (đã bàn giao) và {new} cùng đang chạy trên {cwd} — tránh sửa trùng; gõ `c` để dọn\x1b[0m\n"
+        );
+    }
     let mut t = table(&["t", "tên", "app", "trạng thái", "task", "token", "ngữ cảnh"], width);
     for v in &s.terminals {
         t.add_row(vec![
@@ -187,7 +205,7 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += &format!("  {} → {}  {}  {}  ({})\n", m.from, m.to, m.kind, one_line(&m.text, 60), m.status);
     }
     out += &"─".repeat(width);
-    out += "\nlệnh: r <#> <trả lời> · d <#> (đóng) · s <t> <LOẠI> <tin> · i <t> · k <t> · p on|off · q   (Enter: làm mới)\n";
+    out += "\nlệnh: r <#> <trả lời> · d <#> (đóng) · s <t> <LOẠI> <tin> · c [1,2|all] (dọn) · i <t> · k <t> · p on|off · q\n";
     out
 }
 
@@ -203,6 +221,7 @@ pub enum TuiCmd {
     Reply(i64, String),
     Done(i64),
     Send(String, String, String),
+    Cleanup(Option<String>),
     Interrupt(String),
     Kill(String),
     Policy(bool),
@@ -243,6 +262,7 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
             }
             TuiCmd::Send(target.into(), kind.to_string(), text.into())
         }
+        "c" => TuiCmd::Cleanup((!rest.is_empty()).then(|| rest.to_string())),
         "i" if !rest.is_empty() => TuiCmd::Interrupt(rest.into()),
         "k" if !rest.is_empty() => TuiCmd::Kill(rest.into()),
         "p" if rest == "on" || rest == "off" => TuiCmd::Policy(rest == "on"),

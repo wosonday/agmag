@@ -363,3 +363,11 @@ fn cli_manage_rotate_and_cleanup() {
     let c_out = agm_env(tmp.path(), &["cleanup", "--json"], &[]);
     assert_eq!(json(&c_out).as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn cli_cleanup_help_documents_mandatory_confirmation_even_with_yes() {
+    let tmp = sandbox(None);
+    let out = agm_env(tmp.path(), &["cleanup", "--help"], &[]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("cleanup still requires one typed confirmation"));
+}

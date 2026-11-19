@@ -214,11 +214,17 @@ fn spawn_successor_precheck_allows_no_task_and_checks_budget() -> Result<()> {
 #[test]
 fn cleanup_batch_requires_confirmation_handles_live_and_exited_and_keeps_history() -> Result<()> {
     let store = Store::open_in_memory()?;
-    let hc = FakeHc::default();
+    let hc = FakeHc {
+        get_responses: ["t1", "t2"].into_iter().map(|t| (t.into(), serde_json::json!({
+            "address":t, "state":"live", "created_ms":1, "status":{"app":"claude-code"}
+        }))).collect(),
+        ..Default::default()
+    };
     // Cặp 1: t1 (live, handed_off) -> t2 (live, linked)
     term(&store, "t1", "claude-code", None);
     store.set_terminal_handoff_state("t1", "handed_off")?;
     term(&store, "t2", "claude-code", None);
+    store.conn().execute("UPDATE terminals SET created_ms=1 WHERE address IN ('t1','t2')", [])?;
     let sid1 = store.session_id_for_path(agmag::model::Source::Claude, "c1.jsonl")?;
     let sid2 = store.session_id_for_path(agmag::model::Source::Claude, "c2.jsonl")?;
     store.upsert_usage(sid1, &agmag::model::UsageRecord { dedupe_key: "u1".into(), ts_ms: 10, model: None, usage: agmag::model::Usage { output: 99, ..Default::default() } })?;

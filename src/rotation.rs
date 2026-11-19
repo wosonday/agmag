@@ -344,16 +344,16 @@ fn verify_and_respawn(
 }
 
 fn fresh_idle_status(hc: &dyn Hc, t: &TerminalRow) -> Option<String> {
-    if let Ok(v) = hc.get(&t.address) {
-        let s = v["status"]["state"]
-            .as_str()
-            .or_else(|| v["status"].as_str())
-            .map(str::to_owned);
-        if let Some(st) = s {
-            return matches!(st.as_str(), "idle" | "done").then_some(st);
-        }
+    let v = hc.get(&t.address).ok()?;
+    let fresh = terminal_row_from(&v);
+    if v["state"].as_str() != Some("live")
+        || fresh.address != t.address
+        || fresh.app.is_none()
+        || fresh.app != t.app
+    {
+        return None;
     }
-    t.status.as_deref().filter(|s| matches!(*s, "idle" | "done")).map(str::to_owned)
+    fresh.status.filter(|s| matches!(s.as_str(), "idle" | "done"))
 }
 
 fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, app: &str, now: i64) -> Result<()> {

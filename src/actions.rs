@@ -357,7 +357,7 @@ pub struct CleanupReport {
 /// 1) `old live` + phiên kế nhiệm đã `linked` & `live`, hoặc 2) `old` đã thoát (`exited`).
 pub fn eligible_cleanups(store: &Store) -> Result<Vec<CleanupCandidate>> {
     let mut stmt = store.conn().prepare(
-        "SELECT r.id, o.address, o.name, o.app, o.state, n.address, n.state, n.session, r.handoff_path
+        "SELECT r.id, o.address, o.name, o.app, o.state, r.new_terminal, n.state, n.session, r.handoff_path
          FROM rotations r
          JOIN terminals o ON o.address = r.old_terminal
          LEFT JOIN terminals n ON n.address = r.new_terminal
@@ -394,6 +394,25 @@ pub fn eligible_cleanups(store: &Store) -> Result<Vec<CleanupCandidate>> {
         .collect())
 }
 
+/// Require explicit live/finished state and the same known app, creation identity and cwd.
+fn fresh_cleanup_terminal(hc: &dyn Hc, expected: &crate::store::TerminalRow) -> Result<crate::store::TerminalRow> {
+    let value = hc.get(&expected.address)?;
+    let fresh = terminal_row_from(&value);
+    if !matches!(value["state"].as_str(), Some("live" | "finished"))
+        || fresh.address != expected.address
+        || expected.app.as_deref().is_none_or(str::is_empty)
+        || fresh.app != expected.app
+        || expected.created_ms <= 0
+        || fresh.created_ms != expected.created_ms
+        || expected.cwd.as_deref().is_some_and(|cwd| {
+            fresh.cwd.as_deref().is_none_or(|current| crate::correlate::norm_cwd(current) != crate::correlate::norm_cwd(cwd))
+        })
+    {
+        bail!("không xác minh được danh tính hiện tại của {}", expected.address);
+    }
+    Ok(fresh)
+}
+
 /// Thực thi dọn dẹp cho danh sách đã đóng băng, chỉ chấp nhận `Caller::User { confirmed: true }`.
 /// Kiểm tra lại từng mục sát lúc thao tác; luôn giữ lịch sử `sessions`/`usage`/`rotations` và tệp handoff.
 pub fn execute_cleanup_batch(
@@ -408,6 +427,17 @@ pub fn execute_cleanup_batch(
     }
     let mut report = CleanupReport::default();
     for item in items {
+        let unchanged: bool = store.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM rotations
+             WHERE id = ?1 AND old_terminal = ?2 AND new_terminal IS ?3
+               AND app IS ?4 AND state = 'done')",
+            rusqlite::params![item.rotation_id, item.old_terminal, item.new_terminal, item.old_app],
+            |row| row.get(0),
+        )?;
+        if !unchanged || item.new_terminal.as_deref() == Some(&item.old_terminal) {
+            report.skipped.push(format!("{}: quan hệ bàn giao đã thay đổi", item.old_terminal));
+            continue;
+        }
         let Some(old_row) = store.terminal(&item.old_terminal)? else {
             report.skipped.push(format!("{}: không còn thấy terminal", item.old_terminal));
             continue;
@@ -417,33 +447,44 @@ pub fn execute_cleanup_batch(
             continue;
         }
         if old_row.state == "live" {
-            let new_ok = match item.new_terminal.as_deref().and_then(|a| store.terminal(a).ok().flatten()) {
-                Some(nt) => nt.state == "live" && nt.session.is_some(),
-                None => false,
+            let successor = match item.new_terminal.as_deref().map(|a| store.terminal(a)).transpose()?.flatten() {
+                Some(nt) if nt.state == "live" && nt.session.is_some() && nt.app == item.old_app => nt,
+                _ => {
+                    report.skipped.push(format!("{}: phiên kế nhiệm không còn live hoặc chưa ghép", item.old_terminal));
+                    continue;
+                }
             };
-            if !new_ok {
-                report.skipped.push(format!("{}: phiên kế nhiệm không còn live", item.old_terminal));
+            if old_row.app != item.old_app {
+                report.skipped.push(format!("{}: app nguồn đã thay đổi", item.old_terminal));
                 continue;
             }
-            if let Ok(v) = hc.get(&item.old_terminal) {
-                let fresh = terminal_row_from(&v);
-                if fresh.state != "live" {
-                    let _ = store.finish_terminal(&item.old_terminal, fresh.exit_code, now);
-                    let _ = store.remove_terminal(&item.old_terminal);
-                    report.done += 1;
-                    continue;
-                }
-                if let (Some(want_app), Some(got_app)) = (item.old_app.as_deref(), fresh.app.as_deref())
-                    && want_app != got_app
-                {
-                    report.skipped.push(format!(
-                        "{}: đang chạy '{got_app}' thay vì '{want_app}'",
-                        item.old_terminal
-                    ));
+            match fresh_cleanup_terminal(hc, &successor) {
+                Ok(fresh) if fresh.state == "live" => {}
+                _ => {
+                    report.skipped.push(format!("{}: không xác minh được phiên kế nhiệm còn live", item.old_terminal));
                     continue;
                 }
             }
-            match kill(store, hc, caller, &item.old_terminal, now) {
+            let fresh = match fresh_cleanup_terminal(hc, &old_row) {
+                Ok(fresh) => fresh,
+                Err(e) => {
+                    report.skipped.push(format!("{}: {e:#}", item.old_terminal));
+                    continue;
+                }
+            };
+            if fresh.state == "finished" {
+                store.finish_terminal(&item.old_terminal, fresh.exit_code, now)?;
+                store.remove_terminal(&item.old_terminal)?;
+                store.resolve_inbox_for_terminal(&item.old_terminal, "rotation", now)?;
+                store.resolve_inbox_for_terminal(&item.old_terminal, "context", now)?;
+                report.done += 1;
+                continue;
+            }
+            // Caller was explicitly confirmed above; kill immediately after identity checks,
+            // without a second lookup that could silently fall back to stale database state.
+            let result = hc.kill(&item.old_terminal);
+            store.log_action("user", "kill", &item.old_terminal, "cleanup", result.is_ok(), now)?;
+            match result {
                 Ok(()) => {
                     let _ = store.finish_terminal(&item.old_terminal, None, now);
                     let _ = store.remove_terminal(&item.old_terminal);
@@ -453,7 +494,7 @@ pub fn execute_cleanup_batch(
                 }
                 Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
             }
-        } else {
+        } else if old_row.state == "finished" {
             // Nhánh old exited: dọn bản ghi terminal và đóng inbox liên quan, không gọi hc.
             match store.remove_terminal(&item.old_terminal) {
                 Ok(()) => {
@@ -464,6 +505,8 @@ pub fn execute_cleanup_batch(
                 }
                 Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
             }
+        } else {
+            report.skipped.push(format!("{}: trạng thái nguồn không xác định", item.old_terminal));
         }
     }
     Ok(report)

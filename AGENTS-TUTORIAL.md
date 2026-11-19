@@ -19,7 +19,7 @@ Chỉ dẫn dùng chung cho dự án code hoặc việc khác (tài liệu, báo
 ### 0.1. Kiến trúc tổng thể
 
 ```
-                 HERDR (TUI cho người / core cho bot)
+                 HERDR (APP cho người / core cho bot)
                               |
                       HERDR-MESH (MCP)
                               |
@@ -48,24 +48,24 @@ Cách đọc sơ đồ:
 1. **HERDR** là nơi chạy và quan sát mọi phiên; **herdr-mesh** là kênh liên lạc duy nhất giữa các agent (mục 3.2).
 2. **Orchestrator** gồm hai vai đã định nghĩa ở mục 1: Kiến trúc sư (phương án, rủi ro, tiêu chí) và Codex (chia việc, giao việc, đổi model). Orchestrator không tự làm phần việc chính.
 3. **Ba nhánh làm việc** ứng với các vai ở mục 1:
-   - *Research Agent* = vai Tìm kiếm (chỉ đọc). Dùng **model Google** (Gemini) qua Antigravity CLI `agy` cho tìm kiếm web/research; tìm trong mã của repo có thể dùng OpenCode `explore` với model rẻ (mục 2.2).
-   - *Developer Agent* = vai Thợ cơ khí. Có thể là phiên OpenCode ở bậc nào tùy mức khó; với việc khó, Codex có thể mở thêm một phiên Codex CLI trong worktree riêng như một thợ bậc Mạnh (Codex vẫn không sửa code của thợ khác).
-   - *Reviewer Agent* = vai Reviewer. Mặc định Opus High. Khi cần ý kiến độc lập (việc chạm bảo mật/dữ liệu, hoặc hai lần CHƯA ĐẠT liên tiếp), thêm một phiên GPT duyệt song song; kết luận cuối vẫn thuộc Reviewer Opus High và Kiến trúc sư.
+   - _Research Agent_ = vai Tìm kiếm (chỉ đọc). Dùng **model Google** (Gemini) qua Antigravity CLI `agy` cho tìm kiếm web/research; tìm trong mã của repo có thể dùng OpenCode `explore` với model rẻ (mục 2.2).
+   - _Developer Agent_ = vai Thợ cơ khí. Có thể là phiên OpenCode ở bậc nào tùy mức khó; với việc khó, Codex có thể mở thêm một phiên Codex CLI trong worktree riêng như một thợ bậc Mạnh (Codex vẫn không sửa code của thợ khác).
+   - _Reviewer Agent_ = vai Reviewer. Mặc định Opus High. Khi cần ý kiến độc lập (việc chạm bảo mật/dữ liệu, hoặc hai lần CHƯA ĐẠT liên tiếp), thêm một phiên GPT duyệt song song; kết luận cuối vẫn thuộc Reviewer Opus High và Kiến trúc sư.
 4. **Git workspace:** mọi kết quả đi qua nhánh/worktree; không agent nào ghi thẳng vào nhánh chung.
 5. **Test / Validation** là cổng Audit ở mục 6; chưa đạt thì quay lại Developer Agent (lỗi chuyển nguyên văn).
 6. **Final report** theo mẫu mục 8.
 
 ## 1. Vai trò và model
 
-| Cấp | Vai | Model đề xuất | Công cụ | Quyền | Việc |
-|---|---|---|---|---|---|
-| 1 | Kiến trúc sư | Opus 5.5 Extra hoặc Fable 5.2 | Claude Code (`/model`) | Chỉ đọc | Phương án, rủi ro, tiêu chí đạt; chẩn đoán lỗi khó; đánh giá SẴN SÀNG trước phát hành |
-| 2 | Reviewer | Opus 5.5 High | Claude Code | Chỉ đọc | Duyệt độ đúng, phạm vi, quy ước; báo ĐẠT/CHƯA ĐẠT, lỗi theo mức Nghiêm trọng/Lớn/Nhỏ kèm vị trí và cách sửa |
-| 2 | Quản lý kỹ thuật (Codex) | Codex (model mạnh nhất sẵn có) | Codex CLI | Đọc, ghi hạn chế (chỉ tệp điều phối, không sửa code của thợ) | Biến phương án của Kiến trúc sư thành đầu việc cụ thể; giao việc và giám sát các phiên OpenCode; cố vấn kỹ thuật; quyết định đổi model/phiên; tích hợp (merge) sau khi Audit đạt |
-| 3 | Thợ cơ khí | Do Codex chọn theo mức khó (xem mục 2) | OpenCode trong worktree riêng | Sửa trong phạm vi được giao | Viết/sửa code hoặc nội dung đúng đặc tả; báo đã đổi gì và đã tự kiểm gì |
-| 4 | Tìm kiếm | **Google Gemini** (`gemini-3.8-flash` nhanh, `gemini-4-argon` sâu) | Antigravity CLI `agy --mode plan --sandbox`; tìm trong repo: OpenCode `explore` | Chỉ đọc | Tìm mã, nguồn, số liệu; trả danh sách vị trí kèm bằng chứng (URL hoặc tệp:dòng) |
-| 4 | Media | **Google** (Gemini Image / Nano Banana, Gemini Omni) | API (OpenRouter hoặc Gemini API) qua script | Chỉ ghi vào thư mục media tạm | Tạo ảnh 2D, ảnh khái niệm cho tài nguyên 3D, video theo đặc tả (mục 2.2) |
-| 4 | Audit | Model nhanh, rẻ | OpenCode (worktree riêng) | Chạy lệnh, không sửa mã nguồn | Chạy test/build/lint hoặc đối chiếu số liệu, mẫu, chính tả; báo ĐẠT HẾT/CHƯA ĐẠT |
+| Cấp | Vai                      | Model đề xuất                                                      | Công cụ                                                                         | Quyền                                                        | Việc                                                                                                                                                                             |
+| --- | ------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Kiến trúc sư             | Opus 5.5 Extra hoặc Fable 5.2                                      | Claude Code (`/model`)                                                          | Chỉ đọc                                                      | Phương án, rủi ro, tiêu chí đạt; chẩn đoán lỗi khó; đánh giá SẴN SÀNG trước phát hành                                                                                            |
+| 2   | Reviewer                 | Opus 5.5 High                                                      | Claude Code                                                                     | Chỉ đọc                                                      | Duyệt độ đúng, phạm vi, quy ước; báo ĐẠT/CHƯA ĐẠT, lỗi theo mức Nghiêm trọng/Lớn/Nhỏ kèm vị trí và cách sửa                                                                      |
+| 2   | Quản lý kỹ thuật (Codex) | Codex (model mạnh nhất sẵn có)                                     | Codex CLI                                                                       | Đọc, ghi hạn chế (chỉ tệp điều phối, không sửa code của thợ) | Biến phương án của Kiến trúc sư thành đầu việc cụ thể; giao việc và giám sát các phiên OpenCode; cố vấn kỹ thuật; quyết định đổi model/phiên; tích hợp (merge) sau khi Audit đạt |
+| 3   | Thợ cơ khí               | Do Codex chọn theo mức khó (xem mục 2)                             | OpenCode trong worktree riêng                                                   | Sửa trong phạm vi được giao                                  | Viết/sửa code hoặc nội dung đúng đặc tả; báo đã đổi gì và đã tự kiểm gì                                                                                                          |
+| 4   | Tìm kiếm                 | **Google Gemini** (`gemini-3.8-flash` nhanh, `gemini-4-argon` sâu) | Antigravity CLI `agy --mode plan --sandbox`; tìm trong repo: OpenCode `explore` | Chỉ đọc                                                      | Tìm mã, nguồn, số liệu; trả danh sách vị trí kèm bằng chứng (URL hoặc tệp:dòng)                                                                                                  |
+| 4   | Media                    | **Google** (Gemini Image / Nano Banana, Gemini Omni)               | API (OpenRouter hoặc Gemini API) qua script                                     | Chỉ ghi vào thư mục media tạm                                | Tạo ảnh 2D, ảnh khái niệm cho tài nguyên 3D, video theo đặc tả (mục 2.2)                                                                                                         |
+| 4   | Audit                    | Model nhanh, rẻ                                                    | OpenCode (worktree riêng)                                                       | Chạy lệnh, không sửa mã nguồn                                | Chạy test/build/lint hoặc đối chiếu số liệu, mẫu, chính tả; báo ĐẠT HẾT/CHƯA ĐẠT                                                                                                 |
 
 Ghi chú:
 
@@ -84,24 +84,24 @@ Skill nói **cách làm**; tệp tác vụ nói **làm gì**. Khi mâu thuẫn, 
 4. Skill do Codex (hoặc Kiến trúc sư) chọn theo loại việc và ghi vào trường `skills:` trong `.agents/tasks/<ID>.md`, ví dụ `skills: test-driven-development, verification-before-completion`. Phiên chỉ dùng đúng các skill đã ghi.
 5. Không nạp skill kiểu "phải gọi skill trước mọi hành động" cho thợ, Audit, Tìm kiếm và bot; chúng kéo thêm skill thiết kế và hỏi đáp vào việc cơ khí, và có thể làm phiên chạy nền treo chờ người trả lời.
 
-| Vai | Số skill khi khởi tạo | Gợi ý (chọn theo giai đoạn) |
-|---|---|---|
-| Kiến trúc sư | 1 đến 3 | `brainstorming` (giai đoạn hiểu yêu cầu), `system-design` hoặc `architecture` (giai đoạn thiết kế/ghi quyết định); đổi skill khi sang giai đoạn khác |
-| Codex quản lý | 1 đến 3 | `writing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`; `testing-strategy` hoặc `requesting-code-review` khi cần, thay cho skill không còn dùng |
-| Reviewer | 1 đến 2 | `code-review`, `verification-before-completion` |
-| Thợ cơ khí | **1 đến 2** | Xem bảng loại việc bên dưới |
-| Audit | 0 đến 1 | `verification-before-completion` |
-| Tìm kiếm | 0 đến 1 | Skill "exploring" của GitNexus (nếu dùng) |
-| Bot | 0 | Chỉ cần `hc` |
+| Vai           | Số skill khi khởi tạo | Gợi ý (chọn theo giai đoạn)                                                                                                                                    |
+| ------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kiến trúc sư  | 1 đến 3               | `brainstorming` (giai đoạn hiểu yêu cầu), `system-design` hoặc `architecture` (giai đoạn thiết kế/ghi quyết định); đổi skill khi sang giai đoạn khác           |
+| Codex quản lý | 1 đến 3               | `writing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`; `testing-strategy` hoặc `requesting-code-review` khi cần, thay cho skill không còn dùng |
+| Reviewer      | 1 đến 2               | `code-review`, `verification-before-completion`                                                                                                                |
+| Thợ cơ khí    | **1 đến 2**           | Xem bảng loại việc bên dưới                                                                                                                                    |
+| Audit         | 0 đến 1               | `verification-before-completion`                                                                                                                               |
+| Tìm kiếm      | 0 đến 1               | Skill "exploring" của GitNexus (nếu dùng)                                                                                                                      |
+| Bot           | 0                     | Chỉ cần `hc`                                                                                                                                                   |
 
 **Chọn skill cho thợ theo loại việc (tối đa 2):**
 
-| Loại việc | Skill |
-|---|---|
-| Thêm tính năng, có đặc tả rõ | `test-driven-development` + `verification-before-completion` |
-| Sửa lỗi | `systematic-debugging` + `verification-before-completion` |
-| Sửa theo kết quả duyệt (CHƯA ĐẠT) | `receiving-code-review` + `verification-before-completion` |
-| Việc cơ khí đơn giản (đổi tên, định dạng, tài liệu) | 1 skill hoặc không có |
+| Loại việc                                           | Skill                                                        |
+| --------------------------------------------------- | ------------------------------------------------------------ |
+| Thêm tính năng, có đặc tả rõ                        | `test-driven-development` + `verification-before-completion` |
+| Sửa lỗi                                             | `systematic-debugging` + `verification-before-completion`    |
+| Sửa theo kết quả duyệt (CHƯA ĐẠT)                   | `receiving-code-review` + `verification-before-completion`   |
+| Việc cơ khí đơn giản (đổi tên, định dạng, tài liệu) | 1 skill hoặc không có                                        |
 
 **Cách gắn và kiểm soát:**
 
@@ -112,11 +112,11 @@ Skill nói **cách làm**; tệp tác vụ nói **làm gì**. Khi mâu thuẫn, 
 
 ## 2. Bậc model cho thợ OpenCode và cách đổi
 
-| Bậc | Dùng khi | Ví dụ |
-|---|---|---|
-| Nhanh | Việc lặp lại, rõ ràng, rủi ro thấp | Tìm kiếm, chạy test/lint, đổi tên, định dạng, cập nhật tài liệu |
-| Vừa | Việc code thông thường có đặc tả rõ | Thêm endpoint, viết test, refactor cục bộ |
-| Mạnh | Việc khó trong phạm vi hẹp, hoặc phiên vừa thất bại ở bậc thấp | Lỗi logic phức tạp, đa tệp, tối ưu hiệu năng |
+| Bậc   | Dùng khi                                                       | Ví dụ                                                           |
+| ----- | -------------------------------------------------------------- | --------------------------------------------------------------- |
+| Nhanh | Việc lặp lại, rõ ràng, rủi ro thấp                             | Tìm kiếm, chạy test/lint, đổi tên, định dạng, cập nhật tài liệu |
+| Vừa   | Việc code thông thường có đặc tả rõ                            | Thêm endpoint, viết test, refactor cục bộ                       |
+| Mạnh  | Việc khó trong phạm vi hẹp, hoặc phiên vừa thất bại ở bậc thấp | Lỗi logic phức tạp, đa tệp, tối ưu hiệu năng                    |
 
 Quy tắc đổi:
 
@@ -137,21 +137,21 @@ OpenCode là phần mềm chạy thợ; model đến từ các **nhà cung cấp
 
 **Ba nguồn:**
 
-| Nguồn | Cách nối | Ưu | Nhược / lưu ý |
-|---|---|---|---|
-| **Ollama chạy cục bộ** | Khai báo provider `ollama`, gói `@ai-sdk/openai-compatible`, `baseURL` là `http://localhost:11434/v1`, liệt kê model trong `models`; hoặc chạy `ollama launch opencode` để tự cấu hình | Không tốn phí token; mã không rời máy | Phụ thuộc phần cứng. Ollama khuyến nghị cửa sổ ngữ cảnh tối thiểu 64k cho OpenCode; nếu gọi công cụ lỗi, tăng `num_ctx` |
-| **Ollama Cloud** | Lấy khóa API tại ollama.com (Settings, Keys), chạy `opencode auth login` rồi chọn Ollama Cloud; hoặc `ollama launch opencode`. Endpoint `https://ollama.com`, biến môi trường `OLLAMA_API_KEY`. Model cloud có hậu tố `:cloud` | Model lớn không cần GPU cục bộ; Ollama gợi ý `glm-4.7:cloud` cho OpenCode | Mã gửi lên dịch vụ ngoài; có giới hạn số model cloud chạy đồng thời theo gói (xem bên dưới) |
-| **OpenRouter** | `/connect` rồi tìm OpenRouter; thêm model bằng slug dưới `provider.openrouter.models` trong `opencode.json`; mã dùng là `openrouter/<slug>` | Một khóa truy cập nhiều model; chọn được nhà cung cấp hạ nguồn qua `options.provider` của từng model | Mã gửi lên dịch vụ ngoài; chất lượng và giá phụ thuộc model, nhà cung cấp hạ nguồn |
+| Nguồn                  | Cách nối                                                                                                                                                                                                                       | Ưu                                                                                                   | Nhược / lưu ý                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Ollama chạy cục bộ** | Khai báo provider `ollama`, gói `@ai-sdk/openai-compatible`, `baseURL` là `http://localhost:11434/v1`, liệt kê model trong `models`; hoặc chạy `ollama launch opencode` để tự cấu hình                                         | Không tốn phí token; mã không rời máy                                                                | Phụ thuộc phần cứng. Ollama khuyến nghị cửa sổ ngữ cảnh tối thiểu 64k cho OpenCode; nếu gọi công cụ lỗi, tăng `num_ctx` |
+| **Ollama Cloud**       | Lấy khóa API tại ollama.com (Settings, Keys), chạy `opencode auth login` rồi chọn Ollama Cloud; hoặc `ollama launch opencode`. Endpoint `https://ollama.com`, biến môi trường `OLLAMA_API_KEY`. Model cloud có hậu tố `:cloud` | Model lớn không cần GPU cục bộ; Ollama gợi ý `glm-4.7:cloud` cho OpenCode                            | Mã gửi lên dịch vụ ngoài; có giới hạn số model cloud chạy đồng thời theo gói (xem bên dưới)                             |
+| **OpenRouter**         | `/connect` rồi tìm OpenRouter; thêm model bằng slug dưới `provider.openrouter.models` trong `opencode.json`; mã dùng là `openrouter/<slug>`                                                                                    | Một khóa truy cập nhiều model; chọn được nhà cung cấp hạ nguồn qua `options.provider` của từng model | Mã gửi lên dịch vụ ngoài; chất lượng và giá phụ thuộc model, nhà cung cấp hạ nguồn                                      |
 
 **Gói và giới hạn của Ollama Cloud (biến động, phải xem lại trên ollama.com/pricing):** các trang tôi đọc không thống nhất. Một số nêu số model cloud chạy đồng thời theo gói (Free 1, Pro 3, Max 10); một số nêu Ollama đã chuyển sang tính theo token từ 31/08/2026, gói Pro 20 USD kèm 60 USD sử dụng, Max 100 USD kèm 300 USD, và bậc 0 USD trả theo mức dùng. Vì thế `MAX_WORKERS` (xem `HERDR-CORE-BOT.md`) **không được vượt giới hạn đồng thời của gói đang dùng**, nếu giới hạn đó còn áp dụng.
 
 **Gán nguồn cho bậc model (mục 2):** đây là gợi ý, tên model phải kiểm theo danh mục hiện hành vì thay đổi liên tục.
 
-| Bậc | Nguồn gợi ý |
-|---|---|
-| Nhanh | Ollama cục bộ (model nhỏ) hoặc model rẻ trên Ollama Cloud / OpenRouter |
-| Vừa | Ollama Cloud hoặc model code trên OpenRouter |
-| Mạnh | Model mạnh trên OpenRouter (hoặc Ollama Cloud nếu có), hoặc nâng lên Codex/Claude theo mục 2 |
+| Bậc   | Nguồn gợi ý                                                                                  |
+| ----- | -------------------------------------------------------------------------------------------- |
+| Nhanh | Ollama cục bộ (model nhỏ) hoặc model rẻ trên Ollama Cloud / OpenRouter                       |
+| Vừa   | Ollama Cloud hoặc model code trên OpenRouter                                                 |
+| Mạnh  | Model mạnh trên OpenRouter (hoặc Ollama Cloud nếu có), hoặc nâng lên Codex/Claude theo mục 2 |
 
 **Khai báo trong repo (mẫu, thay bằng model có thật):**
 
@@ -197,12 +197,12 @@ Với Ollama Cloud, đừng viết tay cấu hình; chạy `opencode auth login`
 
 Người dùng giao cho model Google ba trách nhiệm: **tìm kiếm và research thông tin**, **tạo ảnh** (kể cả khi cần dựng tài nguyên 2D/3D) và **làm video**. Hai đường gọi khác nhau:
 
-| Trách nhiệm | Gọi bằng | Model (kiểm 2026-11-18) | Ghi chú |
-|---|---|---|---|
-| Tìm kiếm / research | Antigravity CLI `agy` (công cụ `search_web`) | `gemini-3.8-flash-{low,medium,high}` (nhanh), `gemini-4-argon-{low,medium,high}` (tổng hợp sâu), `gemini-4-hydrogen-{low…xhigh}` (suy luận nặng), `gemini-pro-orchestrator-g1-pro` (điều phối nhiều agent con) | Đã chạy thật. Danh sách theo gói tài khoản Google: xem bằng `agy models` |
-| Ảnh 2D | HTTP API: OpenRouter (`OPENROUTER_API_KEY`) hoặc Gemini API (`GEMINI_API_KEY`) | `google/gemini-nano-banana-2.1`, `google/gemini-3-pro-image`, `google/gemini-3.1-flash-image` | `agy` CLI **không** có công cụ tạo ảnh (Antigravity IDE thì có, dùng tay) |
-| Video | Như trên | `google/gemini-omni-1.2-flash` (OpenRouter); Veo cần Gemini API hoặc Vertex AI | Tính tiền theo lượt, đắt |
-| 3D | Không có model Google tạo 3D trực tiếp | (a) Gemini tạo ảnh khái niệm → Space image-to-3D trên Hugging Face; (b) Gemini viết mã three.js/glTF | Chọn theo việc |
+| Trách nhiệm         | Gọi bằng                                                                       | Model (kiểm 2026-11-18)                                                                                                                                                                                        | Ghi chú                                                                   |
+| ------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Tìm kiếm / research | Antigravity CLI `agy` (công cụ `search_web`)                                   | `gemini-3.8-flash-{low,medium,high}` (nhanh), `gemini-4-argon-{low,medium,high}` (tổng hợp sâu), `gemini-4-hydrogen-{low…xhigh}` (suy luận nặng), `gemini-pro-orchestrator-g1-pro` (điều phối nhiều agent con) | Đã chạy thật. Danh sách theo gói tài khoản Google: xem bằng `agy models`  |
+| Ảnh 2D              | HTTP API: OpenRouter (`OPENROUTER_API_KEY`) hoặc Gemini API (`GEMINI_API_KEY`) | `google/gemini-nano-banana-2.1`, `google/gemini-3-pro-image`, `google/gemini-3.1-flash-image`                                                                                                                  | `agy` CLI **không** có công cụ tạo ảnh (Antigravity IDE thì có, dùng tay) |
+| Video               | Như trên                                                                       | `google/gemini-omni-1.2-flash` (OpenRouter); Veo cần Gemini API hoặc Vertex AI                                                                                                                                 | Tính tiền theo lượt, đắt                                                  |
+| 3D                  | Không có model Google tạo 3D trực tiếp                                         | (a) Gemini tạo ảnh khái niệm → Space image-to-3D trên Hugging Face; (b) Gemini viết mã three.js/glTF                                                                                                           | Chọn theo việc                                                            |
 
 **Research — mẫu lệnh (không cần người, đã kiểm):**
 
@@ -305,13 +305,13 @@ Khi tích hợp vào nhánh chung, giữ thư mục `.agents/` trong repo theo m
 
 Vì trạng thái đã nằm trong `.agents/` và git, thợ là **thay thế được**; mặc định sống ngắn.
 
-| Vai | Vòng đời |
-|---|---|
-| Tìm kiếm, Audit | Sinh rồi diệt theo từng yêu cầu, không giữ trạng thái |
-| Thợ cơ khí | Sống trong phạm vi một đầu việc; chỉ giữ qua nhiều đầu việc khi cùng feature và cùng vùng mã |
-| Reviewer | Phiên mới cho mỗi lần duyệt (giữ độc lập); khi duyệt lại, đưa kết quả duyệt trước bằng tệp |
-| Bot (herdr-core) | Sống lâu nhưng ngữ cảnh rất nhỏ, chỉ điều phối sự kiện và sinh thợ |
-| Kiến trúc sư, Codex | Sống lâu theo feature, định kỳ nén ngữ cảnh, quyết định ghi vào tệp |
+| Vai                 | Vòng đời                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| Tìm kiếm, Audit     | Sinh rồi diệt theo từng yêu cầu, không giữ trạng thái                                        |
+| Thợ cơ khí          | Sống trong phạm vi một đầu việc; chỉ giữ qua nhiều đầu việc khi cùng feature và cùng vùng mã |
+| Reviewer            | Phiên mới cho mỗi lần duyệt (giữ độc lập); khi duyệt lại, đưa kết quả duyệt trước bằng tệp   |
+| Bot (herdr-core)    | Sống lâu nhưng ngữ cảnh rất nhỏ, chỉ điều phối sự kiện và sinh thợ                           |
+| Kiến trúc sư, Codex | Sống lâu theo feature, định kỳ nén ngữ cảnh, quyết định ghi vào tệp                          |
 
 **Diệt thợ và thay bằng phiên mới (giữ nguyên worktree và nhánh) khi:** đầu việc xong hoặc đã tích hợp; thợ sửa 2 lần chưa đạt (phiên mới có góc nhìn sạch, kèm nâng bậc model); ngữ cảnh đã đầy quá nửa (ngưỡng kinh nghiệm, cần điều chỉnh theo thực tế); đổi model hoặc phạm vi; thợ lặp lại sai lầm cũ hoặc dựa vào giả định đã lỗi thời.
 
@@ -320,7 +320,7 @@ Vì trạng thái đã nằm trong `.agents/` và git, thợ là **thay thế đ
 ### 3.5. Quy tắc sinh agent phụ
 
 1. **Chỉ Kiến trúc sư và Codex được sinh agent.** Thợ, Reviewer, Audit và bot không tự sinh. Độ sâu tối đa một cấp.
-2. **Hai loại:** *subagent trong phiên* (ngắn hạn, chỉ đọc, đầu ra có giới hạn; dùng cho tìm kiếm, tóm tắt, đối chiếu) và *phiên riêng trong HERDR* (dài hơn, có worktree riêng; dùng cho việc sửa mã).
+2. **Hai loại:** _subagent trong phiên_ (ngắn hạn, chỉ đọc, đầu ra có giới hạn; dùng cho tìm kiếm, tóm tắt, đối chiếu) và _phiên riêng trong HERDR_ (dài hơn, có worktree riêng; dùng cho việc sửa mã).
 3. **Giới hạn trao đổi:** thợ chỉ nhắn cho `codex-mgr`, không nhắn nhau; việc cần phối hợp do Codex làm trung gian. Mỗi agent phụ nhận một đầu việc, bộ công cụ tối thiểu và mẫu báo cáo định sẵn.
 4. **Hạn mức:** số phiên đồng thời tối đa và ngân sách token mỗi phiên (xem mục 4.2). herdr-mesh cho agent mở agent mới theo chỉ dẫn, nên nếu không giới hạn thì số phiên và chi phí dễ vượt kiểm soát; bản `herdr-mesh-safe` có lease để hỗ trợ.
 
@@ -332,11 +332,11 @@ GitNexus **không phải công cụ quản lý tác vụ**. Nó lập chỉ mụ
 
 **1. Agent đọc được**
 
-| Agent | Mức hỗ trợ |
-|---|---|
-| Claude Code | MCP, skill, hook |
-| Codex | MCP, skill, hook (cài hook bằng `gitnexus setup -c codex`) |
-| OpenCode | MCP và skill, không hook |
+| Agent       | Mức hỗ trợ                                                 |
+| ----------- | ---------------------------------------------------------- |
+| Claude Code | MCP, skill, hook                                           |
+| Codex       | MCP, skill, hook (cài hook bằng `gitnexus setup -c codex`) |
+| OpenCode    | MCP và skill, không hook                                   |
 
 **2. Cài đặt (làm một lần, trên nhánh riêng, do Codex thực hiện)**
 
@@ -348,13 +348,13 @@ GitNexus **không phải công cụ quản lý tác vụ**. Nó lập chỉ mụ
 
 **3. Phân công dùng**
 
-| Vai | Công cụ GitNexus nên dùng |
-|---|---|
+| Vai          | Công cụ GitNexus nên dùng                                           |
+| ------------ | ------------------------------------------------------------------- |
 | Kiến trúc sư | `impact`, `context`, `generate_map` để đánh giá phương án và rủi ro |
-| Reviewer | `detect_changes`, `impact` để kiểm phạm vi ảnh hưởng của diff |
-| Thợ cơ khí | `impact` trước khi sửa; `rename` khi đổi tên; `trace` khi tìm lỗi |
-| Tìm kiếm | `query`, `context` |
-| Audit | Không cần |
+| Reviewer     | `detect_changes`, `impact` để kiểm phạm vi ảnh hưởng của diff       |
+| Thợ cơ khí   | `impact` trước khi sửa; `rename` khi đổi tên; `trace` khi tìm lỗi   |
+| Tìm kiếm     | `query`, `context`                                                  |
+| Audit        | Không cần                                                           |
 
 **4. Giữ chỉ mục luôn mới**
 
@@ -400,19 +400,19 @@ hc read demo --lines 10                         # đọc 10 dòng cuối, không
 
 Những gì đã thấy trên máy thật (khác hoặc rõ hơn tài liệu công khai):
 
-| Điểm | Kết quả thật | Hệ quả |
-|---|---|---|
-| Core | Đã chạy sẵn; `hc server start\|stop\|status\|restart` tồn tại. `hc server status` trả JSON có `live`, `finished`, `uptime_ms`, `version` | Dịch vụ khởi động cùng máy có thể dùng `hc server start`; còn phải thử sau khi khởi động lại máy |
-| Đầu ra | Mặc định là JSON khi đầu ra đi qua đường ống; `run` và `read` in văn bản | Script đọc được bằng `jq`/`ConvertFrom-Json` mà không cần phân tích bảng |
-| Dạng `hc ls` | Một **đối tượng** `{"hidden_finished": n, "terminals": [...]}`, **không phải mảng** | Đếm thợ bằng `jq '.terminals \| length'` (đã sửa trong `dispatch.sh`, HERDR-CORE-BOT.md §1.5) |
-| Quan hệ cha–con | `hc run` gọi từ trong một terminal sẽ tự gán `parent` là terminal đó (ví dụ `t3` → `t9` → `t10`); `hc get` cho thấy `die_with_parent: true` theo mặc định | Thợ phải sống sót khi bot khởi động lại → bắt buộc `--outlive-parent` |
-| Báo trạng thái | Terminal Claude Code có `reported: true`, `status: {app: "claude-code", state: "working", msg: "..."}`. Chương trình thường (`ping`, `pwsh`) có `reported: false`, `status: null` | Claude Code tự báo trạng thái, nên `hc events`/`hc wait` dùng được. Với OpenCode, Codex: chưa kiểm, cần `ready: quiet` hoặc chuỗi đánh dấu |
-| Tên terminal | `--name` chỉ nhận 1–32 ký tự `a-z 0-9 - _`, không chữ hoa | Mã việc phải viết thường (`test-1`, không phải `TEST-1`); `dispatch.sh` kiểm trước khi chạy |
-| Vị trí | Terminal có trường `where` (ví dụ `"MATHY-AI / 1"`); `demo` nhận `where` của cha. Terminal chạy kèm `--label` thì sự kiện `created` chưa thấy `where` | Biết thợ đang nằm ở workspace/tab nào; đừng dựa vào `where` để lọc, hãy dùng `--label` |
-| Sự kiện | `hc events --json`: dòng đầu là ảnh chụp `{"channel", "seq", "terminals"}`; các dòng sau theo dạng JSON-RPC `{"method":"event","params":{"type":"created"\|"finished", "terminal", "seq", "data"}}`. Sự kiện `finished` có `data: {exit_code, reason, signal}` | `watch.sh` đọc `.params.type`; xử lý cả `finished` (thợ thoát), không chỉ trạng thái |
-| Template | `hc templates` trả `{"templates": []}` | Phải tự tạo `worker-fast`, `worker-mid`, `worker-strong`, `auditor`, `researcher` theo HERDR-CORE-BOT.md §1.4 |
-| Dọn dẹp | `hc kill <t>` kết thúc; `hc rm <t>` gỡ terminal đã kết thúc (trả `{"removed":"t10"}`); `hc ls --all` thấy cả terminal đã kết thúc (có `exit_code`, `reason`); `hc run --rm` tự gỡ ngay sau khi thoát | Dùng `--rm` cho lệnh ngắn (Audit, Tìm kiếm). **Không** dùng cho thợ, vì sau khi thợ thoát còn cần `hc read` để xem lỗi |
-| Báo khi con kết thúc | Khi terminal con thoát, `hc` tự gõ vào agent cha một ghi chú `<hc>t10 demo exited (exit 0). Last lines: ... Read: hc read t10</hc>` kèm các dòng cuối | Agent cha (Codex quản lý, bot) biết thợ đã thoát mà không cần chạy vòng theo dõi. Tắt cho một terminal bằng `hc run --no-notify`, hoặc tắt hẳn bằng `notes = false` trong `config.toml` |
+| Điểm                 | Kết quả thật                                                                                                                                                                                                                                                   | Hệ quả                                                                                                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core                 | Đã chạy sẵn; `hc server start\|stop\|status\|restart` tồn tại. `hc server status` trả JSON có `live`, `finished`, `uptime_ms`, `version`                                                                                                                       | Dịch vụ khởi động cùng máy có thể dùng `hc server start`; còn phải thử sau khi khởi động lại máy                                                                                        |
+| Đầu ra               | Mặc định là JSON khi đầu ra đi qua đường ống; `run` và `read` in văn bản                                                                                                                                                                                       | Script đọc được bằng `jq`/`ConvertFrom-Json` mà không cần phân tích bảng                                                                                                                |
+| Dạng `hc ls`         | Một **đối tượng** `{"hidden_finished": n, "terminals": [...]}`, **không phải mảng**                                                                                                                                                                            | Đếm thợ bằng `jq '.terminals \| length'` (đã sửa trong `dispatch.sh`, HERDR-CORE-BOT.md §1.5)                                                                                           |
+| Quan hệ cha–con      | `hc run` gọi từ trong một terminal sẽ tự gán `parent` là terminal đó (ví dụ `t3` → `t9` → `t10`); `hc get` cho thấy `die_with_parent: true` theo mặc định                                                                                                      | Thợ phải sống sót khi bot khởi động lại → bắt buộc `--outlive-parent`                                                                                                                   |
+| Báo trạng thái       | Terminal Claude Code có `reported: true`, `status: {app: "claude-code", state: "working", msg: "..."}`. Chương trình thường (`ping`, `pwsh`) có `reported: false`, `status: null`                                                                              | Claude Code tự báo trạng thái, nên `hc events`/`hc wait` dùng được. Với OpenCode, Codex: chưa kiểm, cần `ready: quiet` hoặc chuỗi đánh dấu                                              |
+| Tên terminal         | `--name` chỉ nhận 1–32 ký tự `a-z 0-9 - _`, không chữ hoa                                                                                                                                                                                                      | Mã việc phải viết thường (`test-1`, không phải `TEST-1`); `dispatch.sh` kiểm trước khi chạy                                                                                             |
+| Vị trí               | Terminal có trường `where` (ví dụ `"MATHY-AI / 1"`); `demo` nhận `where` của cha. Terminal chạy kèm `--label` thì sự kiện `created` chưa thấy `where`                                                                                                          | Biết thợ đang nằm ở workspace/tab nào; đừng dựa vào `where` để lọc, hãy dùng `--label`                                                                                                  |
+| Sự kiện              | `hc events --json`: dòng đầu là ảnh chụp `{"channel", "seq", "terminals"}`; các dòng sau theo dạng JSON-RPC `{"method":"event","params":{"type":"created"\|"finished", "terminal", "seq", "data"}}`. Sự kiện `finished` có `data: {exit_code, reason, signal}` | `watch.sh` đọc `.params.type`; xử lý cả `finished` (thợ thoát), không chỉ trạng thái                                                                                                    |
+| Template             | `hc templates` trả `{"templates": []}`                                                                                                                                                                                                                         | Phải tự tạo `worker-fast`, `worker-mid`, `worker-strong`, `auditor`, `researcher` theo HERDR-CORE-BOT.md §1.4                                                                           |
+| Dọn dẹp              | `hc kill <t>` kết thúc; `hc rm <t>` gỡ terminal đã kết thúc (trả `{"removed":"t10"}`); `hc ls --all` thấy cả terminal đã kết thúc (có `exit_code`, `reason`); `hc run --rm` tự gỡ ngay sau khi thoát                                                           | Dùng `--rm` cho lệnh ngắn (Audit, Tìm kiếm). **Không** dùng cho thợ, vì sau khi thợ thoát còn cần `hc read` để xem lỗi                                                                  |
+| Báo khi con kết thúc | Khi terminal con thoát, `hc` tự gõ vào agent cha một ghi chú `<hc>t10 demo exited (exit 0). Last lines: ... Read: hc read t10</hc>` kèm các dòng cuối                                                                                                          | Agent cha (Codex quản lý, bot) biết thợ đã thoát mà không cần chạy vòng theo dõi. Tắt cho một terminal bằng `hc run --no-notify`, hoặc tắt hẳn bằng `notes = false` trong `config.toml` |
 
 Các lệnh khác có trong `hc --help` mà tài liệu cũ chưa nêu:
 
@@ -470,10 +470,10 @@ Do Codex tổng hợp và lưu vào `.agents/reports/<ID>.md` trên nhánh, ng�
 4. Việc tin nhắn có được lưu lại bền vững hay không (tài liệu không nêu; vì vậy mục 3.2 buộc ghi thông tin quan trọng vào tệp).
 5. Cách đăng ký herdr-mesh cho OpenCode (trình cài đặt tự dò agent; cần thử xem OpenCode có được nhận không).
 6. Nguồn model: mã provider thực tế của Ollama Cloud trong OpenCode (`opencode models`); model nào gọi công cụ ổn định trong worktree; giới hạn đồng thời và giá của Ollama Cloud (các trang không thống nhất, có thay đổi ngày 31/08/2026).
-10. Model Google (mục 2.2): script gọi API tạo ảnh/video chưa viết, chưa thử một lượt tạo thật; giá mỗi lượt; `agy` ở chế độ tương tác trong herdr-core có báo trạng thái (OSC 7501) không; Space image-to-3D nào trên Hugging Face cho kết quả dùng được.
-7. GitNexus: chỉ mục có đồng bộ đúng giữa nhiều worktree không (trang chính không nói rõ về worktree); `analyze` ghi đè hay hợp nhất `AGENTS.md`/`CLAUDE.md` ra sao (cần xem `git diff` sau khi chạy); OpenCode không có hook nên phải làm mới chỉ mục thủ công.
-8. Các ngưỡng ở mục 3.4 (ví dụ "ngữ cảnh đầy quá nửa") và ở mục 1.1 (1 đến 3 skill, thợ tối đa 2) là kinh nghiệm, chưa có nguồn kiểm chứng; cần hiệu chỉnh theo thực tế.
-9. Thư mục agent của OpenCode: tài liệu này ghi `.opencode/agents/`, còn repo MATHY-AI đang dùng `.opencode/agent/`; cần xác nhận bản OpenCode đang cài nhận thư mục nào (hoặc cả hai).
+7. Model Google (mục 2.2): script gọi API tạo ảnh/video chưa viết, chưa thử một lượt tạo thật; giá mỗi lượt; `agy` ở chế độ tương tác trong herdr-core có báo trạng thái (OSC 7501) không; Space image-to-3D nào trên Hugging Face cho kết quả dùng được.
+8. GitNexus: chỉ mục có đồng bộ đúng giữa nhiều worktree không (trang chính không nói rõ về worktree); `analyze` ghi đè hay hợp nhất `AGENTS.md`/`CLAUDE.md` ra sao (cần xem `git diff` sau khi chạy); OpenCode không có hook nên phải làm mới chỉ mục thủ công.
+9. Các ngưỡng ở mục 3.4 (ví dụ "ngữ cảnh đầy quá nửa") và ở mục 1.1 (1 đến 3 skill, thợ tối đa 2) là kinh nghiệm, chưa có nguồn kiểm chứng; cần hiệu chỉnh theo thực tế.
+10. Thư mục agent của OpenCode: tài liệu này ghi `.opencode/agents/`, còn repo MATHY-AI đang dùng `.opencode/agent/`; cần xác nhận bản OpenCode đang cài nhận thư mục nào (hoặc cả hai).
 
 ## Nguồn tham khảo
 

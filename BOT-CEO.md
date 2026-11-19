@@ -34,18 +34,22 @@ Trong dự án chỉ có 1–2 tính năng nhỏ, một phiên Kiến trúc sư 
    Chỉ giữ ngữ cảnh A        Chỉ giữ ngữ cảnh B        Chỉ giữ ngữ cảnh C
           │                         │                         │
           ├──► Research / Tóm tắt log: Gemini (agm ask) · OpenCode explore (:free) · GitNexus (chỉ đọc)
-          ├──► Worktree nhánh riêng: agm spawn (worker-fast :free/local; khó -> mid/strong/Codex)
+          ├──► Đồng Kiến trúc sư (gánh tải cho Claude): phiên tương tác agy Opus High (giữ cache trong repo)
+          ├──► Worktree nhánh riêng: agm spawn thẳng từ BOT-CEO (không qua codex-mgr trung gian)
+          │                          (worker-fast :free/local; khó -> mid/strong OpenRouter; Codex khi agm quota rộng)
           ├──► Audit & Pre-check: test/build/lint + kiểm diff & log (model miễn phí)
-          ├──► Pre-review (tùy chọn giữ góc nhìn Opus): agy Opus High
-          ├──► Reviewer mặc định: OpenCode Reviewer (vd. openai/gpt-6.1-sol)
-          │                       *(bảo mật/dữ liệu/2 lần CHƯA ĐẠT -> leo thang Claude Opus High)*
-          └──► Cập nhật docs (nếu có đổi): agy Gemini 4 Hydrogen Medium
+          ├──► Reviewer (1 tầng cho nhánh thường): OpenCode non-OpenAI hoặc agy (Argon/Hydrogen High)
+          │                                       *(ca khó: agy Opus High / Codex; rủi ro cao -> Claude Opus High)*
+          └──► Cập nhật docs & báo cáo cuối (nếu cần): agy Gemini 4 Hydrogen Medium
                                     │
           ▼  Khóa nguyên tử (mkdir) khi ghi BRANCHES.md (status: wip -> ready)
       BRANCHES.md  ◄── sổ đăng ký & điểm chạm duy nhất giữa các lane
           │
           ▼  Đúng 1 phiên GitHub Copilot (copilot-git) đọc hàng đợi tuần tự
     Merge đúng head SHA -> Chạy lại Audit/Build -> Deploy (nếu được phép)
+          │
+          ▼  Làm mới đồ thị mã nguồn dùng chung cho các lane
+    Cập nhật GitNexus (gitnexus-sync: OpenCode :free chạy analyze --index-only)
           │
           ▼  Tổng hợp vấn đề lớn giữa các lane / phiên
     Gemini Argon (agy): cập nhật & tối ưu hóa harnessing cho các phiên sau
@@ -65,12 +69,13 @@ Trong dự án chỉ có 1–2 tính năng nhỏ, một phiên Kiến trúc sư 
 
 | Vai trò | Công cụ / Model | Số lượng | Trách nhiệm chính | Không được làm |
 |---|---|---|---|---|
-| **BOT-CEO (theo lane)** | Claude Code (`claude-opus-5-5` / `claude-fable-5-2`) hoặc Codex tùy mức khó của mảng *(đây là vai chính duy nhất mở Claude Code)* | 1 agent / lane (khuyến nghị ≤ 4–5 lane đồng thời) | Kiêm Kiến trúc sư của lane: đọc mã mảng mình, chia nhánh nhỏ (< ~400 dòng diff), giữ chỗ `wip` trên `BRANCHES.md`, gọi `agm spawn` giao thợ, đọc diff + chạy kiểm chứng, đưa qua Pre-review / Reviewer / Docs, đặt `ready` với `head` SHA cố định | Merge vào `main`, push `main`, deploy, sửa code thay thợ (trừ 1 dòng kiểm chứng), tự ý sửa quy tắc harness cấp B |
-| **Đồng trao đổi / Phản biện** | **Opus High qua `agy`** (`agm ask`) | Theo nhu cầu | Trao đổi phương án thiết kế với BOT-CEO hoặc rà trước diff để giữ góc nhìn Opus mà không tiêu hạn mức Claude Code | Sửa tệp dự án |
-| **Reviewer (mặc định)** | **OpenCode** (`openai/gpt-6.1-sol` hoặc model mạnh) *(leo thang Claude Opus 5.5 High khi rủi ro cao / 2 lần `CHƯA ĐẠT`)* | Theo lượt duyệt | Duyệt độc lập từng nhánh của BOT-CEO trước khi sang docs / `ready` | Sửa code nghiệp vụ |
-| **Cập nhật docs** | **Gemini 4 Hydrogen Medium** (`agy`) | Theo nhánh có đổi docs | Nhận lệnh **sau khi Reviewer duyệt/chỉnh sửa xong, trước khi đặt `ready` gọi Copilot** để cập nhật docs và commit lên cùng nhánh | Sửa code nghiệp vụ, merge |
-| **Audit & Thợ cơ khí** | **Miễn phí (`:free` / Ollama local)** cho Audit, `explore`/tóm tắt log, sàng lọc quy ước, `worker-fast`; lỗi 2 lần hoặc việc khó nâng lên `mid`/`strong`/Codex | ≤ `[policy].max_workers` toàn máy | Audit, tóm tắt log dài, code & viết test đúng phạm vi `.agents/tasks/<ID>.md`, ghi `.agents/log/<ID>.md` và commit trên worktree | Chạm `BRANCHES.md`, rời worktree, merge |
+| **BOT-CEO (theo lane)** | Claude Code (`claude-opus-5-5` / `claude-fable-5-2`) hoặc Codex tùy mức khó của mảng *(đây là vai chính duy nhất mở Claude Code)* | 1 agent / lane (khuyến nghị ≤ 4–5 lane đồng thời) | Kiêm Kiến trúc sư + điều phối trực tiếp của lane (bỏ tầng `codex-mgr` trung gian): đọc mã mảng mình, chia nhánh nhỏ (< ~400 dòng diff), giữ chỗ `wip` trên `BRANCHES.md`, gọi `agm spawn` giao thợ, đọc diff + chạy kiểm chứng, đưa qua Reviewer / Docs, đặt `ready` với `head` SHA cố định | Merge vào `main`, push `main`, deploy, sửa code thay thợ (trừ 1 dòng kiểm chứng), tự ý sửa quy tắc harness cấp B |
+| **Đồng Kiến trúc sư & Reviewer cấp cao** | **Opus High qua `agy`** (phiên tương tác trong repo / `--conversation <id>`, **không** dùng `agm ask` one-shot) | Theo đợt / lane | Bàn thiết kế & chia `.agents/tasks/<ID>.md` thay Claude Code khi cần bảo toàn hạn mức Claude (tận dụng `cache_read_tokens`); phân xử review cho các nhánh khó | Sửa tệp dự án; không gọi làm Pre-review thừa cho nhánh thường |
+| **Reviewer (mặc định)** | **OpenCode non-OpenAI** (OpenRouter / Ollama Cloud) hoặc **`agy`** (`gemini-4-argon-high` / `gemini-4-hydrogen-high`) *(ca khó: `agy` Opus High / `gpt-6.1-sol`; rủi ro cao: Claude Opus 5.5 High)* | Theo lượt duyệt | Duyệt độc lập 1 tầng cho từng nhánh của BOT-CEO trước khi sang docs / `ready` mà không ăn vào hạn mức ChatGPT/Codex | Sửa code nghiệp vụ |
+| **Cập nhật docs & báo cáo** | **Gemini 4 Hydrogen Medium** (`agy`) | Theo nhánh có đổi docs/cần báo cáo | Nhận lệnh **sau khi Reviewer duyệt/chỉnh sửa xong, trước khi đặt `ready` gọi Copilot** để cập nhật docs + tổng hợp `.agents/reports/<ID>.md` và commit lên cùng nhánh | Sửa code nghiệp vụ, merge |
+| **Audit & Thợ cơ khí** | **Miễn phí (`:free` / Ollama local)** cho Audit, `explore`/tóm tắt log, sàng lọc quy ước, `worker-fast`; lỗi 2 lần hoặc việc khó nâng lên `mid`/`strong` (OpenRouter/Ollama Cloud) hoặc **Codex** (khi `agm quota` cho phép) | ≤ `[policy].max_workers` toàn máy | Audit, tóm tắt log dài, code & viết test đúng phạm vi `.agents/tasks/<ID>.md`, ghi `.agents/log/<ID>.md` và commit trên worktree | Chạm `BRANCHES.md`, rời worktree, merge |
 | **Bot GIT** | GitHub Copilot CLI (`copilot`) | **Đúng 1 phiên** (`copilot-git`) | Đọc `BRANCHES.md`, merge tuần tự đúng `head` SHA, chạy lại cổng kiểm tra, dọn worktree/nhánh đã merge | Tự sửa logic tính năng; bỏ qua `depends_on` hoặc cổng kiểm |
+| **Cập nhật GitNexus (`gitnexus-sync`)** | OpenCode (model miễn phí `:free` / Ollama local) | Sinh rồi diệt theo lượt (tối đa 1 lượt `analyze` mỗi lần) | Chạy `gitnexus analyze --index-only` tại checkout chính sau khi `copilot-git` merge (hoặc khi `staleness` báo cũ), giữ khóa tránh trùng và kiểm MCP server chỉ đọc | Sửa mã nguồn, sửa `AGENTS.md`/`CLAUDE.md`/`BRANCHES.md`, chạy `analyze` thiếu `--index-only` |
 | **Cố vấn kỹ thuật & Tối ưu Harness** | **Gemini Argon** (`gemini-4-argon-*` qua `agy`) | 1 vai cố vấn liên lane | Cố vấn kỹ thuật giống Codex; **tổng hợp các vấn đề lớn từ các BOT-CEO sau mỗi đợt** để cập nhật và tối ưu hóa harnessing chung (`AGENTS.md`, `CLAUDE.md`, template, skill, `BRANCHES.md`) | Đụng vào luồng code đang chạy dở của từng lane |
 
 ---
@@ -93,8 +98,7 @@ Mỗi nhánh là một khối `### <lane>/<slug>` dùng cặp `- khóa: giá tr�
 - touches_hotspot: -      # tệp dùng chung dễ đụng giữa các lane (vd: core/models.py)
 - summary: Cảnh báo hàng sắp hết khi tồn dưới ngưỡng cấu hình
 - verify: <lệnh test/build thực tế đã chạy và kết quả số đếm>
-- pre_review: agy opus-high (tùy chọn) - tóm tắt / đường dẫn
-- review: opencode (openai/gpt-6.1-sol), 0 bắt buộc sửa, .agents/reviews/tap-hoa--low-stock-1.md
+- review: opencode/non-openai (hoặc agy argon-high; ca khó: agy opus-high), 0 bắt buộc sửa, .agents/reviews/tap-hoa--low-stock-1.md
 - docs: gemini-4-hydrogen-medium (đã cập nhật docs/inventory.md) | không đổi
 - registered: 2026-11-19T08:40+07:00
 - git: -                  # copilot-git ghi: merge SHA, log, trạng thái deploy hoặc lý do lỗi
@@ -106,7 +110,7 @@ Mỗi nhánh là một khối `### <lane>/<slug>` dùng cặp `- khóa: giá tr�
 |---|---|---|
 | `wip` | BOT-CEO | **Giữ chỗ ngay khi bắt đầu chia việc** — để các BOT-CEO khác thấy vùng đang làm và tránh đụng tệp. `copilot-git` bỏ qua. |
 | `blocked` | BOT-CEO | Chờ người dùng quyết định hoặc chờ nhánh thuộc lane khác (`depends_on`). |
-| `ready` | BOT-CEO | Đã qua Audit + (Pre-review) + Reviewer + Hydrogen cập nhật docs + rebase lên `main` + chạy lại kiểm; `head` SHA cố định. **Cấm commit thêm sau khi đặt `ready`.** |
+| `ready` | BOT-CEO | Đã qua Audit + Reviewer + Hydrogen cập nhật docs + rebase lên `main` + chạy lại kiểm; `head` SHA cố định. **Cấm commit thêm sau khi đặt `ready`.** |
 | `merging` | `copilot-git` | Đang tích hợp vào nhánh chung và chạy lại cổng kiểm. |
 | `merged` / `deployed` | `copilot-git` | Đã vào `main` (và deploy xong nếu bật). Trạng thái cuối; Copilot dọn worktree/nhánh. |
 | `needs-rebase` | `copilot-git` | Xung đột merge, SHA lệch hoặc >1 migration head → trả về đúng `lane` của BOT-CEO xử lý. |
@@ -114,13 +118,14 @@ Mỗi nhánh là một khối `### <lane>/<slug>` dùng cặp `- khóa: giá tr�
 
 ### 4.3. Khóa nguyên tử khi nhiều BOT-CEO và Copilot cùng ghi `BRANCHES.md`
 
-Dùng thao tác tạo thư mục (nguyên tử trên cả Windows và Linux/WSL) tại `.agents/locks/branches` (hoặc `.harness/locks/branches`):
+Dùng thao tác tạo thư mục (nguyên tử trên cả Windows và Linux/WSL) tại **`.agents/.runtime/locks/branches`** (hoặc `.harness/locks/branches` — bắt buộc nằm trong thư mục đã khai báo ở `.gitignore` để không làm bẩn `git status` trên checkout chính):
 
 ```bash
+mkdir -p .agents/.runtime/locks
 # Lấy khóa (thử lại tối đa 30 giây)
-for i in $(seq 30); do mkdir .agents/locks/branches 2>/dev/null && break; sleep 1; done
+for i in $(seq 30); do mkdir .agents/.runtime/locks/branches 2>/dev/null && break; sleep 1; done
 # ... chỉ sửa đúng mục của lane mình trong BRANCHES.md ...
-rmdir .agents/locks/branches   # nhả khóa ngay sau khi ghi xong
+rmdir .agents/.runtime/locks/branches   # nhả khóa ngay sau khi ghi xong
 ```
 
 Nếu thư mục khóa tồn tại quá 10 phút (do tiến trình chết giữa chừng), người dùng kiểm tra không có agent nào đang ghi rồi xóa tay.
@@ -129,33 +134,64 @@ Nếu thư mục khóa tồn tại quá 10 phút (do tiến trình chết giữa
 
 ## 5. Vòng đời một đầu việc trong BOT-CEO (kết hợp `agm` + `hc`)
 
+### 5.0. Trước khi chạy: Khung xác định mục tiêu kiểu Lauren Tan (`Goal first · Process second · Then routines`)
+
+Khi mới mở một BOT-CEO (hoặc nhận một đề bài lớn mới cho lane), BOT-CEO **làm chủ mục tiêu cuối (`you own the goal, not the steps`)** và bắt buộc đi qua 6 bước làm rõ trước khi được phép `agm spawn` bất kỳ thợ nào (*"understand it first. automate it second"*):
+
+1. **`01 / goal.first` — Chốt mục tiêu cuối & giá trị phục vụ:**
+   - `/interview`: nếu đề bài còn mơ hồ, hỏi lại người dùng cho tới khi người dùng xác nhận *"Đúng, chính là nó"*.
+   - `serves`: chỉ rõ đợt việc này phục vụ **`revenue`** (tính năng mới, tăng chuyển đổi/bán hàng) hay **`cost`** (giảm lãng phí token, giảm sửa lại `rework`, giảm giờ vận hành).
+2. **`02 / process.dump` — Nhận bản nháp thô & tạm dừng (`hold`):**
+   - Người dùng có thể đổ một bản mô tả thô/lộn xộn (voice dump / ghi chú). BOT-CEO tự gom đủ 6 mảnh:
+     - `steps` (luồng thực hiện hiện tại), `watch_outs` (điểm nóng / bẫy cần coi chừng), `tools` (module, CLI, DB liên quan), `check_work` (lệnh test/lint nào chứng minh làm đúng), `info_from` (nguồn dữ liệu/tệp đầu vào), `feedback_from` (cổng Audit/Reviewer/người dùng nghiệm thu).
+   - `/restate` + **`hold := do NOT execute yet`**: diễn đạt lại `goal + process` ngắn gọn, dễ hiểu rồi **dừng lại chờ xác nhận** — chưa sinh worktree hay `agm spawn` ở bước này.
+3. **`03 / how.i.think` — Khai mở quyết định ẩn & định nghĩa `done`:**
+   - `/ask one question at a time`: mỗi lượt chỉ hỏi **đúng 1 câu** về các quyết định ẩn (không hỏi dồn một danh sách dài).
+   - `conflict`: khi hai nguồn mâu thuẫn (ví dụ tài liệu cũ vs code thật trên `main`), chốt rõ nguồn nào thắng.
+   - `done`: **"Giao thợ / viết code xong" chưa phải là xong (`"sent" is not done`)** — chỉ tính là `done` khi:
+     - `saved`: commit code + `.agents/log/<ID>.md` + test tồn tại và đúng trên nhánh;
+     - `confirmed`: đã qua cổng `auditor` (`eslint --max-warnings 0`), `Reviewer`, `Hydrogen docs` và được `copilot-git` xác nhận `merged`/`deployed` trên `BRANCHES.md`.
+   - `waiting`: nhánh đang chờ (`blocked` / `depends_on`) thì theo dõi trên `BRANCHES.md` và `resume` sau, **tuyệt đối không tạo nhánh/task trùng (`never create a duplicate`)**.
+   - `/walk 3 real examples`: đi qua **3 ví dụ thực tế (bắt buộc gồm cả ca lỗi / biên thất bại)** trước khi đóng gói vào `.agents/tasks/<ID>.md`.
+4. **`04 / improve.self` — Tự soi lỗ hổng từ dữ liệu thật:**
+   - Tự đọc `.agents/reviews/`, `.agents/log/`, `agm inbox`; khi có lỗi, truy ngược theo mã định danh (`join_on`: mã việc `<ID>`, commit SHA, mã terminal `t...`) để tìm khoảng trống (`find the gap`). Nếu thiếu dữ liệu kiểm chứng → đề xuất viết thêm rule ESLint/script check nhỏ.
+5. **`05 / routines` — Tự động hóa để người dùng không còn là điểm nghẽn:**
+   - Thiết lập `trigger` rõ ràng (thả tệp `.agents/inbox/<ID>.md`, sự kiện `agm daemon`, hàng đợi `BRANCHES.md`) để luồng chạy tự động qua các cổng mà người dùng chỉ cần duyệt ở chốt cuối (`me := no longer the bottleneck`).
+6. **`06 / review` — Trả kết quả khởi tạo chuẩn:**
+   - Đối chiếu lại `process vs goal`, đề xuất cách chia nhánh tối ưu hơn nếu có, kết thúc bước lập kế hoạch bằng khối tóm tắt:
+     `return { goal, process, rules, routine, next_step }`
+   - Sau đó hỏi đúng **1 câu xác nhận cuối** trước khi chuyển sang Bước 1–9 bên dưới.
+
+---
+
+### 5.1. Chín bước thực thi của BOT-CEO sau khi đã chốt `goal + process`
+
 Mỗi BOT-CEO vận hành theo 9 bước gọn:
 
 1. **Khởi động, trao đổi trực tiếp & quản lý vòng đời BOT-CEO qua `agm`:**
    - Mở thẳng phiên BOT-CEO trong HERDR / `herdr-core` với tên chuẩn theo lane (tối đa 32 ký tự `a-z 0-9 - _`), ví dụ `ceo-tap-hoa`, `ceo-platform`, để bạn chat/trao đổi nhiều lượt trực tiếp ngay trong phiên đó.
    - Bật **`agm manage ceo-tap-hoa`** (cài `agm hook install` một lần nếu dùng Claude Code): khi BOT-CEO làm dài và ngữ cảnh chạm `ctx_rotate` (mặc định 70%), `agm daemon` tự nhắc ghi bàn giao vào `.agents/handoff/` rồi mở phiên BOT-CEO kế nhiệm sạch ngữ cảnh — **không bao giờ kill phiên cũ**, vừa tránh phình ngữ cảnh vừa giữ nguyên mạch công việc của lane.
-2. **Research (chỉ đọc, trong checkout chính):**
+2. **Research & Bàn thiết kế (chỉ đọc, trong checkout chính):**
    - Dùng GitNexus (`query`, `context`, `impact`) để giảm tối đa số tệp phải đọc; kiểm `BRANCHES.md` xem các lane khác có mục `wip`/`ready` nào chạm cùng điểm nóng không.
-   - Tra cứu web / phản biện 1 lượt: gọi `agm ask --model gemini-4-argon-medium ...` (hoặc `agy` Opus High); đọc mã/tóm tắt log dài có thể dùng OpenCode `explore` model miễn phí.
-3. **Giữ chỗ trên `BRANCHES.md`:** ghi mục `status: wip`, `lane`, `touches_hotspot`, `depends_on` (dưới khóa thư mục).
-4. **Tạo worktree & giao thợ qua `agm spawn`:**
-   - Tạo `.agents/tasks/<ID>.md` (mục tiêu, phạm vi tệp được phép sửa, `tier:`, `skills:` tối đa 2, lệnh kiểm chứng). Mặc định dùng `tier: nhanh` (model `:free` / local) cho việc hẹp 1–2 tệp có test sẵn; chỉ nâng bậc khi fail 2 lần hoặc việc phức tạp.
+   - Tra cứu web 1 lượt: gọi `agm ask --model gemini-4-argon-medium ...`; đọc mã/tóm tắt log dài dùng OpenCode `explore` model miễn phí. Khi cần bàn thiết kế/chia việc sâu mà muốn tiết kiệm hạn mức Claude Code, trao đổi trên phiên tương tác **`agy` Opus High** mở tại repo (giữ `conversation_id` để ăn `cache_read_tokens`).
+3. **Giữ chỗ trên `BRANCHES.md`:** ghi mục `status: wip`, `lane`, `touches_hotspot`, `depends_on` (dưới khóa thư mục `.agents/.runtime/locks/branches`).
+4. **Tạo worktree & giao thợ trực tiếp qua `agm spawn` (ưu tiên model nhẹ trước):**
+   - Tạo `.agents/tasks/<ID>.md` (mục tiêu, phạm vi tệp được phép sửa, `tier:`, `skills:` tối đa 2, lệnh kiểm chứng). Nhờ có hàng rào ESLint & CI cứng ([docs/ESLINT-CI-GUARDRAILS.md](docs/ESLINT-CI-GUARDRAILS.md)), **mặc định giao `tier: nhanh` (`worker-fast`: model nhẹ / `:free` / Ollama local) cho mọi việc rõ đặc tả ≤ 2–3 tệp** (CRUD, component, API handler, unit test); chỉ nâng bậc khi không qua được cổng lint/test sau 2 lần tự sửa. Trước khi gọi **Codex (`gpt-6.1-sol`)** cho ca khó, kiểm nhanh `agm quota`: nếu hạn mức tuần của `codex` > ~70–80%, ưu tiên `worker-strong` trên OpenRouter / Ollama Cloud.
    - Chạy `dispatch.sh <ID>` (gọi `agm spawn`): tự kiểm `max_workers` và ngân sách `task:<ID>`, tạo worktree riêng, gắn nhãn `agm.task`/`agm.role`.
 5. **Theo dõi & gỡ vướng:**
-   - Thợ báo cáo hoặc hỏi qua `agm send`; câu hỏi cần người dùng quyết đi thẳng vào `agm send user --type HỎI ...` (bạn trả lời tập trung trong `agm tui` hoặc `agm reply`).
+   - Thợ báo cáo hoặc hỏi trực tiếp về BOT-CEO của lane qua `agm send`; câu hỏi cần người dùng quyết đi thẳng vào `agm send user --type HỎI ...` (bạn trả lời tập trung trong `agm tui` hoặc `agm reply`).
    - Nếu thợ chạm `ctx_rotate`, `agm daemon` tự xoay vòng OpenCode worker sau khi thợ commit `.agents/log/<ID>.md`.
 6. **Cổng kiểm chất lượng của lane:**
-   - **Audit & Pre-check (model miễn phí):** chạy test/lint/build + kiểm quy ước (`git diff` trong phạm vi, có `.agents/log/<ID>.md` & test mới).
-   - **Pre-review (tùy chọn giữ góc nhìn Opus):** gửi diff cho **`agy` Opus High** (`agm ask` / `sparring-opus`) rà lỗi trước.
-   - **Reviewer mặc định (OpenCode):** gọi **OpenCode Reviewer** (`openai/gpt-6.1-sol` hoặc model mạnh) duyệt chính thức; nếu CHƯA ĐẠT, chuyển nguyên văn lỗi về thợ sửa. Chỉ leo thang về **Claude Opus 5.5 High** với ca bảo mật/dữ liệu/migration hoặc khi bị `CHƯA ĐẠT` 2 lần liên tiếp.
-   - **Cập nhật docs (khi có thay đổi):** gọi **Gemini 4 Hydrogen Medium** (`docs-hydrogen`) trên chính worktree đó để cập nhật tài liệu liên quan và commit trên nhánh.
+   - **Audit & Cổng ESLint/CI (model nhẹ / miễn phí):** chạy `eslint --max-warnings 0` (hoặc `ruff`/`clippy -D warnings`), quét diff chặn `eslint-disable`/`@ts-ignore`/sửa cấu hình lint ([docs/ESLINT-CI-GUARDRAILS.md](docs/ESLINT-CI-GUARDRAILS.md)), chạy test/build + kiểm quy ước (`git diff` trong phạm vi, có `.agents/log/<ID>.md` & test mới). Vi phạm lint hoặc tự tắt rule → trả `CHƯA ĐẠT` ngay mà không tốn token gọi Reviewer.
+   - **Reviewer (1 tầng cho nhánh thường):** gọi OpenCode với model mạnh ngoài OpenAI (OpenRouter/Ollama Cloud) hoặc `agy` (`gemini-4-argon-high` / `gemini-4-hydrogen-high`) duyệt chính thức để không ăn vào hạn mức ChatGPT/Codex; nếu CHƯA ĐẠT, chuyển nguyên văn lỗi về thợ sửa. Với nhánh khó hoặc bất đồng mới dùng phiên **`agy` Opus High** (hoặc `gpt-6.1-sol` review chéo), và chỉ leo thang về **Claude Opus 5.5 High** với ca bảo mật/dữ liệu/migration hoặc khi bị `CHƯA ĐẠT` 2 lần liên tiếp.
+   - **Cập nhật docs & tổng hợp báo cáo (ưu tiên model nhẹ):** với báo cáo cuối `.agents/reports/<ID>.md` và 1–2 mục docs ngắn, dùng **`gemini-3.8-flash-medium` hoặc `gemini-4-hydrogen-low`**; chỉ dùng **`gemini-4-hydrogen-medium`** khi sửa tài liệu kiến trúc dài/nhiều tệp, rồi commit trên nhánh.
 7. **Rebase & chốt `ready`:**
    - Rebase nhánh lên `main` mới nhất (nếu xung đột hoặc lệch migration head thì xử lý ngay trong worktree), chạy lại lệnh kiểm chứng, lấy `HEAD_SHA=$(git rev-parse --short=12 HEAD)`.
    - Cập nhật mục trên `BRANCHES.md` (dưới khóa): `status: ready`, `head: $HEAD_SHA`, `verify`, `review`, `docs`, `registered`.
-8. **Bàn giao cho `copilot-git`:**
+8. **Bàn giao cho `copilot-git` & cập nhật GitNexus:**
    - Nhắn ngắn qua `agm send copilot-git --type GIAO --task <ID> "Nhánh <lane>/<slug> ready tại SHA $HEAD_SHA, xem BRANCHES.md"`.
    - Nếu `copilot-git` trả `needs-rebase` hoặc `failed`, BOT-CEO chuyển về `wip`, xử lý trên worktree và đăng ký `ready` lại với SHA mới.
-   - Khi `deployed`/`merged`, BOT-CEO dọn hoặc để `cleanup-wt.sh` dọn worktree; `agm cleanup` dọn terminal BOT-CEO đã bàn giao cũ (do người dùng xác nhận).
+   - Khi `deployed`/`merged`, BOT-CEO (hoặc `copilot-git` / hook `post-merge`) gọi **`gitnexus-sync`** (`agm spawn gitnexus-sync --task <ID> --role index`) chạy `gitnexus analyze --index-only` tại checkout chính để các lane khác không đọc phải chỉ mục cũ (`staleness: behind`), rồi dọn worktree (`cleanup-wt.sh`) và dọn terminal BOT-CEO đã bàn giao cũ (`agm cleanup`, do người dùng xác nhận).
 9. **Chuyển bài học lớn cho Gemini Argon:**
    - Cuối đợt, nếu lane gặp lỗi lặp lại ≥ 2 lần (brief mơ hồ, xung đột điểm nóng, sai cổng, model hay vướng), BOT-CEO ghi ngắn nguyên nhân + đường dẫn bằng chứng vào `.agents/decisions/` (hoặc báo cho `argon-adv`) để **Gemini Argon** tổng hợp và tối ưu harnessing cho các phiên sau.
 
@@ -181,21 +217,29 @@ Mỗi BOT-CEO vận hành theo 9 bước gọn:
 
 ---
 
-## 7. Mẫu prompt khởi động một BOT-CEO
+## 7. Mẫu prompt khởi động một BOT-CEO (theo khung Lauren Tan)
 
 ```text
-Bạn là BOT-CEO phụ trách lane <tên-lane> (terminal: ceo-<tên-lane>).
+role := Bạn là BOT-CEO phụ trách lane <tên-lane> (terminal: ceo-<tên-lane>). Bạn làm chủ MỤC TIÊU (goal) của lane này, không chỉ các bước lẻ.
 Hãy đọc AGENTS.md, BOT-CEO.md và kiểm tra trạng thái wip/ready hiện có trong BRANCHES.md.
-Đề bài của lane <tên-lane>:
-1. ...
-2. ...
-Quy tắc: chỉ giữ ngữ cảnh trong phạm vi lane này; giữ chỗ `wip` có khóa trên BRANCHES.md; giao thợ qua `agm spawn`; gửi tin qua `agm send`; khi cần người dùng quyết dùng `agm send user --type HỎI`; sau Reviewer gọi Gemini 4 Hydrogen Medium cập nhật docs nếu có thay đổi; chỉ đặt `ready` khi đã có SHA cuối và đầy đủ kiểm chứng để bàn giao cho `copilot-git`.
+
+goal := <MỤC TIÊU CUỐI CÙNG BẠN MUỐN ĐẠT ĐƯỢC> cho lane <tên-lane>
+input (brain dump) :=
+- ...
+- ...
+
+Làm đúng theo thứ tự Goal First -> Process Second -> Then Routines (Mục 5.0 của BOT-CEO.md):
+1. [goal.first & process.dump] Thu thập steps, watch_outs (điểm nóng), tools, check_work (eslint/test), info_from, feedback_from; xác định việc này phục vụ revenue hay cost.
+2. [hold] Diễn đạt lại (/restate) goal + process ngắn gọn, đi qua 3 ví dụ thực tế (gồm cả ca lỗi/biên), xuất khối { goal, process, rules, routine, next_step } và hỏi tôi ĐÚNG 1 CÂU mỗi lượt nếu còn quyết định ẩn.
+3. KHÔNG gọi agm spawn hay sửa mã cho tới khi tôi xác nhận kế hoạch.
+4. Khi tôi chốt "chạy": giữ chỗ `wip` có khóa (.agents/.runtime/locks/branches) trên BRANCHES.md; ưu tiên giao worker-fast (model nhẹ + cổng eslint --max-warnings 0) qua `agm spawn`; gửi tin qua `agm send`; chỉ tính là `done` khi code đã saved + confirmed qua Audit -> Reviewer -> Hydrogen docs -> copilot-git.
 ```
 
 ---
 
 ## Nguồn tham khảo
 
+- Khung xác định mục tiêu `Automate Anything` (`goal + process + routines`): Lauren Tan (`poteto`)
 - Mô hình gốc đa lane + `BRANCHES.md` + khóa thư mục: `/mnt/d/Project/MATHY-AI/HARNESSING.md`, `/mnt/d/Project/MATHY-AI/BRANCHES.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CEO_BOT.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CAI_TIEN_HARNESS.md`
 - Bộ điều phối `agm` (`agmag` v0.2.0): `/mnt/d/Project/agmag/README_vi.md` (hoặc https://github.com/wosonday/agmag/)
 - Tài liệu cùng bộ: [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md), [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md)

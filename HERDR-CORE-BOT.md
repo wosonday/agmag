@@ -2,13 +2,13 @@
 
 Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (mục 2.2, 3.2, 3.3, 3.4, 3.6, 4.1–4.3) và [BOT-CEO.md](BOT-CEO.md) (khi tách nhiều BOT-CEO theo từng mảng). Nếu có mâu thuẫn, quy tắc riêng của dự án ưu tiên hơn.
 
-**Quản lý phiên bản Git giao cho GitHub Copilot** (`AGENTS-TUTORIAL.md` §3.3.1). `agm` và lớp wrapper worktree lo sinh/theo dõi/xoay vòng phiên và đo token; Codex quản lý đầu việc và bàn giao nhánh + SHA cuối (sau Review và bước cập nhật docs của Hydrogen Medium) + kết quả kiểm. Copilot tích hợp, revert và dọn worktree/nhánh đã tích hợp trong phạm vi được cho phép. Với MATHY-AI, tuân theo [GIT_BOT.md](docs/harness/GIT_BOT.md).
+**Quản lý phiên bản Git giao cho GitHub Copilot** (`AGENTS-TUTORIAL.md` §3.3.1, [docs/COPILOT-GIT.md](docs/COPILOT-GIT.md)). `agm` và lớp wrapper worktree lo sinh/theo dõi/xoay vòng phiên và đo token; BOT-CEO (hoặc Codex ở dự án 1 luồng) quản lý đầu việc và bàn giao nhánh + SHA cuối (sau Review và bước cập nhật docs của Hydrogen Medium) + kết quả kiểm. Copilot tích hợp, revert và dọn worktree/nhánh đã tích hợp trong phạm vi được cho phép. Với MATHY-AI, tuân theo `docs/harness/GIT_BOT.md`.
 
 Phạm vi: (1) dùng **`agm` (`agmag` v0.2.0)** đứng trên `hc` (`herdr-core`) để chạy nền, giao việc, nhắn tin, kiểm soát ngân sách/xoay vòng, và các template cho từng vai; (2) quy tắc tin nhắn & hộp thư; (3) đồng bộ GitNexus khi worktree nằm ở `.wt/` trong dự án.
 
 > **Mức tin cậy:**
 > - **Đã xác minh từ mã nguồn & nghiên cứu của `agmag` (`v0.2.0`, 2026-11-18/19):** kiến trúc lệnh `agm` (`daemon`, `tui`, `spawn`, `send`, `inbox`, `reply`, `done`, `ask`, `manage`, `rotate`, `cleanup`, `budget`, `policy`, `hook`, `ps`, `ls`, `cost`, `quota`, `log`, `scan`, `link`), sự kiện `hc events --json` (gồm `created`, `restarted`, `status`, `turn`, `title`, `labels`, `size`, `foreground`, `finished`, `lost`, `removed`), biến môi trường `HC_TERMINAL_ID`, và việc terminal của HERDR app có hiện trong `hc`.
-> - Các chỗ đánh dấu **[KIỂM]** là điểm cần thử lại trên máy thực tế khi cấu hình dự án mới (ví dụ: tên model slug chính xác của `Opus High` trong `agy models`, việc `hc send` vào phiên `agy` tương tác, khởi động lại máy với Task Scheduler / `systemd`).
+> - Các chỗ đánh dấu **[KIỂM]** là điểm cần thử lại trên máy thực tế khi cấu hình dự án mới (ví dụ: việc `hc send` vào phiên `agy` tương tác, khởi động lại máy với Task Scheduler / `systemd`).
 
 ---
 
@@ -100,9 +100,10 @@ Còn `.agents/bot.env` trong từng dự án chỉ giữ phần Git/worktree cho
 PROJECT_DIR=/duong/dan/den/du-an
 BASE_BRANCH=main
 WT_DIR=.wt                  # worktree nằm trong dự án (hoặc ../<TEN-DU-AN>.wt)
-MANAGER=codex-mgr           # đồng bộ với [policy].manager trong providers.toml
+MANAGER=codex-mgr           # đồng bộ với [policy].manager trong providers.toml (hoặc ceo-<lane>)
+RUNTIME_DIR=.agents/.runtime
+RUNTIME_TTL_DAYS=7          # dọn tệp tạm cũ hơn số ngày này
 GITNEXUS_SYNC=none          # none | main | worktree  (phần 3)
-RUNTIME_DIR=.agents/.runtime  # tệp tạm của wrapper (inbox-watch.sh, cleanup-wt.sh); đã có trong .gitignore
 ```
 
 Thêm vào `.gitignore` của dự án:
@@ -137,34 +138,36 @@ ready: quiet
 Bạn là thợ cơ khí. Làm theo thứ tự:
 1. Đọc AGENTS.md ở gốc repo, rồi `.agents/tasks/<ID>.md` (ID nằm trong nhiệm vụ bên dưới).
 2. Chỉ nạp và dùng các skill ghi ở trường `skills:` của tệp tác vụ (tối đa 2). Không tự thêm skill khác.
-3. Chỉ sửa trong phạm vi tệp tác vụ cho phép. Không sinh agent khác.
-4. Mỗi bước nhỏ: ghi mục vào `.agents/log/<ID>.md`, rồi commit (thông điệp bắt đầu bằng `<ID>:`).
-5. Tin nhắn gửi đi chỉ 1–3 dòng và trỏ tới tệp; luôn dùng `agm send` (không gửi nội dung dài).
-6. Khi xong hoặc bị chặn: chạy lệnh `agm send` đã nêu trong nhiệm vụ (hoặc `agm send user --type HỎI` nếu cần người dùng quyết), rồi dừng.
+3. Chỉ sửa trong phạm vi tệp tác vụ cho phép. Không sinh agent khác. Tuyệt đối KHÔNG sửa tệp cấu hình lint (`eslint.config.*`, `.eslintrc*`) và KHÔNG thêm `eslint-disable`, `@ts-ignore`, `@ts-nocheck` hay `: any` để lách lỗi (CI sẽ chặn cứng).
+4. Trước mỗi commit: chạy cổng lint nghiêm ngặt (`npx eslint . --max-warnings 0 --report-unused-disable-directives`, hoặc `ruff check` / `cargo clippy -- -D warnings`) + test trong tệp tác vụ; còn lỗi hoặc warning thì tự sửa cho bằng hết.
+5. Mỗi bước nhỏ: ghi mục vào `.agents/log/<ID>.md`, rồi commit (thông điệp bắt đầu bằng `<ID>:`).
+6. Tin nhắn gửi đi chỉ 1–3 dòng và trỏ tới tệp; luôn dùng `agm send` (không gửi nội dung dài).
+7. Khi xong hoặc bị chặn: chạy lệnh `agm send` đã nêu trong nhiệm vụ (hoặc `agm send user --type HỎI` nếu cần người dùng quyết), rồi dừng.
 ```
 
-**2) `auditor.md` (Audit & sàng lọc quy ước — chạy model miễn phí):**
+**2) `auditor.md` (Audit & cổng chặn ESLint/CI — chạy model nhẹ / miễn phí):**
 
 ```markdown
 ---
-description: Audit & sàng lọc sơ bộ. Chạy test/build/lint và đối chiếu nhật ký với git diff (model miễn phí). Không sửa mã.
+description: Audit & cổng chặn ESLint/CI. Chạy test/build/lint và kiểm tra lách rule trên git diff (model miễn phí). Không sửa mã.
 command: opencode
 ready: quiet
 ---
 Bạn là Audit. Không sửa mã nguồn. Chỉ dùng tối đa 1 skill ghi trong tệp tác vụ (nếu có).
-Chạy các lệnh kiểm trong `.agents/tasks/<ID>.md`, chạy `git status`, `git diff --stat` và kiểm tra:
-1. Tệp đổi có nằm hoàn toàn trong phạm vi cho phép và khớp `.agents/log/<ID>.md` không.
-2. Có test mới cho hành vi mới chưa và các lệnh kiểm đạt hết không.
+Chạy các lệnh kiểm trong `.agents/tasks/<ID>.md`, chạy `git status`, `git diff --stat` và bắt buộc kiểm tra 3 cổng sau:
+1. Phạm vi & nhật ký: tệp đổi nằm hoàn toàn trong phạm vi cho phép, khớp `.agents/log/<ID>.md`, và KHÔNG chạm tệp cấu hình lint (`eslint.config.*`, `.eslintrc*`) trừ khi tệp tác vụ cho phép.
+2. Chặn lách rule trên diff: quét `git diff <nhánh-gốc>...HEAD` — nếu phát hiện dòng mới thêm `eslint-disable`, `@ts-ignore`, `@ts-nocheck` thì đánh CHƯA ĐẠT ngay lập tức.
+3. Lint & Test: chạy `npx eslint . --max-warnings 0 --report-unused-disable-directives` (hoặc `ruff`/`clippy -D warnings`), typecheck và test đạt 100% (có test mới cho hành vi mới).
 Ghi kết quả vào `.agents/log/<ID>.md` (một mục) và commit, rồi báo ĐẠT HẾT hoặc CHƯA ĐẠT cho quản lý bằng `agm send <MANAGER> --type BÁO CÁO --task <ID> "..."`.
 ```
 
-**2b) `reviewer.md` (Reviewer mặc định qua OpenCode — giữ Claude Code cho Kiến trúc sư / BOT-CEO):**
+**2b) `reviewer.md` (Reviewer mặc định qua OpenCode non-OpenAI — tách khỏi hạn mức Claude Code & Codex):**
 
-*(Dùng `openai/gpt-6.1-sol` hoặc model mạnh tương đương khai báo trong `.opencode/agent/reviewer.md` với quyền chỉ đọc mã nguồn và chỉ ghi `.agents/reviews/`. Nhắc gọi GitNexus MCP chủ động vì OpenCode không có hook tự nhắc.)*
+*(Ưu tiên dùng model mạnh trên **OpenRouter / Ollama Cloud** — không dùng `openai/gpt-6.1-sol` mặc định để tránh ăn chung hạn mức 5h/7d của Codex CLI — khai báo trong `.opencode/agent/reviewer.md` với quyền chỉ đọc mã nguồn và chỉ ghi `.agents/reviews/`. Hoặc dùng `agy` `gemini-4-argon-high` / `gemini-4-hydrogen-high` qua `agm ask` / gói diff. Nhắc gọi GitNexus MCP chủ động vì OpenCode không có hook tự nhắc.)*
 
 ```markdown
 ---
-description: Reviewer mặc định qua OpenCode (tách khỏi Claude Code để tiết kiệm hạn mức và giữ khách quan).
+description: Reviewer mặc định qua OpenCode non-OpenAI (bảo toàn hạn mức Claude & Codex).
 command: opencode
 ready: quiet
 ---
@@ -172,7 +175,7 @@ Bạn là Reviewer. Không sửa mã nguồn sản phẩm.
 1. Đọc `.agents/tasks/<ID>.md`, `.agents/log/<ID>.md`, `git diff <nhánh-gốc>...HEAD` và (nếu có) kết quả phản biện trước của `agy` Opus High.
 2. Nếu dự án có GitNexus MCP, chủ động gọi `detect_changes` và `impact` để kiểm phạm vi ảnh hưởng.
 3. Ghi kết quả duyệt vào `.agents/reviews/<ID>-<n>.md` (ĐẠT hoặc CHƯA ĐẠT, lỗi theo mức Nghiêm trọng/Lớn/Nhỏ kèm tệp:dòng và cách sửa) và commit trên nhánh.
-4. Báo quản lý bằng `agm send <MANAGER> --type ĐẠT|CHƯA ĐẠT --task <ID> "xem .agents/reviews/<ID>-<n>.md"`.
+4. Báo quản lý (`codex-mgr` hoặc `ceo-<lane>`) bằng `agm send <MANAGER> --type ĐẠT|CHƯA ĐẠT --task <ID> "xem .agents/reviews/<ID>-<n>.md"`.
 ```
 
 **3) `researcher.md` (Tìm kiếm/research — ưu tiên dùng `agm ask` một lần):**
@@ -193,39 +196,38 @@ Bạn là Reviewer. Không sửa mã nguồn sản phẩm.
   Không chắc thì ghi "chưa xác minh". Xong thì báo quản lý bằng `agm send`, rồi dừng.
   ```
 
-**4) `sparring-opus.md` (Đồng trao đổi / phản biện trước Reviewer — `agy` Opus High):**
+**4) `sparring-opus.md` (Đồng Kiến trúc sư & Reviewer cấp cao — `agy` Opus High):**
 
-- Dùng **trước khi gửi sang Reviewer** (mặc định OpenCode; Claude Code Opus 5.5 High chỉ khi leo thang) để giữ góc nhìn Opus mà không tiêu hạn mức Claude.
-- Khuyên dùng `agm ask` cho từng lượt phản biện phương án/diff (chỉ đọc, tự ghi token):
-  ```powershell
-  agm ask --model <opus-high-slug> --timeout 420 "Phản biện phương án/diff sau theo mức Nghiêm trọng/Lớn/Nhỏ trước khi đưa Reviewer..."
-  ```
-  *(**[KIỂM]** lấy tên `<opus-high-slug>` chính xác từ lệnh `agy models` trên máy.)*
-- Hoặc nếu mở phiên tương tác trong `hc` bằng `agm spawn sparring-opus --task <ID> --role sparring --cwd <worktree>`:
+- Dùng để **gánh tải trực tiếp cho Claude Code** ở hai việc tốn suy luận sâu nhất: **(a)** bàn thiết kế / chia `.agents/tasks/<ID>.md` cùng người dùng hoặc BOT-CEO, và **(b)** phân xử review cho các nhánh khó / rủi ro cao (bỏ Pre-review trên nhánh thường để tránh đốt 2 lần model lớn).
+- **Luôn mở dưới dạng phiên tương tác trong repo** (hoặc nối tiếp bằng `agy --conversation <id>`) để tận dụng **`cache_read_tokens`** và để `agy` tự đọc đúng tệp/dòng trong repo — **không** dùng `agm ask` one-shot cho Opus High (vì `agm ask` chạy ở thư mục tạm ngoài repo với `cache_read_tokens = 0` và bắt nhồi cả diff vào dòng lệnh).
+- *(Đã kiểm `agy models` ngày 2026-11-20: Opus High là `claude-opus-5-5-high`.)*
+- Mở bằng `hc run --name sparring sparring-opus` hoặc `agm spawn sparring-opus --task <ID> --role sparring --cwd <worktree>`:
   ```markdown
   ---
-  description: Đồng trao đổi / phản biện trước Reviewer dùng Opus High qua agy (giảm tải token Claude).
-  command: agy --model <opus-high-slug> --mode plan --sandbox
+  description: Đồng Kiến trúc sư & Reviewer cấp cao dùng Opus High qua agy (giữ phiên để ăn prompt cache).
+  command: agy --model claude-opus-5-5-high --mode plan --sandbox
   ---
-  Bạn là Đồng trao đổi / Phản biện sơ bộ trước khi chuyển sang Reviewer Claude Code. Chỉ đọc, không sửa mã nguồn.
-  Đọc `.agents/tasks/<ID>.md`, `.agents/log/<ID>.md` và `git diff`. Phản biện thiết kế, lỗ hổng logic, phạm vi và điểm có thể bị Reviewer đánh CHƯA ĐẠT.
-  Ghi nhận xét ngắn hoặc báo lại cho quản lý bằng `agm send`.
+  Bạn là Đồng Kiến trúc sư & Reviewer cấp cao (chỉ đọc, không sửa mã nguồn).
+  - Khi bàn thiết kế / chia việc: đọc mã qua GitNexus / tệp liên quan để phản biện phương án, chỉ ra rủi ro và đề xuất chia nhỏ `.agents/tasks/<ID>.md`.
+  - Khi phân xử review ca khó: đọc `.agents/tasks/<ID>.md`, `.agents/log/<ID>.md`, `.agents/reviews/` và `git diff` để kết luận ĐẠT/CHƯA ĐẠT theo mức Nghiêm trọng/Lớn/Nhỏ.
+  Báo lại cho quản lý bằng `agm send`.
   ```
 
-**5) `docs-hydrogen.md` (Cập nhật docs sau Reviewer, trước Copilot — Gemini 4 Hydrogen Medium):**
+**5) `docs-hydrogen.md` (Cập nhật docs & báo cáo cuối sau Reviewer, trước Copilot — Gemini 4 Hydrogen Medium):**
 
-- Được gọi **sau khi nhánh đã qua Reviewer / chỉnh sửa xong và trước khi gọi GitHub Copilot**.
+- Được gọi **sau khi nhánh đã qua Reviewer / chỉnh sửa xong và trước khi gọi GitHub Copilot** (giảm tải việc viết báo cáo cho Codex).
 
 ```markdown
 ---
-description: Cập nhật tài liệu (docs) khi có thay đổi sau bước Reviewer, trước khi gọi Copilot.
+description: Cập nhật tài liệu (docs) và tổng hợp báo cáo cuối sau bước Reviewer, trước khi gọi Copilot.
 command: agy --model gemini-4-hydrogen-medium
 ---
 Bạn là agent Cập nhật Tài liệu (Gemini 4 Hydrogen Medium).
 1. Đọc `.agents/tasks/<ID>.md`, `.agents/log/<ID>.md`, `.agents/reviews/<ID>-*.md` và `git diff <nhánh-gốc>...HEAD`.
-2. Chỉ cập nhật các tệp tài liệu (README, docs/*.md, hướng dẫn sử dụng/vận hành) bị ảnh hưởng bởi thay đổi của nhánh. Không sửa code nghiệp vụ.
-3. Ghi một mục vào `.agents/log/<ID>.md` liệt kê các tệp docs đã cập nhật và lý do, rồi commit trên nhánh hiện tại (thông điệp bắt đầu bằng `<ID>: docs: ...`).
-4. Báo lại cho quản lý bằng `agm send <MANAGER> --type BÁO CÁO --task <ID> "Đã cập nhật docs, SHA mới: <sha>"`, rồi dừng.
+2. Cập nhật các tệp tài liệu (README, docs/*.md, hướng dẫn sử dụng/vận hành) bị ảnh hưởng bởi thay đổi của nhánh (nếu có). Không sửa code nghiệp vụ.
+3. Tổng hợp ngắn gọn báo cáo cuối vào `.agents/reports/<ID>.md` (đã đổi gì, model/phiên làm, kết quả kiểm số đếm, kết luận review, docs đã cập nhật, vấn đề lớn gợi ý cho Argon).
+4. Ghi một mục vào `.agents/log/<ID>.md` liệt kê các tệp docs/báo cáo đã cập nhật, rồi commit trên nhánh hiện tại (thông điệp bắt đầu bằng `<ID>: docs: ...`).
+5. Báo lại cho quản lý bằng `agm send <MANAGER> --type BÁO CÁO --task <ID> "Đã cập nhật docs/report, SHA mới: <sha>"`, rồi dừng.
 ```
 
 **6) `argon-advisor.md` (Cố vấn kỹ thuật & Tối ưu Harnessing — Gemini Argon):**
@@ -247,9 +249,30 @@ Bạn là Cố vấn kỹ thuật chuyên trách Harnessing (Gemini Argon).
 
 *(**[KIỂM]** trên máy thật: `agy` khi chạy tương tác đã tự báo OSC 7501 `antigravity` theo `p0-research.md`, nhưng `hc send` vào phiên `agy` đang mở vẫn cần thử nghiệm 1 lượt thật ở Phần 4; nếu `hc send` bị treo, thêm `ready: quiet` vào template hoặc truyền nhiệm vụ ngay trong tham số khi `agm spawn`.)*
 
+**7) `gitnexus-sync.md` (Cập nhật chỉ mục GitNexus — OpenCode model miễn phí):**
+
+- Sinh khi cần làm mới chỉ mục đồ thị sau khi `copilot-git` merge vào nhánh chung, khi `staleness` báo `behind`/`diverged`, hoặc khi worktree đổi cấu trúc:
+  `agm spawn gitnexus-sync --task <ID> --role index --cwd "$PROJECT_DIR" -- "Cập nhật chỉ mục sau merge"`
+
+```markdown
+---
+description: Cập nhật chỉ mục GitNexus (--index-only). Chạy model miễn phí, không sửa code hay tệp harness.
+command: opencode
+ready: quiet
+---
+Bạn là agent Cập nhật GitNexus (`gitnexus-sync`). Không sửa mã nguồn sản phẩm, không sửa `AGENTS.md`, `CLAUDE.md` hay `BRANCHES.md`.
+Làm theo đúng thứ tự:
+1. Kiểm tra không có tiến trình `gitnexus analyze` nào khác đang chạy (dùng khóa `.agents/.runtime/locks/gitnexus` hoặc `flock`).
+2. Chạy `gitnexus status` tại thư mục được giao. Nếu cần làm mới (hoặc sau khi merge), chạy:
+   `gitnexus analyze --index-only`
+   (tuyệt đối KHÔNG bỏ cờ `--index-only` để tránh ghi đè `AGENTS.md`/`CLAUDE.md`).
+3. Kiểm tra `git status --short` xác nhận không làm bẩn các tệp trong repo. Nếu dự án dùng máy chủ MCP HTTP (`gitnexus mcp --http --port 3111`), kiểm tra server đang sống (hoặc chạy `opencode mcp list` / `opencode reload` nếu cần).
+4. Ghi ngắn kết quả (`gitnexus status`, SHA đã lập chỉ mục) vào `.agents/log/<ID>.md` (nếu thuộc một đầu việc đang mở), rồi báo quản lý qua `agm send <MANAGER> --type BÁO CÁO|LỖI --task <ID> "..."` và dừng.
+```
+
 ### 1.5. Script giao việc: `.agents/bot/dispatch.sh` (dùng `agm spawn`)
 
-So với phiên bản cũ, `dispatch.sh` không còn phải dùng `jq` để đếm `hc ls` hay kiểm tra giới hạn thợ bằng tay — **`agm spawn` tự kiểm tra `max_workers`, ngân sách `task:<ID>`, gắn nhãn `agm.task`/`agm.role`, tên `w-<ID>-<số>`, `--bg --outlive-parent` và lưu vào `agm.db`**.
+So với phiên bản cũ, `dispatch.sh` không còn phải dùng `jq` để đếm `hc ls` hay kiểm tra giới hạn thợ bằng tay — **`agm spawn` tự kiểm tra `max_workers`, ngân sách `task:<ID>`, gắn nhãn `agm.task`/`agm.role`, tên `w-<ID>-<số>`, `--bg --outlive-parent` và lưu vào `agm.db`**. Nếu `agm spawn` từ chối (ví dụ đã chạm `max_workers`), script tự dọn worktree vừa tạo để không để lại worktree mồ côi.
 
 ```bash
 #!/usr/bin/env bash
@@ -281,16 +304,25 @@ if [ "$ROLE" = worker ]; then
 fi
 
 WT="$WT_DIR/$ID"
+CREATED_WT=0
 if [ ! -d "$WT" ]; then
   git worktree add "$WT" -b "feat/$ID" "$BASE_BRANCH"
+  CREATED_WT=1
   if [ "$GITNEXUS_SYNC" = worktree ]; then
-    ( cd "$WT" && flock /tmp/gitnexus.lock gitnexus analyze )
+    ( cd "$WT" && flock /tmp/gitnexus.lock gitnexus analyze --index-only )
   fi
 fi
 
 # Giao qua agm spawn: tự kiểm max_workers, ngân sách task:<ID>, gắn nhãn agm.task & agm.role
-agm spawn "$TPL" --task "$ID" --role "$ROLE" --cwd "$PROJECT_DIR/$WT" -- \
-  "Việc: $ID. Skill: ${skills:-không}. Khi xong hoặc bị chặn, chạy: agm send $MANAGER --type BÁO CÁO --task $ID \"xong, xem .agents/log/$ID.md\""
+if ! agm spawn "$TPL" --task "$ID" --role "$ROLE" --cwd "$PROJECT_DIR/$WT" -- \
+  "Việc: $ID. Skill: ${skills:-không}. Khi xong hoặc bị chặn, chạy: agm send $MANAGER --type BÁO CÁO --task $ID \"xong, xem .agents/log/$ID.md\""; then
+  if [ "$CREATED_WT" -eq 1 ]; then
+    [ "$GITNEXUS_SYNC" = worktree ] && ( cd "$WT" && gitnexus clean ) || true
+    git worktree remove --force "$WT" || true
+    git branch -D "feat/$ID" || true
+  fi
+  exit 2
+fi
 ```
 
 **Gợi ý trên Windows (PowerShell):** vì `agm.exe` và `hc.exe` chạy gốc trên Windows 11, bạn có thể bỏ qua bước bash/flock và viết cùng logic tạo worktree + gọi `agm spawn` bằng một hàm PowerShell ngắn (không cần cài `jq` vì `agm spawn` đã tự kiểm tra số thợ và ngân sách trong SQLite).
@@ -298,21 +330,25 @@ agm spawn "$TPL" --task "$ID" --role "$ROLE" --cwd "$PROJECT_DIR/$WT" -- \
 ### 1.6. Theo dõi & nhặt hộp thư đầu việc (`.agents/inbox/`)
 
 - **Theo dõi terminal, câu hỏi `blocked`, ngân sách, xoay vòng:** đã có **`agm daemon`** chạy nền (§1.2) — **không cần `watch.sh` đọc `hc events --json` nữa**.
-- Nếu bạn vẫn muốn tự động nhặt các tệp `.agents/inbox/*.md` thả vào thư mục dự án, chỉ cần một vòng lặp nhỏ (bash hoặc PowerShell):
+- Nếu bạn vẫn muốn tự động nhặt các tệp `.agents/inbox/*.md` thả vào thư mục dự án, chỉ xóa tệp trong `.agents/inbox/` **sau khi `dispatch.sh` chạy thành công** (để khi `max_workers` đầy, đầu việc vẫn nằm lại trong `.agents/inbox/` chờ chu kỳ sau):
 
 ```bash
 #!/usr/bin/env bash
-# .agents/bot/inbox-watch.sh (tùy chọn; chỉ làm việc chuyển inbox -> dispatch.sh)
+# .agents/bot/inbox-watch.sh (tùy chọn; chỉ chuyển inbox -> dispatch.sh khi spawn thành công)
 set -euo pipefail
 source "$(dirname "$0")/../bot.env"
-cd "$PROJECT_DIR"; mkdir -p "$RUNTIME_DIR" .agents/inbox
+cd "$PROJECT_DIR"; mkdir -p "$RUNTIME_DIR" .agents/inbox .agents/tasks
 
 while true; do
   for f in .agents/inbox/*.md; do
     [ -e "$f" ] || continue
     id=$(basename "$f" .md)
-    mv "$f" ".agents/tasks/$id.md"
-    .agents/bot/dispatch.sh "$id" || echo "$(date -Is) dispatch $id lỗi/xếp hàng" >> "$RUNTIME_DIR/bot.log"
+    cp "$f" ".agents/tasks/$id.md"
+    if .agents/bot/dispatch.sh "$id"; then
+      rm -f "$f"
+    else
+      echo "$(date -Is) dispatch $id lỗi/xếp hàng (giữ lại trong inbox)" >> "$RUNTIME_DIR/bot.log"
+    fi
   done
   sleep 10
 done
@@ -414,28 +450,28 @@ Gợi ý: chỉ sửa trong một tệp/module → `none` hoặc `main`; đổi 
 
 ### 3.2. Vì `.wt/` nằm trong dự án
 
-1. **Phải thêm `.wt/` vào `.gitignore`**, nếu không `git status` của nhánh chung sẽ thấy các worktree là thư mục chưa theo dõi.
-2. **Chỉ mục của nhánh chung không được quét `.wt/`** (**[KIỂM]** GitNexus có tự bỏ qua đường dẫn trong `.gitignore` không; nếu không, cấu hình loại trừ `.wt/` trước khi chạy `analyze` ở gốc).
-3. Thư mục lưu chỉ mục của GitNexus không được commit (**[KIỂM]** tên thư mục thực tế sau `gitnexus analyze` để thêm vào `.gitignore`).
+1. **Phải thêm `.wt/` và `.gitnexus/` vào `.gitignore`**, nếu không `git status` của nhánh chung sẽ thấy các worktree hoặc kho chỉ mục GitNexus là tệp chưa theo dõi.
+2. **Chỉ mục của nhánh chung không được quét `.wt/`** (tạo `.gitnexusignore` theo cú pháp `.gitignore` để loại trừ `.wt/` nếu cần trước khi chạy `analyze --index-only` ở gốc).
+3. Luôn dùng cờ **`--index-only`** (không cần cờ cũ `--skip-embeddings`, vì embeddings mặc định tắt).
 4. Dặn agent ở gốc không đọc trực tiếp `.wt/`.
 
-### 3.3. Khi nào làm mới chỉ mục
+### 3.3. Khi nào làm mới chỉ mục (qua agent `gitnexus-sync` hoặc hook)
 
-| Chính sách | Thời điểm | Lệnh |
+| Chính sách | Thời điểm | Cách chạy |
 |---|---|---|
-| `main` hoặc `worktree` | Sau khi tích hợp nhánh vào nhánh chung (Copilot hoặc hook `post-merge`) | `gitnexus analyze` ở gốc |
-| `worktree` | Khi tạo worktree | `gitnexus analyze` trong `.wt/<ID>` (`dispatch.sh`) |
-| `worktree` | Khi thợ đổi cấu trúc (thêm/xóa/đổi tên tệp, đổi chữ ký) rồi cần `impact` lại | `gitnexus analyze` trong worktree đó |
+| `main` hoặc `worktree` | Sau khi Copilot tích hợp nhánh vào nhánh chung (`merged`/`deployed`) | Gọi `agm spawn gitnexus-sync --task <ID> --role index --cwd "$PROJECT_DIR"` (chạy `gitnexus analyze --index-only`) hoặc hook `post-merge` |
+| `main` hoặc `worktree` | Khi `gitnexus status` / `staleness.status` báo `behind` hoặc `diverged` | Gọi `gitnexus-sync` làm mới trước khi BOT-CEO/Reviewer đọc `query`/`impact` |
+| `worktree` | Khi tạo worktree (chỉ khi `GITNEXUS_SYNC=worktree`) | `gitnexus analyze --index-only` trong `.wt/<ID>` (`dispatch.sh`) |
+| `worktree` | Khi thợ đổi cấu trúc (thêm/xóa/đổi tên tệp, đổi chữ ký) rồi cần `impact` lại | Gọi `gitnexus-sync` với `--cwd "$PROJECT_DIR/.wt/<ID>"` |
 | `worktree` | Khi gỡ worktree | `gitnexus clean` trong worktree đó (`cleanup-wt.sh`) |
 
-Hook git `post-merge` mẫu (`.git/hooks/post-merge`):
+Hook git `post-merge` mẫu (`.git/hooks/post-merge` — chỉ làm mới chỉ mục GitNexus; **không** tự gọi `cleanup-wt.sh` ở đây để tránh xóa worktree trước khi `copilot-git` chạy xong bước Audit hậu merge):
 
 ```bash
 #!/usr/bin/env bash
 source "$(git rev-parse --show-toplevel)/.agents/bot.env"
 [ "$GITNEXUS_SYNC" = none ] && exit 0
-cd "$PROJECT_DIR" && flock /tmp/gitnexus.lock gitnexus analyze
-.agents/bot/cleanup-wt.sh
+cd "$PROJECT_DIR" && flock /tmp/gitnexus.lock gitnexus analyze --index-only
 ```
 
 ---
@@ -444,12 +480,12 @@ cd "$PROJECT_DIR" && flock /tmp/gitnexus.lock gitnexus analyze
 
 Làm theo thứ tự, ghi kết quả vào `.agents/decisions/bot-setup.md`:
 
-1. `agm --version` (`agm 0.2.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
+1. `agm --version` (`agm 0.2.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`, `gitnexus-sync`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
 2. `agm hook install` (nếu dùng Claude Code) và mở `hc run --bg --no-parent --name agm-daemon agm daemon`; mở `agm tui` kiểm tra thấy các phiên đang chạy, hạn mức gói và không báo lỗi cấu hình `providers.toml`.
-3. Chạy thử `agm ask --model gemini-4-argon-medium "Trả lời OK"` và kiểm tra token hiện trong `agm cost --window today --by source`; kiểm tra tên slug của **Opus High** qua `agy models`.
+3. Chạy thử `agm ask --model gemini-4-argon-medium "Trả lời OK"` và kiểm tra token hiện trong `agm cost --window today --by source`; kiểm `agy models` vẫn còn `claude-opus-5-5-high` (Opus High).
 4. Kiểm thử tương tác qua `hc`: mở một phiên thử **Hydrogen Medium** (`docs-hydrogen`) và **Gemini Argon** (`argon-advisor`) trong worktree thử nghiệm, kiểm tra `agm send` đẩy lệnh vào đúng prompt và commit đúng phạm vi.
 5. Thử vòng thợ hoàn chỉnh với ID viết thường `test-1`: `dispatch.sh test-1` tạo worktree `.wt/test-1`, `agm spawn` sinh `w-test-1-1` (và `TEST-2` bị từ chối vì chữ hoa); thợ chạy `agm send user --type HỎI --task test-1 "test"` và bạn trả lời qua `agm reply`; thử ép `agm rotate` trên `w-test-1-1` xem cơ chế bàn giao `.agents/log/test-1.md` + commit hoạt động đúng.
-6. GitHub Copilot tích hợp nhánh thử (sau Review + Hydrogen docs) rồi dọn worktree/nhánh (`cleanup-wt.sh`); riêng `agm cleanup` dọn terminal đã bàn giao (nếu có).
+6. GitHub Copilot tích hợp nhánh thử (sau Review + Hydrogen docs) rồi gọi `gitnexus-sync` (`agm spawn gitnexus-sync --task test-1 --role index`) kiểm tra `gitnexus analyze --index-only` không làm bẩn `AGENTS.md`/`CLAUDE.md`; sau đó dọn worktree/nhánh (`cleanup-wt.sh`) và thử `agm cleanup` dọn terminal đã bàn giao (nếu có).
 7. Khởi động lại máy (hoặc khởi động lại `hc server`): kiểm tra Task Scheduler / `systemd` có bật lại `hc` và `agm daemon`, đồng thời `agm ps` ghi nhận lại trạng thái các terminal.
 
 ## Nguồn tham khảo

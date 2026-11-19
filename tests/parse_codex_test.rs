@@ -191,6 +191,11 @@ fn known_noise_is_ignored() {
         r#"{"type":"event_msg","payload":{"type":"other_event"}}"#,
         r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#,
         r#"{"type":"token_usage_record","payload":{"usage":{"input_tokens":29000}}}"#,
+        // Codex 0.170: tin giữa agent con (nội dung mã hóa), nén ngữ cảnh — không mang token.
+        r#"{"type":"response_item","payload":{"type":"agent_message","author":"/root/a","recipient":"/root","content":[]}}"#,
+        r#"{"type":"response_item","payload":{"type":"compaction","encrypted_content":"secret"}}"#,
+        r#"{"type":"compacted","payload":{"message":"","replacement_history":[]}}"#,
+        r#"{"type":"inter_agent_communication_metadata","payload":{"trigger_turn":false}}"#,
     ] {
         assert_eq!(parser.parse_line(line, 0).unwrap(), LineOutcome::Ignored);
     }

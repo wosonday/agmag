@@ -128,7 +128,10 @@ impl LogParser for CodexParser {
                     | "function_call_output"
                     | "custom_tool_call_output"
                     | "additional_tools"
-                    | "world_state" => return Ok(LineOutcome::Ignored),
+                    | "world_state"
+                    // Codex 0.170: tin giữa agent con (nội dung mã hóa) và bản nén ngữ cảnh; không mang token.
+                    | "agent_message"
+                    | "compaction" => return Ok(LineOutcome::Ignored),
                     _ => return Ok(LineOutcome::Unknown(item_type.to_owned())),
                 };
                 ParseEvent::Turn(TurnSummary {
@@ -142,7 +145,9 @@ impl LogParser for CodexParser {
             | "function_call_output"
             | "custom_tool_call_output"
             | "additional_tools"
-            | "world_state" => return Ok(LineOutcome::Ignored),
+            | "world_state"
+            | "compacted"
+            | "inter_agent_communication_metadata" => return Ok(LineOutcome::Ignored),
             _ => return Ok(LineOutcome::Unknown(kind.to_owned())),
         };
         Ok(LineOutcome::Events(vec![event]))

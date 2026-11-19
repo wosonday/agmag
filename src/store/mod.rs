@@ -14,6 +14,9 @@ pub struct Store {
     conn: Connection,
 }
 
+/// `PRAGMA user_version` mà mã này tạo ra.
+const SCHEMA_VERSION: i64 = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
     pub path: String,
@@ -46,6 +49,12 @@ impl Store {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // WAL và foreign_keys phải chạy ngoài transaction.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        // CSDL đã ở bản mới nhất (trường hợp thường gặp): không lấy khóa ghi, để lệnh chỉ đọc không phải chờ daemon.
+        let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if current >= SCHEMA_VERSION {
+            return Ok(Self { conn });
+        }
+        // Còn phải migrate: khóa ghi rồi đọc lại phiên bản (tiến trình khác có thể vừa migrate xong).
         conn.execute_batch("BEGIN IMMEDIATE;")?;
         let migrate = || -> Result<()> {
             let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

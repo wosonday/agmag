@@ -1,4 +1,21 @@
 use agmag::model::{ContextSnapshot, Source};
+
+#[test]
+fn opening_migrated_db_does_not_wait_for_write_lock() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("agm.db");
+    drop(Store::open(&path)?);
+    // Daemon đang giữ khóa ghi: lệnh CLI chỉ đọc mở CSDL đã ở v3 phải không phải chờ/lỗi "database is locked".
+    let daemon = rusqlite::Connection::open(&path)?;
+    daemon.execute_batch("BEGIN IMMEDIATE;")?;
+    let t0 = std::time::Instant::now();
+    let store = Store::open(&path)?;
+    assert!(t0.elapsed() < std::time::Duration::from_secs(1), "mở CSDL mất {:?}", t0.elapsed());
+    let v: i64 = store.conn().query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    assert_eq!(v, 3);
+    daemon.execute_batch("ROLLBACK;")?;
+    Ok(())
+}
 use agmag::store::{BudgetRow, MessageRow, Store, TerminalRow};
 
 fn term(addr: &str) -> TerminalRow {

@@ -582,9 +582,9 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             .value
             .filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0)
             .map(|v| v / b.hard * 100.0);
-        let (bar_col, flag) = match b.value.filter(|v| v.is_finite()) {
+        let (bar_col, flag) = match b.value.filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0) {
             Some(v) if v >= b.hard => (BRIGHT_RED, paint(BOLD_RED, " HARD")),
-            Some(v) if v >= b.soft => (BRIGHT_YELLOW, paint(BRIGHT_YELLOW, " soft")),
+            Some(v) if b.soft.is_finite() && v >= b.soft => (BRIGHT_YELLOW, paint(BRIGHT_YELLOW, " soft")),
             _ => (BRIGHT_GREEN, String::new()),
         };
         // Missing or non-finite value → "?" (never render a fake 0%). Percent budgets keep decimals.
@@ -667,19 +667,36 @@ pub fn render(s: &Snapshot, width: usize) -> String {
     out
 }
 
-/// Strip ANSI CSI escapes and replace newlines/control chars with spaces.
+/// Strip ANSI CSI/OSC/escape sequences and replace newlines/control chars with spaces.
 fn sanitize_one_line(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for ch in chars.by_ref() {
-                    if ch.is_ascii_alphabetic() {
-                        break;
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    for ch in chars.by_ref() {
+                        if ('@'..='~').contains(&ch) {
+                            break;
+                        }
                     }
                 }
+                Some(']') => {
+                    chars.next();
+                    while let Some(ch) = chars.next() {
+                        if ch == '\x07' || (ch == '\x1b' && chars.peek() == Some(&'\\')) {
+                            if ch == '\x1b' {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
             }
         } else if c.is_control() {
             out.push(' ');

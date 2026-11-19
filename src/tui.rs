@@ -11,7 +11,7 @@ use anyhow::Result;
 
 use agmag::actions::{self, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate};
 use agmag::config::Config;
-use agmag::dashboard::{one_line, parse_command, render, snapshot, TuiCmd};
+use agmag::dashboard::{bounded_styled_line, one_line, parse_command, render, snapshot, TuiCmd};
 use agmag::hc::HcCli;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
@@ -55,10 +55,10 @@ fn render_frame(text: &str, w: usize, cleanup_list: Option<&[CleanupCandidate]>,
     frame.push_str("\x1b[H");
     for line in body.split_inclusive('\n') {
         if let Some(stripped) = line.strip_suffix('\n') {
-            frame.push_str(stripped);
+            frame.push_str(&bounded_styled_line(stripped, max_w));
             frame.push_str("\x1b[K\n");
         } else {
-            frame.push_str(line);
+            frame.push_str(&bounded_styled_line(line, max_w));
         }
     }
     frame.push_str("\x1b[J\x1b[1;96magm>\x1b[0m ");
@@ -280,5 +280,33 @@ pub fn run(
             }
             Err(e) => note = Some((NoteKind::Err, e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_frame, NoteKind};
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn frame_note_strips_untrusted_escapes_and_bounds_wide_text() {
+        let malicious = format!("\x1b[2J\x1b]52;c;c2VjcmV0\x07\x1b(B{}", "界👩‍💻".repeat(30));
+        let frame = render_frame("", 60, None, Some((NoteKind::Err, &malicious)));
+        assert!(!frame.contains("\x1b[2J"));
+        assert!(!frame.contains("\x1b]52"));
+        assert!(!frame.contains("\x1b(B"));
+        let mut plain = String::new();
+        let mut chars = frame.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' && chars.next() == Some('[') {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) { break; }
+                }
+            } else {
+                plain.push(c);
+            }
+        }
+        assert!(plain.lines().all(|line| line.width() < 60), "{plain}");
+        assert!(plain.contains("agm>"));
     }
 }

@@ -1,0 +1,30 @@
+# tui-english-color review log
+
+## 2026-11-19 · baseline
+- Candidate: `7e20645d4b8e1c4e2c1238c4d3f8d0f2be753e32`, base/main at audit start `3302104`.
+- Candidate source worktree clean; shared main contains user edits to three guidance documents, not touched.
+- Created separate review worktree/branch to avoid overlapping edits.
+- `cargo test --offline` on candidate: passed (194 tests, counted from suite summaries).
+- `cargo clippy --offline --all-targets -- -D warnings`: passed.
+- Inspected English chrome, message-code compatibility, ANSI sanitization, buffered frames, TTY/caller/confirmation paths and both README diffs.
+- Hypotheses for additional width failures: Unicode scalar count is not terminal cell width; continuation lines accept unbroken words without truncation; message/inbox fixed prefixes can exceed width before text is considered.
+- Next: red-capable tests before changing product code.
+
+## 2026-11-19 · reproduced width issues and corrections
+- Original `7e20645d` is not yet acceptable on width criteria: a 12-cell `one_line` limit emitted 23 cells of CJK; a warning continuation emitted 277 characters at width 60; inbox prefixes emitted 731 characters at width 60.
+- Reproducers in `tests/dashboard_test.rs` failed before fixes; original source worktree remained untouched.
+- Reused already-locked Unicode width and grapheme crates as direct dependencies (no package download).
+- Corrected grapheme/cell truncation and continuation-word bounds, bounded untrusted fixed prefixes, added defensive SGR-preserving line clipping for dashboard and frame output.
+- Guarded malformed non-ASCII month-year keys against UTF-8 byte-slicing panic; retained real month/year output.
+- Added grapheme/CJK/emoji, long path/prefix, trusted-SGR/reset, OSC stripping and frame-note tests.
+- Updated both README files to document display-only truncation and sanitization.
+- First final run: `cargo test --offline` → 200 passed, 0 failed (6 new tests).
+- Strict Clippy initially flagged a collapsible if in the new helper; collapsed it rather than suppressing the warning. Reverification pending.
+- Files changed: `Cargo.toml`, `Cargo.lock`, `src/dashboard.rs`, `src/tui.rs`, `tests/dashboard_test.rs`, `README.md`, `README_vi.md`, task/log/review/handoff records.
+- Inherited cleanup safety defects are outside the TUI diff and separately fixed/reviewed at `b2ac868` on `safety/agy-followup`; integration must not present TUI approval as global cleanup-safety approval.
+
+## 2026-11-19 · final correction audit
+- Re-ran `cargo clippy --offline --all-targets -- -D warnings`: clean.
+- Re-ran `cargo test --offline --locked`: 200 passed, 0 failed.
+- Engineering review and original red evidence recorded in `.agents/reviews/tui-english-color-engineering.md`.
+- Product correction ready for independent final review; exact commit to be pinned for handoff.

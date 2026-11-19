@@ -253,3 +253,80 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
     assert_eq!(agmag::dashboard::one_line("\x1b[2~LEAK \x1b]52;c;YQ==\x07OK \x1b(BHI", 50), "LEAK OK HI");
     Ok(())
 }
+
+#[test]
+fn one_line_bounds_wide_unicode_by_terminal_cells() {
+    let text = agmag::dashboard::one_line(&"界".repeat(40), 12);
+    let cells: usize = text.chars().map(|c| if c == '界' { 2 } else { 1 }).sum();
+    assert!(cells <= 12, "{cells} cells: {text}");
+}
+
+#[test]
+fn render_wraps_unbroken_warning_paths_within_width() -> anyhow::Result<()> {
+    let store = seeded()?;
+    let mut snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    snap.live_rotation_pairs.push(("t1".into(), "t2".into(), format!("D:/{}", "long-path".repeat(30))));
+    for width in [60, 80, 110] {
+        let plain = strip_ansi(&render(&snap, width));
+        for line in plain.lines() {
+            assert!(line.chars().count() < width, "{width}: {}: {line}", line.chars().count());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn render_bounds_untrusted_message_and_inbox_prefixes() -> anyhow::Result<()> {
+    let store = seeded()?;
+    let mut snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    snap.inbox[0].source = "long-source".repeat(30);
+    snap.inbox[0].terminal = Some("long-terminal".repeat(30));
+    snap.messages[0].from = "long-from".repeat(30);
+    snap.messages[0].to = "long-to".repeat(30);
+    snap.messages[0].kind = "long-kind".repeat(30);
+    snap.messages[0].status = "long-status".repeat(30);
+    for width in [60, 80, 110] {
+        let plain = strip_ansi(&render(&snap, width));
+        for line in plain.lines() {
+            assert!(line.chars().count() < width, "{width}: {}: {line}", line.chars().count());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn styled_clipping_preserves_graphemes_and_resets_color() {
+    use unicode_width::UnicodeWidthStr;
+    use agmag::dashboard::{bounded_styled_line, one_line};
+    assert_eq!(one_line("👩‍💻abc", 3), "👩‍💻…");
+    assert_eq!(one_line("e\u{301}e\u{301}x", 2), "e\u{301}…");
+    let clipped = bounded_styled_line("\x1b[31m👩‍💻界X\x1b[0m", 4);
+    assert_eq!(strip_ansi(&clipped), "👩‍💻界");
+    assert_eq!(strip_ansi(&clipped).width(), 4);
+    assert!(clipped.ends_with("\x1b[0m"));
+    let escaped = bounded_styled_line("\x1b]52;c;c2VjcmV0\x07safe", 4);
+    assert_eq!(strip_ansi(&escaped), "safe");
+}
+
+#[test]
+fn render_wide_untrusted_content_stays_inside_terminal_cells() -> anyhow::Result<()> {
+    use unicode_width::UnicodeWidthStr;
+    let store = seeded()?;
+    let mut snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    for t in &mut snap.terminals {
+        t.name = "👩‍💻界".repeat(20);
+        t.task = "界".repeat(30);
+        t.context_pct = Some(f64::NAN);
+    }
+    snap.inbox[0].text = "界👩‍💻e\u{301}".repeat(40);
+    snap.messages[0].text = "界".repeat(100);
+    snap.budgets[0].scope = "界".repeat(40);
+    snap.usage_summary.recent_months[0].key = "年20-01".into();
+    for width in [60, 80, 110, 200] {
+        let plain = strip_ansi(&render(&snap, width));
+        for line in plain.lines() {
+            assert!(line.width() < width, "{width}: {} cells: {line}", line.width());
+        }
+    }
+    Ok(())
+}

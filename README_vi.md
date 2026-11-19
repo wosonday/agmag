@@ -152,6 +152,8 @@ Lệnh trong TUI (gõ rồi Enter):
 | `p off` | Tắt mọi hành động tự động |
 | `q` | Thoát |
 
+Tên, đường dẫn và tin nhắn dài được rút gọn cho vừa pane. Unicode được đo theo số cột terminal, không cắt giữa một cụm ký tự; chuỗi điều khiển terminal trong dữ liệu được loại bỏ. Việc rút gọn chỉ ảnh hưởng hiển thị, không đổi tin nhắn đã lưu hay đích thao tác.
+
 TUI hiển thị bằng tiếng Anh có màu sắc ANSI, cảnh báo **đỏ** khi phiên đã bàn giao và phiên kế nhiệm cùng chạy trên một thư mục, và tự backfill các tháng còn thiếu cho thống kê. TUI chỉ mở được bởi **bạn** ở terminal (agent không dùng được).
 
 ## 5. Khi nào dùng `hc`, khi nào dùng `agm`

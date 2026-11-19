@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 use comfy_table::{presets::UTF8_FULL_CONDENSED, Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::actions::KINDS;
 use crate::config::Config;
@@ -290,20 +292,20 @@ fn wrap_plain_words(text: &str, first_prefix: &str, cont_prefix: &str, max_width
     let clean = sanitize_one_line(text);
     let mut out = Vec::new();
     let mut cur = first_prefix.to_string();
-    let mut cur_len = first_prefix.chars().count();
+    let mut cur_len = first_prefix.width();
     let mut first_word = true;
     for word in clean.split_whitespace() {
-        let wlen = word.chars().count();
+        let wlen = word.width();
         let need = if first_word { wlen } else { 1 + wlen };
         if !first_word && cur_len + need > max_width {
             out.push(cur);
-            cur = format!("{cont_prefix}{word}");
-            cur_len = cont_prefix.chars().count() + wlen;
+            cur = format!("{cont_prefix}{}", one_line(word, max_width.saturating_sub(cont_prefix.width())));
+            cur_len = cur.width();
         } else if first_word && cur_len + wlen > max_width {
             let avail = max_width.saturating_sub(cur_len);
             cur.push_str(&one_line(word, avail));
             first_word = false;
-            cur_len = cur.chars().count();
+            cur_len = cur.width();
         } else {
             if !first_word {
                 cur.push(' ');
@@ -485,8 +487,10 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         .map(|(idx, m)| {
             let ym = m.key.split('-').collect::<Vec<_>>();
             let lbl = match ym.as_slice() {
-                [y, mo] if cross_year && y.len() >= 4 => format!("{}'{}", month_abbr(mo), &y[2..]),
-                [_, mo] => month_abbr(mo).to_string(),
+                [y, mo] if cross_year && y.len() == 4 && y.bytes().all(|b| b.is_ascii_digit()) => {
+                    format!("{}'{}", sanitize_one_line(month_abbr(mo)), &y[2..])
+                }
+                [_, mo] => sanitize_one_line(month_abbr(mo)),
                 _ => sanitize_one_line(&m.key),
             };
             let val = m.usage.total();
@@ -612,9 +616,9 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += &format!("  {}\n", paint(GRAY, "(empty)"));
     }
     for i in &s.inbox {
-        let term = sanitize_one_line(i.terminal.as_deref().unwrap_or("-"));
-        let src = sanitize_one_line(&i.source);
-        let prefix_len = 2 + format!("#{}", i.id).chars().count() + 1 + src.chars().count() + 2 + 1 + term.chars().count() + 3;
+        let term = one_line(i.terminal.as_deref().unwrap_or("-"), max_w / 5);
+        let src = one_line(&i.source, max_w / 5);
+        let prefix_len = 2 + format!("#{}", i.id).width() + 1 + src.width() + 2 + 1 + term.width() + 3;
         let max_text = max_w.saturating_sub(prefix_len).min(200);
         out += &format!(
             "  {} {} {} {} {}\n",
@@ -631,10 +635,10 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += &format!("  {}\n", paint(GRAY, "(no messages)"));
     }
     for m in &s.messages {
-        let from = sanitize_one_line(&m.from);
-        let to = sanitize_one_line(&m.to);
-        let kind = sanitize_one_line(&m.kind);
-        let status = sanitize_one_line(&m.status);
+        let from = one_line(&m.from, max_w / 6);
+        let to = one_line(&m.to, max_w / 6);
+        let kind = one_line(&m.kind, max_w / 6);
+        let status = one_line(&m.status, max_w / 6);
         let st_col = match status.as_str() {
             "delivered" | "sent" => BRIGHT_GREEN,
             "failed" => BRIGHT_RED,
@@ -642,15 +646,15 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             _ => GRAY,
         };
         let fixed_len = 2
-            + from.chars().count()
+            + from.width()
             + 3
-            + to.chars().count()
+            + to.width()
             + 2
-            + kind.chars().count()
+            + kind.width()
             + 2
             + 2
             + 2
-            + status.chars().count()
+            + status.width()
             + 2;
         let max_text = max_w.saturating_sub(fixed_len).min(60);
         out += &format!(
@@ -664,7 +668,7 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         );
     }
     out += &render_footer(width);
-    out
+    out.lines().map(|line| format!("{}\n", bounded_styled_line(line, max_w))).collect()
 }
 
 /// Strip ANSI CSI/OSC/escape sequences and replace newlines/control chars with spaces.
@@ -715,21 +719,65 @@ fn sanitize_one_line(s: &str) -> String {
     out
 }
 
-/// Single-line display bounded to `max` characters so the TUI layout never overflows.
+/// Single-line display bounded to terminal cells without splitting Unicode graphemes.
 pub fn one_line(s: &str, max: usize) -> String {
     let clean = sanitize_one_line(s);
     if max == 0 {
         return String::new();
     }
-    if clean.chars().count() <= max {
+    if clean.width() <= max {
         clean
     } else if max == 1 {
         "…".into()
     } else {
-        let mut out: String = clean.chars().take(max - 1).collect();
+        let mut out = String::new();
+        let mut cells = 0;
+        for grapheme in clean.graphemes(true) {
+            let width = grapheme.width();
+            if cells + width > max - 1 {
+                break;
+            }
+            out.push_str(grapheme);
+            cells += width;
+        }
         out.push('…');
         out
     }
+}
+
+/// Bound trusted styled output to terminal cells, preserving SGR but no other escapes.
+pub fn bounded_styled_line(line: &str, max: usize) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    let mut cells = 0;
+    while !rest.is_empty() {
+        if let Some(params) = rest.strip_prefix("\x1b[")
+            && let Some(end) = params.find('m')
+            && params[..end].bytes().all(|b| b.is_ascii_digit() || b == b';' || b == b':')
+        {
+            let consumed = 2 + end + 1;
+            out.push_str(&rest[..consumed]);
+            rest = &rest[consumed..];
+            continue;
+        }
+        if rest.starts_with('\x1b') {
+            out.push_str(&one_line(rest, max.saturating_sub(cells)));
+            break;
+        }
+        let end = rest.find('\x1b').unwrap_or(rest.len());
+        for grapheme in rest[..end].graphemes(true) {
+            let width = grapheme.width();
+            if cells + width > max {
+                out.push_str(RESET);
+                return out;
+            }
+            out.push_str(grapheme);
+            cells += width;
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(RESET);
+    out
 }
 
 #[derive(Debug, Clone, PartialEq)]

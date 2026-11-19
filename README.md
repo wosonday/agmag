@@ -154,6 +154,8 @@ TUI commands (type, then Enter):
 | `p off` | Disable all automatic actions |
 | `q` | Quit |
 
+Long names, paths and messages are shortened to fit the pane. Unicode text is measured in terminal cells without splitting graphemes; embedded terminal control sequences are stripped. Truncation affects display only, not stored messages or action targets.
+
 The TUI shows a **red** warning when a handed-off session and its successor are both running in the same directory, and backfills missing months for the statistics automatically. Only **you** can open the TUI from a terminal (agents can't).
 
 ## 5. When to use `hc` vs `agm`

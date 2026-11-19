@@ -16,6 +16,8 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "unicode-segmentation",
+ "unicode-width",
  "walkdir",
 ]
 

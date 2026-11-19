@@ -64,10 +64,22 @@ pub fn discover(root: &Path, since_ms: i64) -> Vec<(String, PathBuf)> {
 /// Bỏ qua phiên `agm ask` (đã ghi dạng `agy://...` hoặc chạy trong `ask_workdir()`) để tránh đếm trùng.
 pub fn ingest_agy(store: &Store, root: &Path, since_ms: i64) -> Result<IngestStats> {
     let logs = discover(root, since_ms);
-    if logs.is_empty() {
+    let summaries = root.join("conversation_summaries.db");
+    if logs.is_empty() && !summaries.exists() {
         return Ok(IngestStats::default());
     }
-    let cwds = load_cwds(&root.join("conversation_summaries.db"));
+    let cwds = load_cwds(&summaries);
+    // agy có thể ghi summary SAU dòng cuối của transcript: bổ sung cwd cho phiên đã quét mà transcript không
+    // còn đổi (không lọt vào `discover` nữa), để vẫn ghép được với terminal.
+    for (conv_id, cwd) in &cwds {
+        store.conn().execute(
+            // Chỉ phiên dạng tệp: phiên `agm ask` (`agy://…`) chạy trong thư mục tạm, không được thành ứng viên
+            // ghép terminal theo cwd.
+            "UPDATE sessions SET cwd = ?2
+             WHERE source = 'agy' AND session_id = ?1 AND cwd IS NULL AND path NOT LIKE 'agy://%'",
+            [conv_id, cwd],
+        )?;
+    }
     let ask_cwd = norm_cwd(&ask_workdir().to_string_lossy());
     let mut total = IngestStats::default();
     for (conv_id, path) in logs {
@@ -107,7 +119,9 @@ pub fn ingest_agy(store: &Store, root: &Path, since_ms: i64) -> Result<IngestSta
 
 fn has_ask_session(store: &Store, conv_id: &str) -> Result<bool> {
     Ok(store.conn().query_row(
-        "SELECT EXISTS(SELECT 1 FROM sessions WHERE source = 'agy' AND session_id = ?1 AND path LIKE 'agy://%')",
+        // Chỉ phiên ask CÓ usage mới thay được transcript; ask thiếu `usage` thì transcript là nguồn duy nhất.
+        "SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.source = 'agy' AND s.session_id = ?1 AND s.path LIKE 'agy://%'
+                       AND EXISTS (SELECT 1 FROM usage u WHERE u.session = s.id))",
         [conv_id],
         |r| r.get(0),
     )?)

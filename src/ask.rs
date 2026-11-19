@@ -16,8 +16,6 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
     let conv = out["conversation_id"].as_str().map(String::from).unwrap_or_else(|| format!("ask-{now}"));
     let sid = store.session_id_for_path(Source::Agy, &format!("agy://{conv}"))?;
     store.set_meta(sid, &SessionMeta { session_id: conv.clone(), cwd: None, cli_version: None, started_ms: Some(now) })?;
-    // Nếu daemon/TUI vừa quét transcript của chính lượt ask này thành phiên dạng tệp thì xóa bản trùng.
-    store.dedupe_agy_ask_session(sid, &conv)?;
     // Model: theo tham số hoặc đầu ra agy; không biết thì để trống (không bịa tên).
     let model = model.map(String::from).or_else(|| out["model"].as_str().map(String::from));
     if let Some(m) = &model {
@@ -35,6 +33,9 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
     let n = |k: &str| u[k].as_u64().unwrap_or(0);
     let cache = n("cache_read_tokens");
     let thinking = n("thinking_tokens");
+    // Ghi usage mới và xóa bản trùng (phiên dạng tệp mà daemon/TUI có thể đã quét) trong CÙNG một transaction:
+    // chỉ bỏ nguồn transcript khi đã có số liệu thay thế; lỗi giữa chừng thì giữ nguyên cả hai.
+    let tx = store.conn().unchecked_transaction()?;
     store.upsert_usage(
         sid,
         &UsageRecord {
@@ -52,6 +53,8 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
             },
         },
     )?;
+    store.dedupe_agy_ask_session(sid, &conv)?;
+    tx.commit()?;
     store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::User, summary: summarize(question), byte_offset: now as u64 * 2 })?;
     // Token đã tiêu được ghi kể cả khi agy lỗi/hết giờ; sau đó mới báo lỗi.
     if !ok {

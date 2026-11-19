@@ -105,7 +105,8 @@ impl LogParser for AgyParser {
                     }));
                 }
             }
-            "GENERIC" | "SYSTEM" | "SYSTEM_MESSAGE" | "ERROR" | "CHECKPOINT" | "USER_SETTINGS_CHANGE" => {}
+            "GENERIC" | "SYSTEM" | "SYSTEM_MESSAGE" | "ERROR" | "ERROR_MESSAGE" | "CHECKPOINT"
+            | "USER_SETTINGS_CHANGE" => {}
             _ => return Ok(LineOutcome::Unknown(kind.to_owned())),
         }
 

@@ -88,7 +88,7 @@ fn agy_parser_extracts_usage_context_thinking_and_handles_missing_ts() {
         other => panic!("expected events, got {other:?}"),
     }
 
-    for kind in ["GENERIC", "SYSTEM_MESSAGE"] {
+    for kind in ["GENERIC", "SYSTEM_MESSAGE", "ERROR_MESSAGE"] {
         let noise = json!({"step_index": 3, "type": kind, "created_at": "2026-11-18T13:09:50Z", "content": "ok"});
         assert_eq!(p.parse_line(&noise.to_string(), 500).unwrap(), LineOutcome::Ignored);
     }
@@ -264,6 +264,60 @@ fn ingest_agy_resumed_line_without_created_at_inherits_session_last_ts() -> anyh
 
     let ts: i64 = store.conn().query_row("SELECT ts_ms FROM usage", [], |r| r.get(0))?;
     assert_eq!(ts, agmag::model::parse_rfc3339_ms("2026-11-18T13:09:38Z").unwrap());
+    Ok(())
+}
+
+fn agy_tokens(store: &Store, conv: &str) -> anyhow::Result<i64> {
+    Ok(store.conn().query_row(
+        "SELECT COALESCE(SUM(u.input_uncached + u.cache_read + u.output), 0)
+         FROM usage u JOIN sessions s ON s.id = u.session
+         WHERE s.source = 'agy' AND s.session_id = ?1",
+        [conv],
+        |r| r.get(0),
+    )?)
+}
+
+#[test]
+fn ask_without_usage_never_drops_transcript_tokens() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path();
+    let l1 = json!({"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-18T13:09:40Z","model":"gemini-4-hydrogen-high","input_tokens":1000,"cache_read_tokens":200,"output_tokens":50,"content":"x"});
+    write_transcript(root, "conv-a", std::slice::from_ref(&l1))?;
+    write_transcript(root, "conv-b", &[l1])?;
+    let store = Store::open_in_memory()?;
+    let no_usage = |conv: &str| json!({"status": "SUCCESS", "conversation_id": conv, "response": "ok"});
+
+    // (a) daemon quét transcript trước, rồi `agm ask` trả JSON thiếu `usage` → token đã có phải còn nguyên.
+    ingest_agy(&store, root, 0)?;
+    record(&store, &no_usage("conv-a"), "q", None, 1_795_007_378_000)?;
+    assert_eq!(agy_tokens(&store, "conv-a")?, 1250);
+
+    // (b) `agm ask` thiếu `usage` ghi trước → lần quét sau vẫn phải đọc transcript.
+    record(&store, &no_usage("conv-b"), "q", None, 1_795_007_378_000)?;
+    ingest_agy(&store, root, 0)?;
+    assert_eq!(agy_tokens(&store, "conv-b")?, 1250);
+    Ok(())
+}
+
+#[test]
+fn ingest_agy_backfills_cwd_written_after_transcript() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path();
+    let l1 = json!({"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-18T13:09:40Z","model":"gemini-4-hydrogen-high","input_tokens":10,"output_tokens":5,"content":"x"});
+    write_transcript(root, "conv-late", &[l1])?;
+    let store = Store::open_in_memory()?;
+    ingest_agy(&store, root, 0)?; // chưa có conversation_summaries.db
+    let db = Connection::open(root.join("conversation_summaries.db"))?;
+    db.execute_batch(
+        "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT NOT NULL);
+         INSERT INTO conversation_summaries VALUES ('conv-late', '[\"file:///D:/Project/late\"]');",
+    )?;
+    drop(db);
+    // Transcript không đổi (mtime cũ hơn mốc quét) nhưng cwd vẫn phải được bổ sung.
+    ingest_agy(&store, root, i64::MAX)?;
+    let cwd: Option<String> =
+        store.conn().query_row("SELECT cwd FROM sessions WHERE session_id = 'conv-late'", [], |r| r.get(0))?;
+    assert!(cwd.is_some_and(|c| c.ends_with("late")), "cwd chưa được bổ sung");
     Ok(())
 }
 

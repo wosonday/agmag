@@ -24,9 +24,39 @@ fn migrates_v1_to_v2() -> anyhow::Result<()> {
     }
     let store = Store::open(&path)?;
     let v: i64 = store.conn().query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 2);
+    assert_eq!(v, 3);
     let n: i64 = store.conn().query_row("SELECT COUNT(*) FROM inbox", [], |r| r.get(0))?;
     assert_eq!(n, 0);
+    Ok(())
+}
+
+#[test]
+fn migrates_v2_to_v3_idempotently() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("agm.db");
+    {
+        let c = rusqlite::Connection::open(&path)?;
+        c.execute_batch(include_str!("../src/store/schema.sql"))?;
+        c.execute_batch(include_str!("../src/store/schema_v2.sql"))?;
+        c.execute_batch("PRAGMA user_version = 2;")?;
+    }
+    let store = Store::open(&path)?;
+    let v: i64 = store.conn().query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    assert_eq!(v, 3);
+    drop(store);
+    // Mở lại lần hai không lỗi cột trùng.
+    let store2 = Store::open(&path)?;
+    let t_cols: i64 = store2.conn().query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('terminals') WHERE name IN ('handoff_state', 'managed', 'launch_spec')",
+        [],
+        |r| r.get(0),
+    )?;
+    let r_cols: i64 = store2.conn().query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('rotations') WHERE name IN ('app', 'cwd', 'handoff_path', 'handoff_ms', 'linked_ms')",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!((t_cols, r_cols), (3, 5));
     Ok(())
 }
 

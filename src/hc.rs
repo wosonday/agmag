@@ -173,5 +173,6 @@ pub fn terminal_row_from(v: &Value) -> TerminalRow {
         exit_code: v["exit_code"].as_i64(),
         session: None,
         link_source: None,
+        ..Default::default()
     }
 }

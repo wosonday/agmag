@@ -178,7 +178,7 @@ fn open_creates_file() -> anyhow::Result<()> {
         store
             .conn()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-        2
+        3
     );
     assert_eq!(
         store

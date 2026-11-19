@@ -44,24 +44,61 @@ impl Store {
     fn initialize(conn: Connection) -> Result<Self> {
         // Daemon và CLI cùng ghi: chờ khóa thay vì lỗi ngay (đặt trước mọi lệnh có thể cần khóa).
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // WAL và foreign_keys phải chạy ngoài transaction.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version < 2 {
-            conn.execute_batch(include_str!("schema.sql"))?;
-            conn.execute_batch(include_str!("schema_v2.sql"))?;
-            if version == 1 && cfg!(windows) {
-                // v1 lưu đường dẫn thô; v2 dùng khóa chuẩn hóa (ingest::path_key). Đổi khóa để log không bị
-                // đọc lại thành phiên mới (đếm token hai lần).
-                conn.execute_batch(
-                    "UPDATE OR IGNORE sessions SET path = lower(replace(path, '/', '\\'))
-                         WHERE source IN ('codex', 'claude');
-                     UPDATE OR IGNORE cursors SET path = lower(replace(path, '/', '\\'))
-                         WHERE path NOT LIKE 'opencode-db:%';",
-                )?;
+        conn.execute_batch("BEGIN IMMEDIATE;")?;
+        let migrate = || -> Result<()> {
+            let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+            if version < 2 {
+                conn.execute_batch(include_str!("schema.sql"))?;
+                conn.execute_batch(include_str!("schema_v2.sql"))?;
+                if version == 1 && cfg!(windows) {
+                    // v1 lưu đường dẫn thô; v2 dùng khóa chuẩn hóa (ingest::path_key). Đổi khóa để log không bị
+                    // đọc lại thành phiên mới (đếm token hai lần).
+                    conn.execute_batch(
+                        "UPDATE OR IGNORE sessions SET path = lower(replace(path, '/', '\\'))
+                             WHERE source IN ('codex', 'claude');
+                         UPDATE OR IGNORE cursors SET path = lower(replace(path, '/', '\\'))
+                             WHERE path NOT LIKE 'opencode-db:%';",
+                    )?;
+                }
             }
-            conn.execute_batch("PRAGMA user_version = 2;")?;
+            if version < 3 {
+                for (table, col, def) in [
+                    ("rotations", "app", "TEXT"),
+                    ("rotations", "cwd", "TEXT"),
+                    ("rotations", "handoff_path", "TEXT"),
+                    ("rotations", "handoff_ms", "INTEGER"),
+                    ("rotations", "linked_ms", "INTEGER"),
+                    ("terminals", "handoff_state", "TEXT NOT NULL DEFAULT 'active'"),
+                    ("terminals", "managed", "INTEGER NOT NULL DEFAULT 0"),
+                    ("terminals", "launch_spec", "TEXT"),
+                ] {
+                    Self::add_column_if_missing(&conn, table, col, def)?;
+                }
+                conn.execute_batch(include_str!("schema_v3.sql"))?;
+                conn.execute_batch("PRAGMA user_version = 3;")?;
+            }
+            Ok(())
+        };
+        if let Err(err) = migrate() {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(err);
         }
+        conn.execute_batch("COMMIT;")?;
         Ok(Self { conn })
+    }
+
+    fn add_column_if_missing(conn: &Connection, table: &str, col: &str, def: &str) -> Result<()> {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+            params![table, col],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {col} {def};"))?;
+        }
+        Ok(())
     }
 
     pub fn session_id_for_path(&self, source: Source, path: &str) -> Result<i64> {

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::Store;
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TerminalRow {
     pub address: String,
     pub name: Option<String>,
@@ -30,6 +30,39 @@ pub struct TerminalRow {
     pub exit_code: Option<i64>,
     pub session: Option<i64>,
     pub link_source: Option<String>,
+    pub handoff_state: String,
+    pub managed: bool,
+    pub launch_spec: Option<String>,
+}
+
+impl Default for TerminalRow {
+    fn default() -> Self {
+        Self {
+            address: String::new(),
+            name: None,
+            app: None,
+            cwd: None,
+            labels: BTreeMap::new(),
+            task: None,
+            role: None,
+            template: None,
+            state: String::new(),
+            status: None,
+            kind: None,
+            msg: None,
+            turn: 0,
+            reported: false,
+            parent: None,
+            created_ms: 0,
+            finished_ms: None,
+            exit_code: None,
+            session: None,
+            link_source: None,
+            handoff_state: "active".into(),
+            managed: false,
+            launch_spec: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -69,7 +102,7 @@ pub struct BudgetRow {
 }
 
 const TERM_COLS: &str = "address, name, app, cwd, labels, task, role, template, state, status, kind, msg, turn,
-    reported, parent, created_ms, finished_ms, exit_code, session, link_source";
+    reported, parent, created_ms, finished_ms, exit_code, session, link_source, handoff_state, managed, launch_spec";
 
 fn term_from(r: &Row) -> rusqlite::Result<TerminalRow> {
     let labels: String = r.get(4)?;
@@ -94,6 +127,9 @@ fn term_from(r: &Row) -> rusqlite::Result<TerminalRow> {
         exit_code: r.get(17)?,
         session: r.get(18)?,
         link_source: r.get(19)?,
+        handoff_state: r.get(20)?,
+        managed: r.get::<_, i64>(21)? != 0,
+        launch_spec: r.get(22)?,
     })
 }
 
@@ -214,6 +250,42 @@ impl Store {
             params![addr, session, source],
         )?;
         Ok(())
+    }
+
+    pub fn set_terminal_launch(&self, addr: &str, managed: bool, launch_spec: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE terminals SET managed = ?2, launch_spec = COALESCE(?3, launch_spec) WHERE address = ?1",
+            params![addr, managed as i64, launch_spec],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_terminal_managed(&self, addr: &str) -> Result<()> {
+        self.conn.execute("UPDATE terminals SET managed = 0 WHERE address = ?1", [addr])?;
+        Ok(())
+    }
+
+    pub fn set_terminal_handoff_state(&self, addr: &str, state: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE terminals SET handoff_state = ?2 WHERE address = ?1",
+            params![addr, state],
+        )?;
+        Ok(())
+    }
+
+    pub fn covered_since(&self, source: &str) -> Result<Option<i64>> {
+        Ok(self
+            .setting(&format!("covered_since:{source}"))?
+            .and_then(|v| v.parse::<i64>().ok()))
+    }
+
+    pub fn update_covered_since(&self, source: &str, since_ms: i64) -> Result<()> {
+        let key = format!("covered_since:{source}");
+        let next = match self.covered_since(source)? {
+            Some(prev) => prev.min(since_ms),
+            None => since_ms,
+        };
+        self.set_setting(&key, &next.to_string())
     }
 
     pub fn terminal(&self, addr: &str) -> Result<Option<TerminalRow>> {

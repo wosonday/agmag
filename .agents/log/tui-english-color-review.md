@@ -28,3 +28,11 @@
 - Re-ran `cargo test --offline --locked`: 200 passed, 0 failed.
 - Engineering review and original red evidence recorded in `.agents/reviews/tui-english-color-engineering.md`.
 - Product correction ready for independent final review; exact commit to be pinned for handoff.
+
+## 2026-11-19 · review dispatch and integration preparation
+- Committed corrections as `5d42e71`.
+- Requested fresh independent Claude Code Opus review of exact `5d42e71`, with full relevant source/diff and no tools or edits.
+- Checked safety patch textual applicability with `git diff --binary 3302104...16d87df | git apply --check`: passed, no changes applied.
+- Prepared `.agents/reports/tui-english-color-copilot.md` as a pending-review draft, with exact-SHA, safety dependency and protected-main-file rules.
+- Checked `copilot --help`; did not launch an integrator or grant blanket permissions.
+- Tool catalog does not expose a current-session compact operation. Final context/handoff will be persisted before ending work; no other agent will be killed.

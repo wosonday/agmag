@@ -16,7 +16,7 @@ It also lets you intervene in a controlled way: assign work with worker-count an
 
 > Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 >
-> The CLI/TUI output and the message types are in **Vietnamese**; examples below are shown verbatim with translations where useful.
+> The CLI output and message types are in **Vietnamese** (`agm tui` is in English); examples below are shown verbatim with translations where useful.
 
 ---
 
@@ -117,23 +117,30 @@ agm tui
 ```
 
 ```
-agmag · policy bật · 7 terminal · hộp thư 1
-── HẠN MỨC GÓI ───────────────────────────────
-  codex     5h  █░░░░░░░░░  14%  còn 4h38m
-  codex     7d  █████████░  93%  còn 115h41m
-── TERMINALS ─────────────────────────────────
- t    tên          app       trạng thái                  task     token  ngữ cảnh
- t1q               codex     working                              21.2M  58%
- t3                claude    idle [ĐÃ BÀN GIAO]                   1.4M   71%
- t5   w-login-7-1  opencode  BLOCKED (question)          login-7  340k   50%
-── NGÂN SÁCH ─────────────────────────────────
-  task:login-7  ██░░░░░░░░  11%  340k / 3.0M tokens
-── HỘP THƯ ───────────────────────────────────
+ ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ UTC+07:00
+── ◈ PLAN QUOTA ──────────────────────────────────────────────────
+  codex      5h  █░░░░░░░░░  14%  resets in 4h38m
+  codex      7d  █████████░  93%  resets in 115h41m
+── ▪ USAGE (UTC+07:00) ───────────────────────────────────────────
+  24h 125k │ Today 480k │ This month 4.2M
+  Aug ▂ 1.1M │ Sep ▄ 2.3M │ Oct ▆ 3.4M │ Nov █ 4.2M
+── ▸ TERMINALS ───────────────────────────────────────────────────
+┌─────┬─────────────┬─────────────┬────────────────────┬─────────┬────────┬─────┐
+│ t   │ name        │ app         │ status             │ task    │ tokens │ ctx │
+╞═════╪═════════════╪═════════════╪════════════════════╪═════════╪════════╪═════╡
+│ t1q │ -           │ codex       │ working            │ -       │  21.2M │ 58% │
+│ t3  │ -           │ claude-code │ idle [HANDED OFF]  │ -       │   1.4M │ 71% │
+│ t5  │ w-login-7-1 │ opencode    │ BLOCKED (question) │ login-7 │   340k │ 50% │
+└─────┴─────────────┴─────────────┴────────────────────┴─────────┴────────┴─────┘
+── ◆ BUDGETS ─────────────────────────────────────────────────────
+  task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens soft
+── ● INBOX ───────────────────────────────────────────────────────
   #1 [blocked] t5 — Chạy test?
-lệnh: r <#> <trả lời> · d <#> (đóng) · s <t> <LOẠI> <tin> · c [1,2|all] (dọn) · i <t> · k <t> · p on|off · q
+── » RECENT MESSAGES ─────────────────────────────────────────────
+  (no messages)
+──────────────────────────────────────────────────────────────────
+cmd: r <#> <reply> · d <#> (done) · s <t> <TYPE> <msg> · c [1,2|all] (cleanup) · i <t> · k <t> · p on|off · q
 ```
-
-(Sections: plan quota · terminals · budgets · inbox. `[ĐÃ BÀN GIAO]` = handed off.)
 
 TUI commands (type, then Enter):
 
@@ -143,9 +150,11 @@ TUI commands (type, then Enter):
 | `d 1` | Dismiss item 1 (types nothing anywhere) |
 | `s t5 GIAO continue` | Send a recorded message |
 | `c` · `c 1,2` · `c all` | List / select handed-off sessions to clean up (requires `y` confirmation) |
-| `i t5` · `k t5` | Interrupt / kill (kill requires an extra `y`) |
+| `i t5` · `k t5` | Interrupt / kill (both require an extra `y` confirmation) |
 | `p off` | Disable all automatic actions |
 | `q` | Quit |
+
+Long names, paths and messages are shortened to the configured display width (`COLUMNS`, default 110, clamped to 60–200); set `COLUMNS` to match your pane. Unicode text is measured in terminal cells without splitting graphemes; embedded terminal control sequences are stripped. Truncation affects display only, not stored messages or action targets.
 
 The TUI shows a **red** warning when a handed-off session and its successor are both running in the same directory, and backfills missing months for the statistics automatically. Only **you** can open the TUI from a terminal (agents can't).
 
@@ -254,7 +263,7 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # hard l
 
 1. A hand-opened session must be enabled once with `agm manage <t>` — only **you** can do this. agm stores a `launch_spec` (the launch command, sanitized per app; you can specify it with `--cmd "…"` or `-- <argv>…`). Claude requires `agm hook install`. Disable with `agm manage <t> --off`.
 2. When it reaches `ctx_rotate` and is idle (`idle` or `done`), agm asks it to write a hand-off to `.agents/handoff/<id>-<ts>.md` ending with the marker `<!-- agm:handoff-done -->`. agm adds `.agents/handoff/` to the repo's `info/exclude` (git worktrees supported) and does not force a WIP commit.
-3. Once the hand-off file is valid, agm opens a new session that reads it and then **waits for you** to continue; the old session stays as `[ĐÃ BÀN GIAO]` (handed off) so you can review it and clean it up manually with `agm cleanup` (or `c` in the TUI). This is a coordination convention (no OS-level write lock on the old session) — avoid editing in both windows; the TUI warns in red when both run in the same directory.
+3. Once the hand-off file is valid, agm opens a new session that reads it and then **waits for you** to continue; the old session stays as `[HANDED OFF]` so you can review it and clean it up manually with `agm cleanup` (or `c` in the TUI). This is a coordination convention (no OS-level write lock on the old session) — avoid editing in both windows; the TUI warns in red when both run in the same directory.
 
 `agm policy off` disables all automatic actions (works even if `providers.toml` is broken).
 

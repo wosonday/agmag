@@ -1,9 +1,9 @@
 //! Tổng hợp số liệu từ CSDL cho CLI: phiên, chi phí, hạn mức gói, lượt hội thoại.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{bail, Result};
-use rusqlite::params;
+use rusqlite::{params, Connection};
 use serde::Serialize;
 
 use crate::config::{context_pct, cost_usd, Billing, Config};
@@ -29,11 +29,52 @@ pub struct SessionRow {
 pub enum GroupBy {
     Model,
     Day,
+    Month,
     Source,
     Cwd,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum UsageWindow {
+    #[value(name = "24h")]
+    Last24h,
+    Today,
+    Month,
+    #[value(name = "4months")]
+    FourMonths,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UsageBucket {
+    pub usage: Usage,
+    pub api_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageSummary {
+    pub now_ms: i64,
+    pub offset_label: String,
+    pub four_months_start_ms: i64,
+    pub four_months_start_day: String,
+    pub last_24h: UsageBucket,
+    pub today: UsageBucket,
+    pub this_month: UsageBucket,
+    pub recent_months: Vec<CostRow>,
+    pub covered_since_ms: Option<i64>,
+    pub incomplete_coverage: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBounds {
+    pub offset_label: String,
+    pub last_24h_start_ms: i64,
+    pub today_start_ms: i64,
+    pub month_start_ms: i64,
+    pub four_months_start_ms: i64,
+    pub recent_month_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct CostRow {
     pub key: String,
     pub usage: Usage,
@@ -137,9 +178,8 @@ pub fn sessions(store: &Store, cfg: &Config, since_ms: i64) -> Result<Vec<Sessio
     Ok(out)
 }
 
-/// Ngày UTC `YYYY-MM-DD` của một mốc mili-giây (thuật toán civil_from_days).
-pub fn utc_day(ts_ms: i64) -> String {
-    let days = ts_ms.div_euclid(86_400_000);
+/// (năm, tháng 1..12, ngày 1..31) từ số ngày kể từ 1970-01-01 (Howard Hinnant).
+pub fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -149,7 +189,116 @@ pub fn utc_day(ts_ms: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
+}
+
+/// Số ngày kể từ 1970-01-01 cho (năm, tháng 1..12, ngày 1..31).
+pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = y - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Ngày UTC `YYYY-MM-DD` của một mốc mili-giây.
+pub fn utc_day(ts_ms: i64) -> String {
+    let (y, m, d) = civil_from_days(ts_ms.div_euclid(86_400_000));
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn local_ymd(ts_ms: i64, offset_at: &mut dyn FnMut(i64) -> i64) -> (i64, i64, i64) {
+    let ts_s = ts_ms.div_euclid(1000);
+    let off_s = offset_at(ts_s);
+    civil_from_days((ts_s + off_s).div_euclid(86_400))
+}
+
+pub fn local_day_key(ts_ms: i64, offset_at: &mut dyn FnMut(i64) -> i64) -> String {
+    let (y, m, d) = local_ymd(ts_ms, offset_at);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+pub fn local_month_key(ts_ms: i64, offset_at: &mut dyn FnMut(i64) -> i64) -> String {
+    let (y, m, _) = local_ymd(ts_ms, offset_at);
+    format!("{y:04}-{m:02}")
+}
+
+fn local_midnight_ms(y: i64, m: i64, d: i64, hint_off_s: i64, offset_at: &mut dyn FnMut(i64) -> i64) -> i64 {
+    let mid_local_s = days_from_civil(y, m, d) * 86_400;
+    let approx_utc_s = mid_local_s - hint_off_s;
+    let off = offset_at(approx_utc_s);
+    let candidate_s = mid_local_s - off;
+    // Tinh chỉnh thêm 1 bước phòng chuyển đổi DST ngay sát nửa đêm.
+    let refined_off = offset_at(candidate_s);
+    (mid_local_s - refined_off) * 1000
+}
+
+pub fn format_offset_label(offset_s: i64) -> String {
+    let sign = if offset_s >= 0 { '+' } else { '-' };
+    let mins = offset_s.abs() / 60;
+    format!("UTC{sign}{:02}:{:02}", mins / 60, mins % 60)
+}
+
+/// Tính ranh giới 24h / hôm nay / tháng này / `months` tháng gần nhất theo hàm offset có thể thay khi test.
+pub fn compute_local_bounds(now_ms: i64, months: u32, offset_at: &mut dyn FnMut(i64) -> i64) -> LocalBounds {
+    let months = months.max(1) as i64;
+    let now_s = now_ms.div_euclid(1000);
+    let off_now = offset_at(now_s);
+    let (y, m, d) = civil_from_days((now_s + off_now).div_euclid(86_400));
+    let today_start_ms = local_midnight_ms(y, m, d, off_now, offset_at);
+    let month_start_ms = local_midnight_ms(y, m, 1, off_now, offset_at);
+
+    let shift_month = |back: i64| -> (i64, i64) {
+        let total = (y * 12 + (m - 1)) - back;
+        (total.div_euclid(12), total.rem_euclid(12) + 1)
+    };
+    let (sy, sm) = shift_month(months - 1);
+    let four_months_start_ms = local_midnight_ms(sy, sm, 1, off_now, offset_at);
+    let mut recent_month_keys = Vec::with_capacity(months as usize);
+    for back in (0..months).rev() {
+        let (my, mm) = shift_month(back);
+        recent_month_keys.push(format!("{my:04}-{mm:02}"));
+    }
+
+    LocalBounds {
+        offset_label: format_offset_label(off_now),
+        last_24h_start_ms: now_ms - 86_400_000,
+        today_start_ms,
+        month_start_ms,
+        four_months_start_ms,
+        recent_month_keys,
+    }
+}
+
+/// Hàm tra độ lệch giờ máy tại một mốc UTC (giây) qua SQLite `'localtime'`, cache theo giờ.
+pub fn sqlite_offset_at(conn: &Connection) -> impl FnMut(i64) -> i64 + '_ {
+    let mut cache: HashMap<i64, i64> = HashMap::new();
+    move |ts_s: i64| {
+        let hour = ts_s.div_euclid(3600);
+        if let Some(&off) = cache.get(&hour) {
+            return off;
+        }
+        let off = conn
+            .query_row(
+                "SELECT CAST(strftime('%s', ?1, 'unixepoch', 'localtime') AS INTEGER) - ?1",
+                [ts_s],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        cache.insert(hour, off);
+        off
+    }
+}
+
+pub fn window_since_ms(window: UsageWindow, now_ms: i64, months: u32, offset_at: &mut dyn FnMut(i64) -> i64) -> i64 {
+    let b = compute_local_bounds(now_ms, months, offset_at);
+    match window {
+        UsageWindow::Last24h => b.last_24h_start_ms,
+        UsageWindow::Today => b.today_start_ms,
+        UsageWindow::Month => b.month_start_ms,
+        UsageWindow::FourMonths => b.four_months_start_ms,
+    }
 }
 
 struct CostAcc {
@@ -158,8 +307,20 @@ struct CostAcc {
     cost: Option<f64>,                // None khi có ít nhất một hàng không tính được USD
 }
 
-/// Tổng token theo nhóm kể từ `since_ms` (theo thời điểm của từng bản ghi usage).
+/// Tổng token theo nhóm kể từ `since_ms` (dùng giờ mặc định của máy tính).
 pub fn cost(store: &Store, cfg: &Config, by: GroupBy, since_ms: i64) -> Result<Vec<CostRow>> {
+    let mut off = sqlite_offset_at(store.conn());
+    cost_with_offset(store, cfg, by, since_ms, &mut off)
+}
+
+/// Tổng token theo nhóm kể từ `since_ms` với hàm offset múi giờ tùy chỉnh (test tái lập 100%).
+pub fn cost_with_offset(
+    store: &Store,
+    cfg: &Config,
+    by: GroupBy,
+    since_ms: i64,
+    offset_at: &mut dyn FnMut(i64) -> i64,
+) -> Result<Vec<CostRow>> {
     let mut stmt = store.conn().prepare(
         "SELECT u.model, u.ts_ms, s.source, s.cwd,
                 u.input_uncached, u.cache_read, u.cache_write, u.output, u.reasoning
@@ -180,7 +341,8 @@ pub fn cost(store: &Store, cfg: &Config, by: GroupBy, since_ms: i64) -> Result<V
         let (model, ts_ms, source, cwd, usage) = row?;
         let key = match by {
             GroupBy::Model => model.clone().unwrap_or_else(|| "?".into()),
-            GroupBy::Day => utc_day(ts_ms),
+            GroupBy::Day => local_day_key(ts_ms, offset_at),
+            GroupBy::Month => local_month_key(ts_ms, offset_at),
             GroupBy::Source => source,
             GroupBy::Cwd => cwd.unwrap_or_else(|| "?".into()),
         };
@@ -207,6 +369,144 @@ pub fn cost(store: &Store, cfg: &Config, by: GroupBy, since_ms: i64) -> Result<V
         .into_iter()
         .map(|(key, acc)| CostRow { key, usage: acc.usage, billing: acc.billing.flatten(), cost_usd: acc.cost })
         .collect())
+}
+
+/// Tổng hợp 24h, hôm nay, tháng này và 4 tháng gần nhất (đủ cả bucket 0).
+pub fn usage_summary(store: &Store, cfg: &Config, now_ms: i64) -> Result<UsageSummary> {
+    let mut off = sqlite_offset_at(store.conn());
+    usage_summary_with_offset(store, cfg, now_ms, &mut off)
+}
+
+pub fn usage_summary_with_offset(
+    store: &Store,
+    cfg: &Config,
+    now_ms: i64,
+    offset_at: &mut dyn FnMut(i64) -> i64,
+) -> Result<UsageSummary> {
+    let bounds = compute_local_bounds(now_ms, cfg.policy.stats_months, offset_at);
+    let min_since = bounds.last_24h_start_ms.min(bounds.four_months_start_ms);
+    let mut stmt = store.conn().prepare(
+        "SELECT u.model, u.ts_ms, u.input_uncached, u.cache_read, u.cache_write, u.output, u.reasoning
+         FROM usage u WHERE u.ts_ms >= ?1 AND u.ts_ms <= ?2",
+    )?;
+    let rows = stmt.query_map(params![min_since, now_ms], |r| {
+        Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?, usage_at(r, 2)?))
+    })?;
+
+    let mut b24 = UsageBucket::default();
+    let mut bday = UsageBucket::default();
+    let mut bmon = UsageBucket::default();
+    let mut months: BTreeMap<String, CostAcc> = bounds
+        .recent_month_keys
+        .iter()
+        .map(|k| (k.clone(), CostAcc { usage: Usage::default(), billing: None, cost: Some(0.0) }))
+        .collect();
+
+    let add_bucket = |b: &mut UsageBucket, u: &Usage, row_usd: Option<f64>| {
+        b.usage.add(u);
+        if let Some(c) = row_usd {
+            b.api_usd = Some(b.api_usd.unwrap_or(0.0) + c);
+        }
+    };
+
+    for row in rows {
+        let (model, ts_ms, usage) = row?;
+        let billing = model.as_deref().and_then(|m| cfg.billing_for_model(m));
+        let price = model.as_deref().and_then(|m| cfg.model(m)).and_then(|m| m.price.as_ref());
+        let row_cost = match (billing, price) {
+            (Some(Billing::Api), Some(p)) => Some(cost_usd(&usage, p)),
+            _ => None,
+        };
+        if ts_ms >= bounds.last_24h_start_ms {
+            add_bucket(&mut b24, &usage, row_cost);
+        }
+        if ts_ms >= bounds.today_start_ms {
+            add_bucket(&mut bday, &usage, row_cost);
+        }
+        if ts_ms >= bounds.month_start_ms {
+            add_bucket(&mut bmon, &usage, row_cost);
+        }
+        if ts_ms >= bounds.four_months_start_ms {
+            let mkey = local_month_key(ts_ms, offset_at);
+            if let Some(acc) = months.get_mut(&mkey) {
+                acc.usage.add(&usage);
+                acc.billing = Some(match acc.billing {
+                    None => billing,
+                    Some(prev) if prev == billing => prev,
+                    Some(_) => None,
+                });
+                acc.cost = match (acc.cost, row_cost) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    _ => None,
+                };
+            }
+        }
+    }
+
+    let recent_months = months
+        .into_iter()
+        .map(|(key, acc)| {
+            let billing = acc.billing.flatten();
+            let cost_usd = if acc.usage.total() == 0 { None } else { acc.cost };
+            CostRow { key, usage: acc.usage, billing, cost_usd }
+        })
+        .collect();
+
+    let (covered_since_ms, incomplete_coverage) = coverage_status(store, bounds.four_months_start_ms)?;
+    Ok(UsageSummary {
+        now_ms,
+        offset_label: bounds.offset_label,
+        four_months_start_ms: bounds.four_months_start_ms,
+        four_months_start_day: local_day_key(bounds.four_months_start_ms, offset_at),
+        last_24h: b24,
+        today: bday,
+        this_month: bmon,
+        recent_months,
+        covered_since_ms,
+        incomplete_coverage,
+    })
+}
+
+/// Kiểm tra độ phủ log tệp (`codex`, `claude`, `agy`); `opencode` đọc CSDL nên luôn đủ.
+pub fn coverage_status(store: &Store, required_since_ms: i64) -> Result<(Option<i64>, bool)> {
+    let mut max_covered: Option<i64> = None;
+    let mut incomplete = false;
+    for src in ["codex", "claude"] {
+        match store.covered_since(src)? {
+            Some(c) => {
+                if c > required_since_ms {
+                    incomplete = true;
+                }
+                max_covered = Some(max_covered.map_or(c, |m| m.max(c)));
+            }
+            None => incomplete = true,
+        }
+    }
+    Ok((max_covered, incomplete))
+}
+
+/// Vẽ thanh ngang Unicode (hoặc ASCII fallback) theo cùng scale `max`.
+pub fn render_bar(value: u64, max: u64, width: usize, ascii: bool) -> String {
+    let filled = if max == 0 || value == 0 {
+        0
+    } else {
+        ((value as f64 / max as f64) * width as f64).round().clamp(1.0, width as f64) as usize
+    };
+    let (on, off) = if ascii { ('#', '.') } else { ('█', '░') };
+    format!("{}{}", on.to_string().repeat(filled), off.to_string().repeat(width.saturating_sub(filled)))
+}
+
+/// Ký tự thanh dọc 1 ô cho khối TUI gọn.
+pub fn spark_bar(value: u64, max: u64, ascii: bool) -> char {
+    if max == 0 || value == 0 {
+        return if ascii { '_' } else { '▁' };
+    }
+    let idx = ((value as f64 / max as f64) * 7.0).round().clamp(1.0, 7.0) as usize;
+    if ascii {
+        ['_', '.', '-', '=', '+', '*', '#', '#'][idx]
+    } else {
+        ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'][idx]
+    }
 }
 
 /// Bản ghi hạn mức mới nhất cho từng (nhà cung cấp, cửa sổ).

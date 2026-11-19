@@ -10,9 +10,12 @@ use comfy_table::{presets::UTF8_FULL_CONDENSED, Table};
 use serde::Serialize;
 
 use agmag::config::{Billing, Config};
-use agmag::ingest::{ingest_all, Roots};
-use agmag::model::Usage;
-use agmag::report::{self, GroupBy};
+use agmag::ingest::{ingest_source, Roots};
+use agmag::model::{Source, Usage};
+use agmag::report::{
+    self, compute_local_bounds, coverage_status, days_from_civil, render_bar, sqlite_offset_at,
+    window_since_ms, GroupBy, UsageSummary, UsageWindow,
+};
 use agmag::store::Store;
 
 mod ops;
@@ -34,18 +37,27 @@ enum Cmd {
     Scan {
         #[arg(long, default_value_t = 7)]
         days: i64,
+        /// Quét từ ngày địa phương YYYY-MM-DD
+        #[arg(long, conflicts_with = "days")]
+        since: Option<String>,
     },
     /// Các phiên hoạt động gần đây
     Ls {
         #[arg(long, default_value_t = 1)]
         days: i64,
     },
-    /// Tổng token (và USD cho model trả theo API) theo nhóm
+    /// Tổng token (và USD cho model trả theo API) theo nhóm hoặc tóm tắt 24h/ngày/4 tháng
     Cost {
         #[arg(long, value_enum, default_value_t = GroupBy::Model)]
         by: GroupBy,
         #[arg(long, default_value_t = 1)]
         days: i64,
+        /// Phạm vi thời gian theo giờ máy (loại trừ với --days)
+        #[arg(long, value_enum, conflicts_with = "days")]
+        window: Option<UsageWindow>,
+        /// Bảng tóm tắt 24h / Hôm nay / Tháng này kèm bar chart 4 tháng gần nhất
+        #[arg(long)]
+        summary: bool,
     },
     /// Hạn mức gói theo cửa sổ thời gian
     Quota,
@@ -244,17 +256,32 @@ fn run(cli: Cli) -> Result<()> {
     let cfg_path = home.join("providers.toml");
     // Chỉ nạp cấu hình khi lệnh cần: `policy off`, `kill`, `inbox`, `done` phải chạy được cả khi providers.toml hỏng.
     let cfg = || Config::load(&cfg_path).with_context(|| format!("đọc cấu hình {}", cfg_path.display()));
-    let store = Store::open(&home.join("agm.db"))?;
+    let db_path = home.join("agm.db");
+    let store = Store::open(&db_path)?;
     let json = cli.json || !std::io::stdout().is_terminal();
     let now = now_ms();
 
-    let reads = matches!(cli.cmd, Cmd::Scan { .. } | Cmd::Ls { .. } | Cmd::Cost { .. } | Cmd::Quota | Cmd::Log { .. });
-    let scan_days = match cli.cmd {
-        Cmd::Scan { days } => days.clamp(0, 36_500),
-        Cmd::Ls { days } | Cmd::Cost { days, .. } => days.clamp(0, 36_500).max(SCAN_DAYS),
-        _ => SCAN_DAYS,
+    let scan_since_ms = match &cli.cmd {
+        Cmd::Scan { days, since } => Some(match since {
+            Some(s) => parse_local_date_ms(s, store.conn())?,
+            None => now - (*days).clamp(0, 36_500) * DAY_MS,
+        }),
+        Cmd::Ls { days } => Some(now - (*days).clamp(0, 36_500).max(SCAN_DAYS) * DAY_MS),
+        Cmd::Cost { by, days, window, summary } => {
+            let cfg_loaded = cfg()?;
+            let target_since = cost_target_since_ms(store.conn(), &cfg_loaded, *by, *days, *window, *summary, now);
+            let need_backfill = coverage_status(&store, target_since)?.1;
+            let default_since = now - SCAN_DAYS * DAY_MS;
+            Some(if need_backfill { target_since.min(default_since) } else { default_since })
+        }
+        Cmd::Quota | Cmd::Log { .. } => Some(now - SCAN_DAYS * DAY_MS),
+        _ => None,
     };
-    let stats = if reads { scan(&store, now - scan_days * DAY_MS)? } else { Default::default() };
+    let stats = if let Some(since_ms) = scan_since_ms {
+        scan(&store, since_ms)?
+    } else {
+        Default::default()
+    };
 
     match cli.cmd {
         Cmd::Hook { cmd: HookCmd::Statusline } => unreachable!("xử lý trong main"),
@@ -315,7 +342,14 @@ fn run(cli: Cli) -> Result<()> {
             let text = agmag::ask::record(&store, &out, &q, model.as_deref(), now)?;
             emit(json, &out, || println!("{text}"))
         }
-        Cmd::Tui { refresh } => tui::run(&store, &cfg()?, refresh, |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ())),
+        Cmd::Tui { refresh } => tui::run(
+            &store,
+            &db_path,
+            &cfg()?,
+            refresh,
+            |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ()),
+            |s, since| scan(s, since).map(|_| ()),
+        ),
         Cmd::Scan { .. } => emit(json, &stats_json(&stats), || {
             println!(
                 "Đã quét {} tệp, {} dòng mới ({} sự kiện, {} dòng loại lạ, {} dòng hỏng).",
@@ -326,9 +360,16 @@ fn run(cli: Cli) -> Result<()> {
             let rows = report::sessions(&store, &cfg()?, now - days.clamp(0, 36_500) * DAY_MS)?;
             emit(json, &rows, || print_sessions(&rows))
         }
-        Cmd::Cost { by, days } => {
-            let rows = report::cost(&store, &cfg()?, by, now - days.clamp(0, 36_500) * DAY_MS)?;
-            emit(json, &rows, || print_cost(&rows, by))
+        Cmd::Cost { by, days, window, summary } => {
+            let cfg_loaded = cfg()?;
+            if summary {
+                let sum = report::usage_summary(&store, &cfg_loaded, now)?;
+                emit(json, &sum, || print_summary(&sum))
+            } else {
+                let since_ms = cost_target_since_ms(store.conn(), &cfg_loaded, by, days, window, false, now);
+                let rows = report::cost(&store, &cfg_loaded, by, since_ms)?;
+                emit(json, &rows, || print_cost(&rows, by))
+            }
         }
         Cmd::Quota => {
             let rows = report::quota(&store, now / 1000)?;
@@ -359,16 +400,41 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// Quét log Codex/Claude (theo tệp) và OpenCode (theo CSDL). Một nguồn lỗi không làm hỏng nguồn khác.
+fn parse_local_date_ms(s: &str, conn: &rusqlite::Connection) -> Result<i64> {
+    let parts: Vec<&str> = s.split('-').collect();
+    let [y, m, d] = parts.as_slice() else {
+        anyhow::bail!("ngày '{s}' không đúng định dạng YYYY-MM-DD");
+    };
+    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<i64>(), m.parse::<i64>(), d.parse::<i64>()) else {
+        anyhow::bail!("ngày '{s}' không đúng định dạng YYYY-MM-DD");
+    };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        anyhow::bail!("ngày '{s}' không hợp lệ");
+    }
+    let mid_s = days_from_civil(y, m, d) * 86_400;
+    let mut off = sqlite_offset_at(conn);
+    let o = off(mid_s);
+    let o2 = off(mid_s - o);
+    Ok((mid_s - o2) * 1000)
+}
+
+/// Quét log Codex/Claude/agy (theo tệp) và OpenCode (theo CSDL). Một nguồn lỗi không làm hỏng nguồn khác.
+/// Chỉ tiến mốc `covered_since` cho từng nguồn tệp khi nguồn đó quét xong với `skipped == 0`.
 fn scan(store: &Store, since_ms: i64) -> Result<agmag::ingest::IngestStats> {
-    let mut stats = ingest_all(store, &roots(), since_ms)?;
-    match agmag::opencode::ingest_opencode(store, &agmag::opencode::default_db()) {
-        Ok(oc) => {
-            stats.files += oc.files;
-            stats.lines += oc.lines;
-            stats.events += oc.events;
-            stats.bad += oc.bad;
+    let r = roots();
+    let mut stats = agmag::ingest::IngestStats::default();
+    for (src_name, src, root) in [
+        ("codex", Source::Codex, &r.codex),
+        ("claude", Source::Claude, &r.claude),
+    ] {
+        let s = ingest_source(store, src, root, since_ms)?;
+        if s.skipped == 0 {
+            store.update_covered_since(src_name, since_ms)?;
         }
+        stats.add(&s);
+    }
+    match agmag::opencode::ingest_opencode(store, &agmag::opencode::default_db()) {
+        Ok(oc) => stats.add(&oc),
         Err(err) => {
             eprintln!("agm: bỏ qua opencode.db: {err:#}");
             stats.skipped += 1;
@@ -463,26 +529,104 @@ fn usd_cell(billing: Option<Billing>, cost: Option<f64>) -> String {
 fn print_cost(rows: &[report::CostRow], by: GroupBy) {
     let key = match by {
         GroupBy::Model => "model",
-        GroupBy::Day => "ngày (UTC)",
+        GroupBy::Day => "ngày (giờ máy)",
+        GroupBy::Month => "tháng (giờ máy)",
         GroupBy::Source => "nguồn",
         GroupBy::Cwd => "thư mục",
     };
-    let mut t = table(&[key, "input", "cache đọc", "cache ghi", "output", "tổng", "USD"]);
+    let with_bar = matches!(by, GroupBy::Day | GroupBy::Month);
+    let max_tok = rows.iter().map(|r| r.usage.total()).max().unwrap_or(0);
+    let mut header = vec![key, "input", "cache đọc", "cache ghi", "output", "tổng"];
+    if with_bar {
+        header.push("biểu đồ (token)");
+    }
+    header.push("USD");
+    let mut t = table(&header);
     let mut total = Usage::default();
     for r in rows {
         total.add(&r.usage);
-        t.add_row(vec![
+        let mut row = vec![
             r.key.clone(),
             human_tokens(r.usage.input_uncached),
             human_tokens(r.usage.cache_read),
             human_tokens(r.usage.cache_write),
             human_tokens(r.usage.output),
             human_tokens(r.usage.total()),
-            usd_cell(r.billing, r.cost_usd),
+        ];
+        if with_bar {
+            row.push(render_bar(r.usage.total(), max_tok, 16, false));
+        }
+        row.push(usd_cell(r.billing, r.cost_usd));
+        t.add_row(row);
+    }
+    let mut foot = vec!["TỔNG".into(), String::new(), String::new(), String::new(), String::new(), human_tokens(total.total())];
+    if with_bar {
+        foot.push(String::new());
+    }
+    foot.push(String::new());
+    t.add_row(foot);
+    println!("{t}");
+}
+
+fn cost_target_since_ms(
+    conn: &rusqlite::Connection,
+    cfg: &Config,
+    by: GroupBy,
+    days: i64,
+    window: Option<report::UsageWindow>,
+    summary: bool,
+    now: i64,
+) -> i64 {
+    let mut off = sqlite_offset_at(conn);
+    if summary {
+        return compute_local_bounds(now, cfg.policy.stats_months, &mut off).four_months_start_ms;
+    }
+    if let Some(w) = window {
+        return window_since_ms(w, now, cfg.policy.stats_months, &mut off);
+    }
+    if by == GroupBy::Month {
+        return compute_local_bounds(now, cfg.policy.stats_months, &mut off).four_months_start_ms;
+    }
+    now - days.clamp(0, 36_500) * DAY_MS
+}
+
+fn print_summary(sum: &UsageSummary) {
+    println!("SỬ DỤNG ({})", sum.offset_label);
+    let mut t = table(&["cửa sổ", "input", "cache đọc", "cache ghi", "output", "tổng", "USD (API)"]);
+    for (label, b) in [
+        ("24h qua", &sum.last_24h),
+        ("Hôm nay", &sum.today),
+        ("Tháng này", &sum.this_month),
+    ] {
+        t.add_row(vec![
+            label.into(),
+            human_tokens(b.usage.input_uncached),
+            human_tokens(b.usage.cache_read),
+            human_tokens(b.usage.cache_write),
+            human_tokens(b.usage.output),
+            human_tokens(b.usage.total()),
+            b.api_usd.map(|c| format!("${c:.2}")).unwrap_or_else(|| "—".into()),
         ]);
     }
-    t.add_row(vec!["TỔNG".into(), String::new(), String::new(), String::new(), String::new(), human_tokens(total.total()), String::new()]);
     println!("{t}");
+
+    println!("\n4 THÁNG GẦN NHẤT (biểu đồ tổng token)");
+    let max_m = sum.recent_months.iter().map(|r| r.usage.total()).max().unwrap_or(0);
+    for r in &sum.recent_months {
+        let bar = render_bar(r.usage.total(), max_m, 20, false);
+        let usd = match (r.billing, r.cost_usd) {
+            (_, Some(c)) => format!("  ${c:.2}"),
+            _ => String::new(),
+        };
+        println!("  {}  {}  {:>6}{usd}", r.key, bar, human_tokens(r.usage.total()));
+    }
+    if sum.incomplete_coverage {
+        println!(
+            "\n! Dữ liệu log cũ có thể chưa đầy đủ từ {} (chạy `agm scan --since {}`).",
+            sum.four_months_start_day,
+            sum.four_months_start_day,
+        );
+    }
 }
 
 fn window_label(minutes: u32) -> String {

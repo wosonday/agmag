@@ -6,7 +6,7 @@ use comfy_table::{presets::UTF8_FULL_CONDENSED, Table};
 use crate::actions::KINDS;
 use crate::config::Config;
 use crate::policy::{budget_value, enabled, session_context_pct};
-use crate::report::{quota, QuotaRow};
+use crate::report::{quota, spark_bar, usage_summary, QuotaRow, UsageBucket, UsageSummary};
 use crate::store::{InboxRow, MessageRow, Store};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +36,7 @@ pub struct Snapshot {
     pub now_s: i64,
     pub policy_on: bool,
     pub quota: Vec<QuotaRow>,
+    pub usage_summary: UsageSummary,
     pub terminals: Vec<TermView>,
     pub live_rotation_pairs: Vec<(String, String, String)>,
     pub budgets: Vec<BudgetView>,
@@ -96,6 +97,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
         now_s: now_ms / 1000,
         policy_on: enabled(store)?,
         quota: quota(store, now_ms / 1000)?,
+        usage_summary: usage_summary(store, cfg, now_ms)?,
         terminals,
         live_rotation_pairs,
         budgets,
@@ -146,6 +148,54 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             format!("còn {}h{:02}m", left / 3600, left % 3600 / 60)
         };
         out += &format!("  {:<8} {:>3}  {} {:>3.0}%  {reset}\n", q.provider, win, bar(q.used_percent), q.used_percent);
+    }
+
+    out += &section(&format!("SỬ DỤNG ({})", s.usage_summary.offset_label), width);
+    let fmt_bucket = |label: &str, b: &UsageBucket| -> String {
+        let usd = b.api_usd.map(|u| format!(" (${u:.2})")).unwrap_or_default();
+        format!("{label} {}{usd}", tokens(b.usage.total()))
+    };
+    let line1 = format!(
+        "  {} | {} | {}",
+        fmt_bucket("24h", &s.usage_summary.last_24h),
+        fmt_bucket("Hôm nay", &s.usage_summary.today),
+        fmt_bucket("Tháng này", &s.usage_summary.this_month),
+    );
+    out += &format!("{line1}\n");
+    let max_m = s.usage_summary.recent_months.iter().map(|m| m.usage.total()).max().unwrap_or(0);
+    let cross_year = s
+        .usage_summary
+        .recent_months
+        .first()
+        .zip(s.usage_summary.recent_months.last())
+        .is_some_and(|(a, b)| a.key.get(..4) != b.key.get(..4));
+    let month_parts: Vec<String> = s
+        .usage_summary
+        .recent_months
+        .iter()
+        .map(|m| {
+            let ym = m.key.split('-').collect::<Vec<_>>();
+            let lbl = match ym.as_slice() {
+                [y, mo] if cross_year => format!("T{mo}/{}", &y[2..]),
+                [_, mo] => format!("T{mo}"),
+                _ => m.key.clone(),
+            };
+            format!("{lbl} {} {}", spark_bar(m.usage.total(), max_m, false), tokens(m.usage.total()))
+        })
+        .collect();
+    let joined = format!("  {}", month_parts.join(" | "));
+    if joined.chars().count() <= width {
+        out += &format!("{joined}\n");
+    } else if month_parts.len() > 2 {
+        out += &format!("  {}\n  {}\n", month_parts[..2].join(" | "), month_parts[2..].join(" | "));
+    } else {
+        out += &format!("{joined}\n");
+    }
+    if s.usage_summary.incomplete_coverage {
+        out += &format!(
+            "  (chưa đủ dữ liệu 4 tháng — chạy `agm scan --since {}`)\n",
+            s.usage_summary.four_months_start_day
+        );
     }
 
     out += &section("TERMINALS", width);

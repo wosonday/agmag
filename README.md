@@ -166,9 +166,9 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 |---|---|
 | `agm quota` | Hạn mức gói theo cửa sổ thời gian |
 | `agm ls [--days N]` | Các phiên: nguồn, model, token, % ngữ cảnh, cảnh báo |
-| `agm cost [--by model\|day\|source\|cwd] [--days N]` | Tổng token; USD chỉ cho model trả theo API có khai giá |
+| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Tổng token, tóm tắt 24h/ngày/4 tháng theo giờ máy và bar chart; USD chỉ cho model trả theo API có khai giá |
 | `agm log <session> [--limit N] [--full]` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc, chỉ Codex/Claude) |
-| `agm scan [--days N]` | Quét log ngay (các lệnh xem tự quét) |
+| `agm scan [--days N \| --since YYYY-MM-DD]` | Quét log ngay (các lệnh xem tự quét) |
 | `agm daemon [--interval 10]` | Chạy nền: sự kiện hc, quét log, ghép terminal↔phiên, ngân sách, xoay vòng |
 | `agm tui [--refresh 2]` | Bảng điều khiển |
 | `agm ps [--all]` | Terminal của herdr-core mà agm biết |
@@ -242,6 +242,8 @@ manager = "codex-mgr"           # terminal nhận cảnh báo ngân sách; bỏ 
 ctx_warn = 50                   # % ngữ cảnh: cảnh báo
 ctx_rotate = 70                 # % ngữ cảnh: xoay vòng phiên
 handoff_timeout_min = 10
+link_timeout_min = 5
+stats_months = 4                # số tháng dương lịch gần nhất cho thống kê & backfill
 ```
 
 Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.

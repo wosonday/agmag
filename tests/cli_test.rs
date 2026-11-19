@@ -220,6 +220,52 @@ fn cli_rotate_refuses_unknown_app_and_budget_rejects_nan() {
 }
 
 #[test]
+fn cli_cost_summary_window_month_and_scan_since() {
+    let tmp = sandbox(None);
+    let scan = json(&agm(tmp.path(), &["scan", "--since", "2020-01-01", "--json"]));
+    assert!(scan["files"].as_u64().unwrap() >= 2);
+
+    // Chèn thêm bản ghi usage cách đây 10 ngày để kiểm chứng `cost --by month` (mặc định không cần --window)
+    // không bị cắt về 24h (`days = 1`).
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let old_ts = now_epoch - 10 * 86_400_000;
+    {
+        let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+        let sid = store.session_id_for_path(agmag::model::Source::Claude, "claude://old-in-4m").unwrap();
+        store
+            .upsert_usage(
+                sid,
+                &agmag::model::UsageRecord {
+                    dedupe_key: "u-10d".into(),
+                    ts_ms: old_ts,
+                    model: Some("claude-opus-4-7".into()),
+                    usage: agmag::model::Usage { output: 777, ..Default::default() },
+                },
+            )
+            .unwrap();
+    }
+
+    let sum = json(&agm(tmp.path(), &["cost", "--summary", "--json"]));
+    assert_eq!(sum["recent_months"].as_array().unwrap().len(), 4);
+    assert_eq!(sum["incomplete_coverage"], false);
+
+    let by_m_default = json(&agm(tmp.path(), &["cost", "--by", "month", "--json"]));
+    let total_out: u64 = by_m_default
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["usage"]["output"].as_u64().unwrap_or(0))
+        .sum();
+    assert!(total_out >= 777, "cost --by month phai bao gom usage cu hon 1 ngay");
+
+    let by_m = json(&agm(tmp.path(), &["cost", "--window", "4months", "--by", "month", "--json"]));
+    assert!(by_m.as_array().is_some());
+}
+
+#[test]
 fn cli_manage_rotate_and_cleanup() {
     let tmp = sandbox(None);
     let work = tmp.path().join("work");

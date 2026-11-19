@@ -61,6 +61,8 @@ pub struct Policy {
     pub handoff_timeout_min: u64,
     /// Phút chờ ghép phiên kế nhiệm trước khi chuyển `needs_attention`.
     pub link_timeout_min: u64,
+    /// Số tháng dương lịch gần nhất cho thống kê & backfill mặc định.
+    pub stats_months: u32,
 }
 
 impl Default for Policy {
@@ -72,6 +74,7 @@ impl Default for Policy {
             ctx_rotate: 70.0,
             handoff_timeout_min: 10,
             link_timeout_min: 5,
+            stats_months: 4,
         }
     }
 }

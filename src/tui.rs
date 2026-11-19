@@ -2,6 +2,7 @@
 //! Không dùng thư viện TUI (máy đang offline); phím được thay bằng lệnh một chữ: r s c i k p q.
 
 use std::io::{BufRead, IsTerminal, Write};
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -11,13 +12,21 @@ use agmag::actions::{self, eligible_cleanups, execute_cleanup_batch, Caller, Cle
 use agmag::config::Config;
 use agmag::dashboard::{parse_command, render, snapshot, TuiCmd};
 use agmag::hc::HcCli;
+use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
 
 fn width() -> usize {
     std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(110).clamp(60, 200)
 }
 
-pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Store) -> Result<()>) -> Result<()> {
+pub fn run(
+    store: &Store,
+    db_path: &Path,
+    cfg: &Config,
+    refresh: u64,
+    mut scan: impl FnMut(&Store) -> Result<()>,
+    backfill: impl FnOnce(&Store, i64) -> Result<()> + Send + 'static,
+) -> Result<()> {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
@@ -38,6 +47,23 @@ pub fn run(store: &Store, cfg: &Config, refresh: u64, mut scan: impl FnMut(&Stor
     if !matches!(who, Caller::User { .. }) {
         anyhow::bail!("agm tui chỉ dành cho người dùng ở terminal (TTY, không phải agent); agent hãy dùng các lệnh agm thường");
     }
+
+    // Backfill 4 tháng gần nhất ở luồng nền riêng (mở Store riêng vì Connection không Sync).
+    let now0 = crate::now_ms();
+    let bounds0 = {
+        let mut off = sqlite_offset_at(store.conn());
+        compute_local_bounds(now0, cfg.policy.stats_months, &mut off)
+    };
+    if matches!(coverage_status(store, bounds0.four_months_start_ms), Ok((_, true))) {
+        let path_owned = db_path.to_path_buf();
+        let since = bounds0.four_months_start_ms;
+        std::thread::spawn(move || {
+            if let Ok(bg_store) = Store::open(&path_owned) {
+                let _ = backfill(&bg_store, since);
+            }
+        });
+    }
+
     let mut note = String::new();
     let mut pending: Option<TuiCmd> = None;
     let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;

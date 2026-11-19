@@ -46,7 +46,7 @@ fn snapshot_sections() -> anyhow::Result<()> {
 fn render_contains_all_sections() -> anyhow::Result<()> {
     let store = seeded()?;
     let text = render(&snapshot(&store, &Config::builtin(), 1_000_000)?, 100);
-    for needle in ["HẠN MỨC GÓI", "codex", "86%", "TERMINALS", "w-login-7-1", "BLOCKED", "50%", "NGÂN SÁCH", "task:login-7", "HỘP THƯ", "#1", "Chạy test?"] {
+    for needle in ["HẠN MỨC GÓI", "codex", "86%", "SỬ DỤNG (", "24h", "Hôm nay", "Tháng này", "TERMINALS", "w-login-7-1", "BLOCKED", "50%", "NGÂN SÁCH", "task:login-7", "HỘP THƯ", "#1", "Chạy test?"] {
         assert!(text.contains(needle), "thiếu '{needle}' trong:\n{text}");
     }
     Ok(())

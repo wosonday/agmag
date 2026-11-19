@@ -115,20 +115,29 @@ agm tui
 ```
 
 ```
-agmag · policy bật · 7 terminal · hộp thư 1
-── HẠN MỨC GÓI ───────────────────────────────
-  codex     5h  █░░░░░░░░░  14%  còn 4h38m
-  codex     7d  █████████░  93%  còn 115h41m
-── TERMINALS ─────────────────────────────────
- t    tên          app       trạng thái                  task     token  ngữ cảnh
- t1q               codex     working                              21.2M  58%
- t3                claude    idle [ĐÃ BÀN GIAO]                   1.4M   71%
- t5   w-login-7-1  opencode  BLOCKED (question)          login-7  340k   50%
-── NGÂN SÁCH ─────────────────────────────────
-  task:login-7  ██░░░░░░░░  11%  340k / 3.0M tokens
-── HỘP THƯ ───────────────────────────────────
+ ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ UTC+07:00
+── ◈ PLAN QUOTA ──────────────────────────────────────────────────
+  codex      5h  █░░░░░░░░░  14%  resets in 4h38m
+  codex      7d  █████████░  93%  resets in 115h41m
+── ▪ USAGE (UTC+07:00) ───────────────────────────────────────────
+  24h 125k │ Today 480k │ This month 4.2M
+  Aug ▂ 1.1M │ Sep ▄ 2.3M │ Oct ▆ 3.4M │ Nov █ 4.2M
+── ▸ TERMINALS ───────────────────────────────────────────────────
+┌─────┬─────────────┬─────────────┬────────────────────┬─────────┬────────┬─────┐
+│ t   │ name        │ app         │ status             │ task    │ tokens │ ctx │
+╞═════╪═════════════╪═════════════╪════════════════════╪═════════╪════════╪═════╡
+│ t1q │ -           │ codex       │ working            │ -       │  21.2M │ 58% │
+│ t3  │ -           │ claude-code │ idle [HANDED OFF]  │ -       │   1.4M │ 71% │
+│ t5  │ w-login-7-1 │ opencode    │ BLOCKED (question) │ login-7 │   340k │ 50% │
+└─────┴─────────────┴─────────────┴────────────────────┴─────────┴────────┴─────┘
+── ◆ BUDGETS ─────────────────────────────────────────────────────
+  task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens
+── ● INBOX ───────────────────────────────────────────────────────
   #1 [blocked] t5 — Chạy test?
-lệnh: r <#> <trả lời> · d <#> (đóng) · s <t> <LOẠI> <tin> · c [1,2|all] (dọn) · i <t> · k <t> · p on|off · q
+── » RECENT MESSAGES ─────────────────────────────────────────────
+  (no messages)
+──────────────────────────────────────────────────────────────────
+cmd: r <#> <reply> · d <#> (done) · s <t> <TYPE> <msg> · c [1,2|all] (cleanup) · i <t> · k <t> · p on|off · q
 ```
 
 Lệnh trong TUI (gõ rồi Enter):
@@ -248,7 +257,7 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # vượ
 
 1. Phiên mở tay cần bật quản lý một lần qua `agm manage <t>` — chỉ **bạn** bật được. agm lưu `launch_spec` (lệnh khởi chạy đã lọc an toàn theo app; có thể chỉ định bằng `--cmd "…"` hoặc `-- <argv>…`). Claude yêu cầu đã cài `agm hook install`. Tắt bằng `agm manage <t> --off`.
 2. Khi đạt `ctx_rotate` và rảnh (`idle` hoặc `done`), agm yêu cầu ghi bàn giao vào `.agents/handoff/<id>-<ts>.md` với marker cuối `<!-- agm:handoff-done -->`. agm tự thêm `.agents/handoff/` vào `info/exclude` của repo (hỗ trợ cả git worktree), không ép commit WIP.
-3. Khi tệp bàn giao hợp lệ, agm mở phiên mới đọc tệp đó rồi **chờ bạn** gõ tiếp; phiên cũ giữ nguyên ở trạng thái `[ĐÃ BÀN GIAO]` để bạn kiểm tra và dọn thủ công bằng `agm cleanup` (hoặc `c` trong TUI). Đây là quy ước điều phối (không khóa ghi cấp hệ điều hành trên phiên cũ) — tránh sửa trùng trên cả hai cửa sổ; TUI cảnh báo đỏ khi cả hai cùng chạy một thư mục.
+3. Khi tệp bàn giao hợp lệ, agm mở phiên mới đọc tệp đó rồi **chờ bạn** gõ tiếp; phiên cũ giữ nguyên ở trạng thái `[HANDED OFF]` để bạn kiểm tra và dọn thủ công bằng `agm cleanup` (hoặc `c` trong TUI). Đây là quy ước điều phối (không khóa ghi cấp hệ điều hành trên phiên cũ) — tránh sửa trùng trên cả hai cửa sổ; TUI cảnh báo đỏ khi cả hai cùng chạy một thư mục.
 
 `agm policy off` tắt toàn bộ hành động tự động (vẫn chạy được cả khi `providers.toml` hỏng).
 

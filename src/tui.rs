@@ -1,6 +1,7 @@
-//! `agm tui`: bảng điều khiển vẽ lại theo chu kỳ (mã ANSI) + dòng lệnh ngắn.
-//! Không dùng thư viện TUI (máy đang offline); phím được thay bằng lệnh một chữ: r s c i k p q.
+//! `agm tui`: periodically redrawn ANSI dashboard + short command prompt.
+//! No heavy TUI library (offline build); keybindings are replaced by single-letter commands: r d s c i k p q.
 
+use std::fmt::Write as _;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
 use std::sync::mpsc;
@@ -15,8 +16,49 @@ use agmag::hc::HcCli;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
 
+#[derive(Clone, Copy)]
+enum NoteKind {
+    Ok,
+    Warn,
+    Err,
+}
+
 fn width() -> usize {
     std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(110).clamp(60, 200)
+}
+
+fn render_frame(text: &str, cleanup_list: Option<&[CleanupCandidate]>, note: Option<(NoteKind, &str)>) -> String {
+    let mut body = String::with_capacity(text.len() + 512);
+    body.push_str(text);
+    if let Some(list) = cleanup_list {
+        body.push_str("\x1b[1;93m── MANUAL CLEANUP (enter 'c 1,2' or 'c all'; Enter to refresh) ──\x1b[0m\n");
+        for (i, c) in list.iter().enumerate() {
+            let st = if c.old_live { "live" } else { "exited" };
+            let succ = c.new_terminal.as_deref().unwrap_or("-");
+            let _ = writeln!(body, "  \x1b[1;93m#{}\x1b[0m {} ({st}) \x1b[90m→\x1b[0m \x1b[96m{succ}\x1b[0m", i + 1, c.old_terminal);
+        }
+    }
+    if let Some((kind, msg)) = note {
+        let color = match kind {
+            NoteKind::Ok => "\x1b[92m",
+            NoteKind::Warn => "\x1b[1;93m",
+            NoteKind::Err => "\x1b[1;91m",
+        };
+        let _ = writeln!(body, "{color}» {msg}\x1b[0m");
+    }
+    // Move cursor home, clear trailing chars on each line, and clear below the frame in a single write.
+    let mut frame = String::with_capacity(body.len() + 128);
+    frame.push_str("\x1b[H");
+    for line in body.split_inclusive('\n') {
+        if let Some(stripped) = line.strip_suffix('\n') {
+            frame.push_str(stripped);
+            frame.push_str("\x1b[K\n");
+        } else {
+            frame.push_str(line);
+        }
+    }
+    frame.push_str("\x1b[J\x1b[1;96magm>\x1b[0m ");
+    frame
 }
 
 pub fn run(
@@ -36,7 +78,7 @@ pub fn run(
         }
     });
     let hc = HcCli::default();
-    // Ai đang dùng TUI: xác định một lần, fail-closed. Agent (hoặc stdin bị pipe) không được kill/ngắt qua TUI.
+    // Identify caller once, fail-closed. Agents (or piped stdin) cannot kill/interrupt via the TUI.
     let who = actions::detect_caller(
         store,
         &hc,
@@ -45,10 +87,10 @@ pub fn run(
         false,
     );
     if !matches!(who, Caller::User { .. }) {
-        anyhow::bail!("agm tui chỉ dành cho người dùng ở terminal (TTY, không phải agent); agent hãy dùng các lệnh agm thường");
+        anyhow::bail!("agm tui is only available to a human at an interactive terminal (TTY); agents should use standard agm commands");
     }
 
-    // Backfill 4 tháng gần nhất ở luồng nền riêng (mở Store riêng vì Connection không Sync).
+    // Backfill the configured recent calendar months on a background thread (separate Store since Connection is !Sync).
     let now0 = crate::now_ms();
     let bounds0 = {
         let mut off = sqlite_offset_at(store.conn());
@@ -64,40 +106,37 @@ pub fn run(
         });
     }
 
-    let mut note = String::new();
+    let mut note: Option<(NoteKind, String)> = None;
     let mut pending: Option<TuiCmd> = None;
     let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;
     let mut cleanup_selected: Option<Vec<CleanupCandidate>> = None;
+
+    let mut out = std::io::stdout();
+    // Initial full clear before the first home-positioned frame.
+    let _ = out.write_all(b"\x1b[2J");
 
     loop {
         let _ = scan(store);
         let now = crate::now_ms();
         let text = match snapshot(store, cfg, now) {
             Ok(s) => render(&s, width()),
-            Err(e) => format!("không đọc được CSDL: {e:#}\n"),
+            Err(e) => format!("\x1b[1;91mfailed to read database: {e:#}\x1b[0m\n"),
         };
-        // Xóa màn hình + về góc trên; vẽ; in danh sách cleanup/ghi chú và dấu nhắc.
-        print!("\x1b[2J\x1b[H{text}");
-        if let Some(list) = &cleanup_list {
-            println!("── DỌN DẸP THỦ CÔNG (nhập `c 1,2` hoặc `c all`; Enter để làm mới) ──");
-            for (i, c) in list.iter().enumerate() {
-                let st = if c.old_live { "live" } else { "exited" };
-                let succ = c.new_terminal.as_deref().unwrap_or("-");
-                println!("  #{} {} ({st}) → {succ}", i + 1, c.old_terminal);
-            }
-        }
-        if !note.is_empty() {
-            println!("» {note}");
-        }
-        print!("> ");
-        std::io::stdout().flush()?;
+        let frame = render_frame(
+            &text,
+            cleanup_list.as_deref(),
+            note.as_ref().map(|(k, s)| (*k, s.as_str())),
+        );
+        out.write_all(frame.as_bytes())?;
+        out.flush()?;
+
         let line = match rx.recv_timeout(Duration::from_secs(refresh.max(1))) {
             Ok(l) => l,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         };
         let now = crate::now_ms();
-        note.clear();
+        note = None;
 
         if let Some(sel) = cleanup_selected.take() {
             if line.trim() == "y" {
@@ -105,21 +144,31 @@ pub fn run(
                     Caller::User { .. } => Caller::User { confirmed: true },
                     agent => agent.clone(),
                 };
-                note = match execute_cleanup_batch(store, &hc, &user, &sel, now) {
+                note = Some(match execute_cleanup_batch(store, &hc, &user, &sel, now) {
                     Ok(rep) => {
                         cleanup_list = None;
-                        format!("đã dọn {}, bỏ qua {}, lỗi {}", rep.done, rep.skipped.len(), rep.errors.len())
+                        let kind = if !rep.errors.is_empty() {
+                            NoteKind::Err
+                        } else if !rep.skipped.is_empty() {
+                            NoteKind::Warn
+                        } else {
+                            NoteKind::Ok
+                        };
+                        (
+                            kind,
+                            format!("cleaned {}, skipped {}, errors {}", rep.done, rep.skipped.len(), rep.errors.len()),
+                        )
                     }
-                    Err(e) => format!("lỗi dọn dẹp: {e:#}"),
-                };
+                    Err(e) => (NoteKind::Err, format!("cleanup error: {e:#}")),
+                });
             } else {
                 cleanup_list = None;
-                note = "đã hủy dọn dẹp".into();
+                note = Some((NoteKind::Warn, "cleanup cancelled".into()));
             }
             continue;
         }
 
-        // Kill/ngắt cần xác nhận: lệnh trước đặt `pending`, dòng này phải là "y".
+        // Kill/interrupt require confirmation: the prior command set `pending`, this line must be "y".
         if let Some(cmd) = pending.take() {
             if line.trim() == "y" {
                 let user = match &who {
@@ -127,16 +176,16 @@ pub fn run(
                     agent => agent.clone(),
                 };
                 let res = match &cmd {
-                    TuiCmd::Kill(t) => actions::kill(store, &hc, &user, t, now),
-                    TuiCmd::Interrupt(t) => actions::interrupt(store, &hc, &user, t, now),
-                    _ => Ok(()),
+                    TuiCmd::Kill(t) => actions::kill(store, &hc, &user, t, now).map(|()| format!("killed {t}")),
+                    TuiCmd::Interrupt(t) => actions::interrupt(store, &hc, &user, t, now).map(|()| format!("interrupted {t}")),
+                    _ => Ok(String::new()),
                 };
-                note = match res {
-                    Ok(()) => format!("đã thực hiện {cmd:?}"),
-                    Err(e) => format!("lỗi: {e:#}"),
-                };
+                note = Some(match res {
+                    Ok(msg) => (NoteKind::Ok, msg),
+                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                });
             } else {
-                note = "đã hủy".into();
+                note = Some((NoteKind::Warn, "cancelled".into()));
             }
             continue;
         }
@@ -151,7 +200,7 @@ pub fn run(
                         None => eligible_cleanups(store).unwrap_or_default(),
                     };
                     if list.is_empty() {
-                        note = "không có phiên đã bàn giao cần dọn".into();
+                        note = Some((NoteKind::Warn, "no handed-off sessions ready for cleanup".into()));
                     } else {
                         match crate::ops::parse_selection(&sel_expr, list.len()) {
                             Ok(indices) if !indices.is_empty() => {
@@ -160,17 +209,20 @@ pub fn run(
                                     .iter()
                                     .map(|c| format!("{}→{}", c.old_terminal, c.new_terminal.as_deref().unwrap_or("-")))
                                     .collect();
-                                note = format!(
-                                    "xác nhận dọn {} phiên ({})? gõ y rồi Enter (khác: hủy)",
-                                    chosen.len(),
-                                    items.join(", ")
-                                );
+                                note = Some((
+                                    NoteKind::Warn,
+                                    format!(
+                                        "confirm cleanup of {} session(s) ({})? type y + Enter (anything else cancels)",
+                                        chosen.len(),
+                                        items.join(", ")
+                                    ),
+                                ));
                                 cleanup_selected = Some(chosen);
                             }
-                            Ok(_) => note = "chưa chọn mục nào".into(),
+                            Ok(_) => note = Some((NoteKind::Warn, "no items selected".into())),
                             Err(e) => {
                                 cleanup_list = Some(list);
-                                note = format!("lỗi chọn: {e:#}");
+                                note = Some((NoteKind::Err, format!("selection error: {e:#}")));
                             }
                         }
                     }
@@ -178,43 +230,48 @@ pub fn run(
                     match eligible_cleanups(store) {
                         Ok(list) if list.is_empty() => {
                             cleanup_list = None;
-                            note = "không có phiên đã bàn giao cần dọn".into();
+                            note = Some((NoteKind::Warn, "no handed-off sessions ready for cleanup".into()));
                         }
                         Ok(list) => cleanup_list = Some(list),
-                        Err(e) => note = format!("lỗi: {e:#}"),
+                        Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
                     }
                 }
             }
             Ok(cmd @ (TuiCmd::Kill(_) | TuiCmd::Interrupt(_))) => {
-                note = format!("xác nhận {cmd:?}? gõ y rồi Enter (khác: hủy)");
+                let prompt_desc = match &cmd {
+                    TuiCmd::Kill(t) => format!("kill {t}"),
+                    TuiCmd::Interrupt(t) => format!("interrupt {t}"),
+                    _ => unreachable!(),
+                };
+                note = Some((NoteKind::Warn, format!("confirm {prompt_desc}? type y + Enter (anything else cancels)")));
                 pending = Some(cmd);
             }
             Ok(TuiCmd::Reply(id, text)) => {
-                note = match actions::reply(store, &hc, id, &text, now) {
-                    Ok(()) => format!("đã trả lời #{id}"),
-                    Err(e) => format!("lỗi: {e:#}"),
-                };
+                note = Some(match actions::reply(store, &hc, id, &text, now) {
+                    Ok(()) => (NoteKind::Ok, format!("replied to #{id}")),
+                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                });
             }
             Ok(TuiCmd::Send(to, kind, text)) => {
-                note = match actions::send(store, &hc, "user", &to, &kind, None, &text, now) {
-                    Ok(m) => format!("tin #{} → {}: {}", m.id, m.to, m.status),
-                    Err(e) => format!("lỗi: {e:#}"),
-                };
+                note = Some(match actions::send(store, &hc, "user", &to, &kind, None, &text, now) {
+                    Ok(m) => (NoteKind::Ok, format!("msg #{} → {}: {}", m.id, m.to, m.status)),
+                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                });
             }
             Ok(TuiCmd::Done(id)) => {
-                note = match actions::dismiss(store, id, now) {
-                    Ok(()) => format!("đã đóng #{id}"),
-                    Err(e) => format!("lỗi: {e:#}"),
-                };
+                note = Some(match actions::dismiss(store, id, now) {
+                    Ok(()) => (NoteKind::Ok, format!("dismissed #{id}")),
+                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                });
             }
             Ok(TuiCmd::Policy(on)) => {
-                // Không nuốt lỗi: người dùng phải biết policy có thật sự tắt hay không.
-                note = match store.set_setting("policy", if on { "on" } else { "off" }) {
-                    Ok(()) => format!("policy {}", if on { "bật" } else { "TẮT" }),
-                    Err(e) => format!("LỖI — policy CHƯA đổi: {e:#}"),
-                };
+                // Never swallow errors: the user must know whether policy actually toggled.
+                note = Some(match store.set_setting("policy", if on { "on" } else { "off" }) {
+                    Ok(()) => (if on { NoteKind::Ok } else { NoteKind::Warn }, format!("policy {}", if on { "ON" } else { "OFF" })),
+                    Err(e) => (NoteKind::Err, format!("ERROR — policy NOT changed: {e:#}")),
+                });
             }
-            Err(e) => note = e,
+            Err(e) => note = Some((NoteKind::Err, e)),
         }
     }
 }

@@ -40,7 +40,7 @@ Cần [Rust](https://rustup.rs) (có `cargo`).
 git clone <địa chỉ repo này> agmag
 cd agmag
 cargo install --path .          # chép agm.exe vào ~/.cargo/bin (đã có trong PATH)
-agm --version                   # agm 0.1.0
+agm --version                   # agm 0.2.0
 ```
 
 > `cargo build --release` **chỉ** tạo `target\release\agm.exe` — gõ `agm` sẽ báo "not recognized". Hãy dùng `cargo install --path .`.

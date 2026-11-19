@@ -2,3 +2,5 @@
 .wt/
 .agents/.runtime/
 .superpowers/
+
+target-install/

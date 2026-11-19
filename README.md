@@ -1,64 +1,73 @@
 # agmag
 
-**Bảng điều khiển model cho đội agent chạy trong [herdr](https://github.com/yigitkonur/awesome-herdr) / herdr-core.**
+**English** · [Tiếng Việt](README_vi.md)
 
-`agm` đứng cạnh herdr và cho bạn biết, trong một chỗ:
+**A model control panel for agent teams running in [herdr](https://github.com/yigitkonur/awesome-herdr) / herdr-core.**
 
-- mỗi agent (Claude Code, Codex, OpenCode, agy/Gemini) đã tiêu **bao nhiêu token**, ngữ cảnh đầy **bao nhiêu %**;
-- gói tháng (ChatGPT, Claude) còn **bao nhiêu % hạn mức** và **khi nào reset**;
-- agent nào **đang dừng lại hỏi bạn** (hộp thư);
-- các agent **đã nói gì với nhau**.
+`agm` sits next to herdr and tells you, in one place:
 
-Và cho bạn can thiệp có kiểm soát: giao việc có giới hạn số thợ và ngân sách, trả lời agent, dừng agent (Codex/Claude chỉ khi **bạn** ra lệnh), tự **xoay vòng** thợ OpenCode khi ngữ cảnh đầy để tiết kiệm hạn mức của model đắt tiền.
+- **how many tokens** each agent (Claude Code, Codex, OpenCode, agy/Gemini) has used and **how full** its context is;
+- **how much quota** is left on your subscriptions (ChatGPT, Claude) and **when it resets**;
+- tokens used in the **last 24 h / today / this month**, plus a **4-month** chart (local time);
+- which agent is **stopped and waiting for you** (inbox);
+- **what the agents said to each other**.
 
-> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime.
+It also lets you intervene in a controlled way: assign work with worker-count and budget limits, answer agents, stop agents (Codex/Claude only when **you** say so), automatically **rotate** OpenCode workers when their context fills up, and **hand off to a fresh session** for Claude Code/Codex without ever killing the old one automatically.
 
----
-
-## Mục lục
-
-1. [Cài đặt](#1-cài-đặt)
-2. [Dùng ngay trong 1 phút](#2-dùng-ngay-trong-1-phút)
-3. [agm hoạt động thế nào — có phải cài vào từng session không?](#3-agm-hoạt-động-thế-nào)
-4. [Chạy nền và bảng điều khiển](#4-chạy-nền-và-bảng-điều-khiển)
-5. [Khi nào dùng `hc`, khi nào dùng `agm`](#5-khi-nào-dùng-hc-khi-nào-dùng-agm)
-6. [Cho agent dùng agm](#6-cho-agent-dùng-agm)
-7. [Tất cả lệnh](#7-tất-cả-lệnh)
-8. [Ngân sách, policy và xoay vòng thợ](#8-ngân-sách-policy-và-xoay-vòng-thợ)
-9. [Cấu hình](#9-cấu-hình)
-10. [An toàn và dữ liệu](#10-an-toàn-và-dữ-liệu)
-11. [Giới hạn đã biết](#11-giới-hạn-đã-biết)
-12. [Phát triển](#12-phát-triển)
+> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.2.0** — see [CHANGELOG.md](CHANGELOG.md).
+>
+> The CLI/TUI output and the message types are in **Vietnamese**; examples below are shown verbatim with translations where useful.
 
 ---
 
-## 1. Cài đặt
+## Contents
 
-Cần [Rust](https://rustup.rs) (có `cargo`).
+1. [Install](#1-install)
+2. [Up and running in 1 minute](#2-up-and-running-in-1-minute)
+3. [How agm works — do I install it per session?](#3-how-agm-works)
+4. [Background daemon and dashboard](#4-background-daemon-and-dashboard)
+5. [When to use `hc` vs `agm`](#5-when-to-use-hc-vs-agm)
+6. [Letting agents use agm](#6-letting-agents-use-agm)
+7. [All commands](#7-all-commands)
+8. [Token statistics over time](#8-token-statistics-over-time)
+9. [Budgets, policy and rotation](#9-budgets-policy-and-rotation)
+10. [Configuration](#10-configuration)
+11. [Safety and data](#11-safety-and-data)
+12. [Known limitations](#12-known-limitations)
+13. [Development](#13-development)
+
+---
+
+## 1. Install
+
+Requires [Rust](https://rustup.rs) (with `cargo`).
 
 ```powershell
-git clone <địa chỉ repo này> agmag
+git clone <this repo URL> agmag
 cd agmag
-cargo install --path .          # chép agm.exe vào ~/.cargo/bin (đã có trong PATH)
+cargo install --path .          # copies agm.exe into ~/.cargo/bin (already on PATH)
 agm --version                   # agm 0.2.0
 ```
 
-> `cargo build --release` **chỉ** tạo `target\release\agm.exe` — gõ `agm` sẽ báo "not recognized". Hãy dùng `cargo install --path .`.
-> Mỗi lần cập nhật mã: chạy lại `cargo install --path .`. Mở lại cửa sổ PowerShell nếu vẫn chưa thấy lệnh.
+> `cargo build --release` **only** produces `target\release\agm.exe` — typing `agm` will say "not recognized". Use `cargo install --path .`.
+> After every code update, run `cargo install --path .` again. Reopen PowerShell if the command still isn't found.
 
-Dữ liệu của agm nằm ở `~/.agmag/` (`agm.db`, `providers.toml`). Đổi bằng biến môi trường `AGM_HOME`.
+agm keeps its data in `~/.agmag/` (`agm.db`, `providers.toml`). Override with the `AGM_HOME` environment variable (other variables: see [section 10](#10-configuration)).
 
-## 2. Dùng ngay trong 1 phút
+> Upgrading from 0.1.x: the database migrates to schema v3 automatically on first run (rolled back on error). Nothing to do.
 
-Không cần cấu hình gì:
+## 2. Up and running in 1 minute
+
+No configuration needed:
 
 ```powershell
-agm quota        # hạn mức gói: 5 giờ / 7 ngày, còn bao lâu tới reset
-agm ls           # phiên hôm nay: model, token, % ngữ cảnh
-agm cost         # tổng token theo model  (--by day | source | cwd, --days 7)
+agm quota          # subscription quota: 5-hour / 7-day windows, time until reset
+agm ls             # today's sessions: model, tokens, % context
+agm cost           # token totals by model  (--by day | month | source | cwd, --days 7)
+agm cost --summary # 24h / today / this month + 4-month chart
 ```
 
-Ví dụ `agm quota`:
+Example `agm quota` (columns: plan, window, used; `còn` = time left):
 
 ```
 gói     cửa sổ  đã dùng
@@ -66,41 +75,42 @@ codex   5h      █░░░░░░░░░  14%   còn 4h38m
 codex   7d      █████████░  93%   còn 115h41m
 ```
 
-Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọc phần mới.
+The first run is a bit slow (it reads the last 7 days of logs); after that only new data is read. For older data in the monthly statistics: `agm scan --since 2026-08-01` (or let `agm tui` backfill automatically).
 
-## 3. agm hoạt động thế nào
+## 3. How agm works
 
-**Không phải cài vào từng session.** agm cài một lần cho cả máy và *đọc dấu vết mà mỗi công cụ vốn đã ghi*, nên mọi session — cũ, mới, mở bằng herdr hay mở tay — đều được đếm:
+**No per-session install.** agm is installed once per machine and *reads the traces each tool already writes*, so every session — old, new, opened via herdr or by hand — is counted:
 
 ```
- Claude Code ──ghi──▶ ~/.claude/projects/*.jsonl ──────────────┐
- Codex       ──ghi──▶ ~/.codex/sessions/*.jsonl  ──────────────┼──▶ agm ──▶ ~/.agmag/agm.db
- OpenCode    ──ghi──▶ ~/.local/share/opencode/opencode.db ─────┘     ▲
- herdr-core  ──sự kiện (hc events)──▶ agm daemon ────────────────────┘
-                                         │
-                       bạn xem ở: agm quota / ls / cost / inbox / tui
+ Claude Code ──writes──▶ ~/.claude/projects/*.jsonl ──────────────────────┐
+ Codex       ──writes──▶ ~/.codex/sessions/*.jsonl  ──────────────────────┤
+ OpenCode    ──writes──▶ ~/.local/share/opencode/opencode.db ─────────────┼──▶ agm ──▶ ~/.agmag/agm.db
+ agy (CLI)   ──writes──▶ ~/.gemini/antigravity-cli/brain/*/…/transcript.jsonl ┘     ▲
+ herdr-core  ──events (hc events)──▶ agm daemon ────────────────────────────────────┘
+                                          │
+                        you look at: agm quota / ls / cost / inbox / tui
 ```
 
-| Công cụ | Phải làm gì? | Thấy số liệu ở đâu |
+| Tool | What do I need to do? | Where do I see the numbers? |
 |---|---|---|
-| **Claude Code** | Không bắt buộc. Muốn có **% hạn mức gói 5h/7d** thì chạy **một lần** `agm hook install` (áp dụng cho mọi session Claude) | Thanh trạng thái dưới cùng của Claude Code: `Opus 5.5 · ctx 34% · 5h 24% · 7d 41%`; và mọi lệnh `agm` |
-| **Codex** | Không gì cả (hạn mức gói có sẵn trong log Codex) | `agm quota / ls / tui` |
-| **OpenCode** | Không gì cả (agm đọc `opencode.db`, chỉ đọc) | `agm ls / cost / tui` |
-| **agy (Gemini)** | Không gì cả (agm đọc `transcript.jsonl` và `conversation_summaries.db` của `antigravity-cli`, và ghi `agm ask`) | `agm ls / cost / tui` |
+| **Claude Code** | Optional. For **5h/7d subscription quota %** (and to use `agm manage`), run `agm hook install` **once** (applies to every Claude session) | Claude Code's bottom status line: `Opus 5.5 · ctx 34% · 5h 24% · 7d 41%`; and every `agm` command |
+| **Codex** | Nothing (quota is already in Codex's logs) | `agm quota / ls / tui` |
+| **OpenCode** | Nothing (agm reads `opencode.db`, read-only) | `agm ls / cost / tui` |
+| **agy (Gemini)** | Nothing. agm reads `transcript.jsonl` of every interactive `antigravity-cli` session and `conversation_summaries.db` (read-only, for the working directory); `agm ask` is recorded separately and never double-counted | `agm ls / cost / tui` |
 
-> `agm hook install` thêm `statusLine` vào `~/.claude/settings.json`. Nếu bạn đã có statusLine riêng, lệnh từ chối và không ghi đè — gọi `agm hook statusline` từ script của bạn.
+> `agm hook install` adds a `statusLine` to `~/.claude/settings.json`. If you already have your own statusLine, it refuses and does not overwrite it — call `agm hook statusline` from your own script instead.
 
-## 4. Chạy nền và bảng điều khiển
+## 4. Background daemon and dashboard
 
-Các lệnh ở mục 2 đủ để **xem**. Muốn agm **theo dõi liên tục** (terminal nào đang chạy, ai đang hỏi bạn, ngân sách, xoay vòng thợ) thì chạy daemon — nên chạy trong herdr-core để nó sống độc lập với cửa sổ:
+The commands in section 2 are enough to **look**. For **continuous monitoring** (which terminals are running, who is asking you something, budgets, rotation), run the daemon — preferably inside herdr-core so it lives independently of any window:
 
 ```powershell
 hc run --bg --no-parent --name agm-daemon agm daemon
-hc read agm-daemon            # xem nó đang làm gì
-hc kill agm-daemon            # dừng
+hc read agm-daemon            # see what it's doing
+hc kill agm-daemon            # stop it
 ```
 
-Rồi mở bảng điều khiển trong một pane của herdr:
+Then open the dashboard in a herdr pane:
 
 ```powershell
 agm tui
@@ -112,180 +122,230 @@ agmag · policy bật · 7 terminal · hộp thư 1
   codex     5h  █░░░░░░░░░  14%  còn 4h38m
   codex     7d  █████████░  93%  còn 115h41m
 ── TERMINALS ─────────────────────────────────
- t    tên          app       trạng thái          task     token  ngữ cảnh
- t1q               codex     working                      21.2M  58%
- t5   w-login-7-1  opencode  BLOCKED (question)  login-7  340k   50%
+ t    tên          app       trạng thái                  task     token  ngữ cảnh
+ t1q               codex     working                              21.2M  58%
+ t3                claude    idle [ĐÃ BÀN GIAO]                   1.4M   71%
+ t5   w-login-7-1  opencode  BLOCKED (question)          login-7  340k   50%
 ── NGÂN SÁCH ─────────────────────────────────
   task:login-7  ██░░░░░░░░  11%  340k / 3.0M tokens
 ── HỘP THƯ ───────────────────────────────────
   #1 [blocked] t5 — Chạy test?
-lệnh: r <#> <trả lời> · d <#> · s <t> <LOẠI> <tin> · i <t> · k <t> · p on|off · q
+lệnh: r <#> <trả lời> · d <#> (đóng) · s <t> <LOẠI> <tin> · c [1,2|all] (dọn) · i <t> · k <t> · p on|off · q
 ```
 
-Lệnh trong TUI (gõ rồi Enter): `r 1 có` trả lời mục 1 · `d 1` đóng mục 1 · `s t5 GIAO làm tiếp` gửi tin · `i t5` ngắt · `k t5` dừng (phải gõ thêm `y`) · `p off` tắt hành động tự động · `q` thoát. TUI chỉ mở được bởi **bạn** ở terminal (agent không dùng được).
+(Sections: plan quota · terminals · budgets · inbox. `[ĐÃ BÀN GIAO]` = handed off.)
 
-## 5. Khi nào dùng `hc`, khi nào dùng `agm`
+TUI commands (type, then Enter):
 
-`hc` là **tay chân** (chạy, nhìn, gõ vào terminal). `agm` là **sổ sách và luật** (ghi lại, kiểm hạn mức, chặn hành động nguy hiểm) — agm gọi `hc` bên dưới.
-
-| Việc | Dùng |
+| Command | Action |
 |---|---|
-| Mở agent để **bạn tự làm việc cùng** | `hc run` / mở trong herdr |
-| Vào xem / gõ trực tiếp | `hc attach t5`, `hc read t5` |
-| Chạy lệnh, test nền (không phải agent) | `hc run --bg …`, `hc exec …` |
-| **Giao việc cho thợ** (sinh agent theo đầu việc) | `agm spawn worker-mid --task login-7 -- "…"` |
-| **Gửi tin cho agent** | `agm send w-login-7-1 --type GIAO --task login-7 "…"` |
-| **Trả lời agent đang hỏi / xin quyền** | `agm reply 1 "có"` (hoặc `r` trong TUI) |
-| **Dừng agent** | `agm kill t5` (có bảo vệ; `hc kill` thì không) |
-| Xem token, hạn mức, ai đang chờ bạn | `agm quota / ls / inbox / tui` |
+| `r 1 yes` | Reply to inbox item 1 (typed into the related terminal) |
+| `d 1` | Dismiss item 1 (types nothing anywhere) |
+| `s t5 GIAO continue` | Send a recorded message |
+| `c` · `c 1,2` · `c all` | List / select handed-off sessions to clean up (requires `y` confirmation) |
+| `i t5` · `k t5` | Interrupt / kill (kill requires an extra `y`) |
+| `p off` | Disable all automatic actions |
+| `q` | Quit |
 
-Quy tắc ngắn:
-1. Việc của **đội agent** (giao, nhắn, trả lời, dừng, sinh thêm) → `agm`.
-2. **Bạn tự thao tác tay** → `hc`.
-3. Agent nhắn nhau → luôn `agm send` (để có hồ sơ và để câu hỏi tới được hộp thư của bạn).
+The TUI shows a **red** warning when a handed-off session and its successor are both running in the same directory, and backfills missing months for the statistics automatically. Only **you** can open the TUI from a terminal (agents can't).
 
-Agent sinh bằng `hc run` vẫn được **đo token**, nhưng không có nhãn đầu việc → agm không áp ngân sách đầu việc và không tự xoay vòng nó. Muốn agm quản lý đầy đủ thì sinh bằng `agm spawn`.
+## 5. When to use `hc` vs `agm`
 
-## 6. Cho agent dùng agm
+`hc` is the **hands** (run, look, type into terminals). `agm` is the **ledger and the rules** (record, check quotas, block dangerous actions) — agm calls `hc` under the hood.
 
-Thêm đoạn này vào `AGENTS.md` (Codex, OpenCode đọc) và `CLAUDE.md` (Claude đọc) của dự án:
+| Task | Use |
+|---|---|
+| Open an agent **to work with it yourself** | `hc run` / open in herdr (then `agm manage` if you want agm to rotate it) |
+| Look in / type directly | `hc attach t5`, `hc read t5` |
+| Run commands or background tests (not agents) | `hc run --bg …`, `hc exec …` |
+| **Assign work to a worker** (spawn an agent per task) | `agm spawn worker-mid --task login-7 -- "…"` |
+| **Message an agent** | `agm send w-login-7-1 --type GIAO --task login-7 "…"` |
+| **Answer an agent asking a question / permission** | `agm reply 1 "yes"` (or `r` in the TUI) |
+| **Stop an agent** | `agm kill t5` (guarded; `hc kill` is not) |
+| See tokens, quota, who is waiting for you | `agm quota / ls / cost / inbox / tui` |
+
+Rules of thumb:
+1. **Agent-team** work (assign, message, answer, stop, spawn) → `agm`.
+2. **You operating by hand** → `hc`.
+3. Agents talking to each other → always `agm send` (so there's a record and questions reach your inbox).
+
+Agents started with `hc run` are still **metered**, but have no task label → agm won't apply task budgets to them. For full management, spawn with `agm spawn`; for hand-opened Claude Code/Codex sessions, enable rotation with `agm manage <t>`.
+
+## 6. Letting agents use agm
+
+Add this to your project's `AGENTS.md` (read by Codex, OpenCode) and `CLAUDE.md` (read by Claude):
 
 ```markdown
-## Liên lạc qua agmag
-- Gửi tin cho agent khác: `agm send <tên-terminal> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<nội dung ngắn>"`
-- Cần người dùng quyết định: `agm send user --type HỎI --task <ID> "<câu hỏi>"` (vào hộp thư của người dùng)
-- Xem hộp thư (Codex quản lý): `agm inbox --json`
-- Không dùng `agm kill` với phiên Codex/Claude — chỉ người dùng được làm việc đó.
+## Communication via agmag
+- Message another agent: `agm send <terminal-name> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<short text>"`
+- Need a user decision: `agm send user --type HỎI --task <ID> "<question>"` (goes to the user's inbox)
+- Check the inbox (Codex manager): `agm inbox --json`
+- Never use `agm kill` on Codex/Claude sessions — only the user may do that.
 ```
 
-agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt trong mỗi terminal. Mọi lệnh in JSON khi đầu ra không phải terminal (hoặc thêm `--json`) để agent đọc được.
+Message types: `GIAO` assign · `BÁO CÁO` report · `LỖI` error · `HỎI` question · `CHẶN` blocked · `ĐẠT` pass · `CHƯA ĐẠT` fail.
 
-## 7. Tất cả lệnh
+agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets in each terminal. Every command prints JSON when output is not a terminal (or with `--json`) so agents can parse it. See [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (Vietnamese) for a detailed agent guide.
 
-| Lệnh | Việc |
+## 7. All commands
+
+| Command | Purpose |
 |---|---|
-| `agm quota` | Hạn mức gói theo cửa sổ thời gian |
-| `agm ls [--days N]` | Các phiên: nguồn, model, token, % ngữ cảnh, cảnh báo |
-| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Tổng token, tóm tắt 24h/ngày/4 tháng theo giờ máy và bar chart; USD chỉ cho model trả theo API có khai giá |
-| `agm log <session> [--limit N] [--full]` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc, chỉ Codex/Claude) |
-| `agm scan [--days N \| --since YYYY-MM-DD]` | Quét log ngay (các lệnh xem tự quét) |
-| `agm daemon [--interval 10]` | Chạy nền: sự kiện hc, quét log, ghép terminal↔phiên, ngân sách, xoay vòng |
-| `agm tui [--refresh 2]` | Bảng điều khiển |
-| `agm ps [--all]` | Terminal của herdr-core mà agm biết |
-| `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Hộp thư; trả lời câu hỏi của agent; đóng mục |
-| `agm send <đích> --type <LOẠI> [--task ID] <tin>` | Gửi tin có ghi lại; đích `user` → hộp thư |
-| `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <nhiệm vụ>` | Sinh agent (`hc run --bg --outlive-parent`) có kiểm `max_workers` và ngân sách |
-| `agm kill <t>` · `agm interrupt <t>` | Dừng / ngắt — Codex, Claude, app chưa rõ: **chỉ bạn**, luôn phải gõ `y` |
-| `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay |
-| `agm rotate <t>` | Xoay vòng ngay OpenCode worker hoặc phiên Claude/Codex đã `manage` |
-| `agm cleanup [targets…] [--all] [--yes]` | Dọn dẹp thủ công các phiên cũ đã bàn giao (1 lần xác nhận `y/N`) |
-| `agm budget set <phạm vi> --soft X --hard Y [--action notify\|interrupt\|kill]` · `ls` · `rm` | Ngân sách |
-| `agm policy on\|off\|status` | Bật/tắt mọi hành động tự động (nút dừng khẩn) |
-| `agm link <t> <session>` | Ghép tay terminal ↔ phiên khi agm không chắc |
-| `agm ask [--model gemini-4-argon-high] <câu hỏi>` | Hỏi agy một lần (chỉ đọc), ghi lại token |
-| `agm hook install` · `agm hook statusline` | Gắn / chạy hook statusline của Claude Code |
+| `agm quota` | Subscription quota per time window |
+| `agm ls [--days N]` | Sessions: source, model, tokens, % context, warnings |
+| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Token totals; 24h/today/this-month summary + 4-month bar chart in local time; USD only for API-billed models with a declared price |
+| `agm log <session> [--limit N] [--full]` | Turn summaries (`--full`: raw log lines, Codex/Claude only) |
+| `agm scan [--days N \| --since YYYY-MM-DD]` | Scan Codex/Claude/agy/OpenCode logs now (view commands scan automatically) |
+| `agm daemon [--interval 10] [--replay <file>]` | Background: hc events, log scanning, terminal↔session matching, budgets, rotation (`--replay`: load events from a file, for debugging) |
+| `agm tui [--refresh 2]` | Dashboard |
+| `agm ps [--all]` | herdr-core terminals known to agm |
+| `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Inbox; answer an agent's question; dismiss an item |
+| `agm send <target> --type <TYPE> [--task ID] <text>` | Send a recorded message; target `user` → inbox |
+| `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <task>` | Spawn an agent (`hc run --bg --outlive-parent`), checking `max_workers` and budgets |
+| `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Kill / interrupt — Codex, Claude, unknown apps: **you only**, always requires typing `y` (`--yes` doesn't apply) |
+| `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Enable/disable rotation management for a hand-opened Claude Code or Codex session |
+| `agm rotate <t> [--yes]` | Rotate now: OpenCode worker (hand-off + kill + respawn) or a managed Claude/Codex session (hand-off + new session, old one is **not** killed) |
+| `agm cleanup [targets…] [--all] [--yes]` | Manually clean up old handed-off sessions (one `y/N` confirmation) |
+| `agm budget set <scope> --soft X --hard Y [--action notify\|interrupt\|kill]` · `ls` · `rm <scope>` | Budgets: `task:<ID>` (tokens) or `provider:<name>:<minutes>` (% quota) |
+| `agm policy on\|off\|status` | Enable/disable all automatic actions (emergency stop) |
+| `agm link <t> <session>` | Manually pair terminal ↔ session when agm isn't sure |
+| `agm ask [--model gemini-4-argon-high] [--timeout 300] <question>` | One-shot agy question (read-only, runs in a temp dir outside the repo), tokens recorded |
+| `agm hook install` · `agm hook statusline` | Install / run the Claude Code statusline hook |
 
-## 8. Ngân sách, policy và xoay vòng thợ
+Global flag: `--json` (default when output is not a terminal).
 
-**Ngân sách** (daemon kiểm mỗi chu kỳ):
+## 8. Token statistics over time
+
+All time boundaries use **local machine time**, not UTC.
 
 ```powershell
-agm budget set task:login-7 --soft 2000000 --hard 5000000              # token cho một đầu việc
-agm budget set provider:codex:10080 --soft 80 --hard 95                 # % hạn mức gói tuần (10080 phút)
-agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # vượt cứng → dừng thợ OpenCode của việc đó
+agm cost --summary              # 24h / Today / This month table + 4-month bar chart
+agm cost --by month             # totals per month
+agm cost --window today --by source
+agm scan --since 2026-08-01     # backfill older logs (the TUI does this for missing months)
 ```
 
-- Vượt **mềm** → một mục trong hộp thư (và tin cho terminal quản lý nếu cấu hình `manager`).
-- Vượt **cứng** → hộp thư + hành động (`notify` mặc định); `agm spawn` cho đầu việc đó bị từ chối.
-- Mỗi mức chỉ kích hoạt **một lần**; đóng mục hộp thư không làm nó báo lại. Codex/Claude không bao giờ bị dừng tự động — chỉ có đề nghị trong hộp thư.
+- The number of months for statistics/backfill is set by `stats_months` in `providers.toml` (default: the last 4 calendar months).
+- If a period hasn't been fully scanned, agm flags the data as possibly incomplete and suggests the `agm scan --since …` command, instead of silently showing low numbers.
+- USD is computed only for `billing = "api"` models with a declared price; if any API model has no price, the USD total shows `?` (never a made-up 0).
 
-**Xoay vòng thợ OpenCode** (thợ = sinh bằng `agm spawn` với `--role worker`):
+## 9. Budgets, policy and rotation
 
-1. Ngữ cảnh ≥ 50% → cảnh báo trong hộp thư.
-2. Ngữ cảnh ≥ 70% và thợ đang rảnh → agm yêu cầu ghi bàn giao vào `.agents/log/<ID>.md` và commit.
-3. Khi thợ xong lượt: agm kiểm **worktree sạch** và **có commit mới chạm tệp đó**, kiểm luôn điều kiện mở phiên mới → dừng phiên cũ → mở phiên mới **cùng template/model/thư mục** với nhiệm vụ "đọc tasks/log/git log rồi làm tiếp".
-4. Chưa bàn giao xong thì chờ; quá `handoff_timeout_min` → báo hộp thư, **giữ nguyên phiên cũ**. Thất bại rồi thì không tự thử lại — dùng `agm rotate <t>`.
+**Budgets** (checked by the daemon every cycle):
 
-**Xoay vòng phiên Claude Code & Codex (không tự kill phiên cũ):**
+```powershell
+agm budget set task:login-7 --soft 2000000 --hard 5000000              # tokens for one task
+agm budget set provider:codex:10080 --soft 80 --hard 95                 # % of weekly quota (10080 minutes)
+agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # hard limit → kill that task's OpenCode workers
+```
 
-1. Phiên mở tay cần bật quản lý một lần qua `agm manage <t>` (lưu `launch_spec` an toàn theo app; Claude yêu cầu đã cài `agm hook install`).
-2. Khi đạt `ctx_rotate` và rảnh (`idle` hoặc `done`), agm yêu cầu ghi bàn giao vào `.agents/handoff/<id>-<ts>.md` (tự thêm `.agents/handoff/` vào `info/exclude` của repo, không ép commit WIP) với marker cuối `<!-- agm:handoff-done -->`.
-3. Khi tệp bàn giao hợp lệ, agm mở phiên mới đọc tệp đó rồi **chờ bạn** gõ tiếp; phiên cũ giữ nguyên ở trạng thái `[ĐÃ BÀN GIAO]` để bạn kiểm tra và dọn thủ công bằng `agm cleanup` (hoặc `c` trong TUI). Đây là quy ước điều phối (không khóa ghi cấp hệ điều hành trên phiên cũ — tránh sửa trùng trên cả hai cửa sổ).
+- **Soft** limit exceeded → an inbox item (and a message to the manager terminal if `manager` is configured).
+- **Hard** limit exceeded → inbox + action (`notify` by default); `agm spawn` for that task is refused.
+- Each level fires **once**; dismissing the inbox item doesn't re-trigger it. Codex/Claude are never stopped automatically — only a suggestion in the inbox.
 
-`agm policy off` tắt toàn bộ hành động tự động (vẫn chạy được cả khi `providers.toml` hỏng).
+**OpenCode worker rotation** (worker = spawned with `agm spawn` using `--role worker`):
 
-## 9. Cấu hình
+1. Context ≥ `ctx_warn` (50%) → warning in the inbox.
+2. Context ≥ `ctx_rotate` (70%) and the worker is idle → agm asks it to write a hand-off to `.agents/log/<ID>.md` and commit.
+3. When the worker finishes its turn: agm checks for a **clean worktree** and **a new commit touching that file**, verifies it can start a new session → kills the old session → starts a new one with the **same template/model/directory** and the task "read tasks/log/git log and continue".
+4. If the hand-off isn't done yet, it waits; after `handoff_timeout_min` → inbox notice, **old session kept**. No automatic retry after failure — use `agm rotate <t>`.
 
-`~/.agmag/providers.toml` (không có tệp → dùng mặc định):
+**Claude Code & Codex session rotation (never auto-kills the old session):**
+
+1. A hand-opened session must be enabled once with `agm manage <t>` — only **you** can do this. agm stores a `launch_spec` (the launch command, sanitized per app; you can specify it with `--cmd "…"` or `-- <argv>…`). Claude requires `agm hook install`. Disable with `agm manage <t> --off`.
+2. When it reaches `ctx_rotate` and is idle (`idle` or `done`), agm asks it to write a hand-off to `.agents/handoff/<id>-<ts>.md` ending with the marker `<!-- agm:handoff-done -->`. agm adds `.agents/handoff/` to the repo's `info/exclude` (git worktrees supported) and does not force a WIP commit.
+3. Once the hand-off file is valid, agm opens a new session that reads it and then **waits for you** to continue; the old session stays as `[ĐÃ BÀN GIAO]` (handed off) so you can review it and clean it up manually with `agm cleanup` (or `c` in the TUI). This is a coordination convention (no OS-level write lock on the old session) — avoid editing in both windows; the TUI warns in red when both run in the same directory.
+
+`agm policy off` disables all automatic actions (works even if `providers.toml` is broken).
+
+## 10. Configuration
+
+`~/.agmag/providers.toml` (no file → defaults from [assets/providers.default.toml](assets/providers.default.toml)):
 
 ```toml
 [providers.codex]
-billing = "subscription"        # gói tháng: đo bằng % hạn mức, không quy ra USD
+billing = "subscription"        # subscription: measured as % quota, not converted to USD
 [providers.claude]
 billing = "subscription"
 [providers.openrouter]
-billing = "api"                 # trả theo token: agm cost tính USD nếu model có giá
+billing = "api"                 # pay per token: agm cost computes USD if the model has a price
 
 [models."gpt-6.1-sol"]
-provider = "codex"              # OpenCode dùng openai/gpt-6.1-sol cũng tiêu hạn mức ChatGPT
+provider = "codex"              # OpenCode using openai/gpt-6.1-sol also consumes ChatGPT quota
 context_window = 475000
 [models."some-api-model"]
 provider = "openrouter"
-price = { input = 3.0, cache_read = 0.3, cache_write = 3.75, output = 15.0 }   # USD / 1 triệu token
+price = { input = 3.0, cache_read = 0.3, cache_write = 3.75, output = 15.0 }   # USD per 1M tokens
 
 [aliases]
 "opus" = "claude-opus-5-5"
 
 [policy]
-max_workers = 3                 # số thợ chạy cùng lúc tối đa
-manager = "codex-mgr"           # terminal nhận cảnh báo ngân sách; bỏ trống = chỉ hộp thư
-ctx_warn = 50                   # % ngữ cảnh: cảnh báo
-ctx_rotate = 70                 # % ngữ cảnh: xoay vòng phiên
+max_workers = 3                 # max concurrent workers
+manager = "codex-mgr"           # terminal receiving budget alerts; empty = inbox only
+ctx_warn = 50                   # % context: warn
+ctx_rotate = 70                 # % context: rotate session
 handoff_timeout_min = 10
 link_timeout_min = 5
-stats_months = 4                # số tháng dương lịch gần nhất cho thống kê & backfill
+stats_months = 4                # number of recent calendar months for statistics & backfill
 ```
 
-Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.
+Models without a declared price or context window show `?` — agm never invents a 0.
 
-## 10. An toàn và dữ liệu
+**Environment variables** (optional):
 
-**Quy tắc dừng agent**
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGM_HOME` | `~/.agmag` | Where `agm.db` and `providers.toml` live |
+| `AGM_CODEX_DIR` · `AGM_CLAUDE_DIR` | `~/.codex/sessions` · `~/.claude/projects` | Where Codex / Claude Code logs are read from |
+| `AGM_OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | OpenCode database |
+| `AGM_AGY_DIR` | `~/.gemini/antigravity-cli` | Antigravity CLI root directory |
+| `AGM_CLAUDE_HOME` | `~` | Home directory containing `.claude/settings.json` (hook check for `manage`) |
+| `AGM_HC_BIN` · `AGM_AGY_BIN` | `hc` · `agy` | Path to the `hc` / `agy` executables |
 
-- **Codex và Claude không bao giờ bị dừng tự động.** Agent hay policy chỉ dừng được terminal mà `hc get` xác nhận là OpenCode (danh sách trắng); app chưa rõ → từ chối, đề nghị chuyển vào hộp thư của bạn.
-- Người gọi được xác định *không chắc thì coi là agent*: có `HC_TERMINAL_ID` mà không đọc được terminal, terminal là app agent, hoặc không có TTY → agent.
-- Dừng Codex/Claude: phải gõ `y` tại terminal; `--yes` không áp dụng cho chúng.
+## 11. Safety and data
 
-**Dữ liệu**
+**Rules for stopping agents**
 
-- agm **chỉ đọc** log của Claude/Codex và `opencode.db` (chỉ hai bảng phiên/tin nhắn — không bao giờ đọc bảng chứa thông tin đăng nhập). agm không ghi vào thư mục của các công cụ đó.
-- Mọi thứ agm lưu nằm ở `~/.agmag/agm.db` trên máy bạn: token, hạn mức, tóm tắt ≤ 200 ký tự mỗi lượt, tin nhắn qua `agm send`, hộp thư, nhật ký can thiệp. Không gửi đi đâu.
+- **Codex and Claude are never stopped automatically** — not even during rotation. Agents and policy can only stop terminals that `hc get` confirms are OpenCode (allow-list); unknown apps → refused, with a suggestion routed to your inbox.
+- The caller is classified as *agent when in doubt*: `HC_TERMINAL_ID` set but terminal unreadable, the terminal is an agent app, or no TTY → agent.
+- Stopping Codex/Claude: you must type `y` at the terminal; `--yes` doesn't apply to them.
+- `agm manage` and `agm cleanup` can only be run by the user and always require confirmation.
 
-## 11. Giới hạn đã biết
+**Data**
 
-- Phiên chạy trong HERDR TUI (app) được đo token qua log, nhưng chỉ terminal của **herdr-core** mới can thiệp được.
-- Token của `agy` ngoài `antigravity-cli` (ví dụ phiên IDE không ghi `transcript.jsonl`) chỉ đo được qua `agm ask`.
-- Hạn mức ChatGPT do OpenCode tiêu không có trong log; agm thấy gián tiếp qua lần ghi `rate_limits` kế tiếp của Codex.
-- Ngân sách theo provider chỉ cảnh báo, chưa chặn `spawn` (agm chưa biết template dùng provider nào).
-- Agent có TTY, tự xóa `HC_TERMINAL_ID` rồi tự gõ `y` về lý thuyết vẫn được coi là người dùng (agm không kiểm cây tiến trình cha).
-- `agm tui` là bảng vẽ lại theo chu kỳ + dòng lệnh, chưa có điều hướng bằng phím.
+- agm **only reads** Claude/Codex logs, agy's `transcript.jsonl` + `conversation_summaries.db`, and `opencode.db` (only the two session/message tables — never the table holding credentials). Those tools' databases are opened `READ_ONLY`.
+- Outside `~/.agmag/`, agm writes in only three places: the `statusLine` in `~/.claude/settings.json` (when you run `agm hook install`), a `.agents/handoff/` line in the repo's `info/exclude` (when rotating a managed Claude/Codex session; the hand-off file itself is written by the agent), and the `agmag-ask` temp directory for `agm ask`.
+- Everything agm stores lives in `~/.agmag/agm.db` on your machine: tokens, quotas, ≤ 200-character summaries per turn, messages sent via `agm send`, the inbox, the intervention log. Nothing is sent anywhere.
 
-## 12. Phát triển
+## 12. Known limitations
+
+- Sessions running in the HERDR APP are metered via logs, but only **herdr-core** terminals can be intervened on.
+- agy tokens outside `antigravity-cli` (e.g. IDE sessions that don't write `transcript.jsonl`) can only be measured via `agm ask`.
+- ChatGPT quota consumed by OpenCode isn't in any log; agm sees it indirectly via Codex's next `rate_limits` record.
+- Provider budgets only warn; they don't block `spawn` yet (agm doesn't know which provider a template uses).
+- Claude/Codex hand-off is a convention, not a write lock on the old session — if you keep typing in the old session, both may edit the same files.
+- An agent with a TTY that clears `HC_TERMINAL_ID` and types `y` itself would theoretically be treated as the user (agm doesn't inspect the parent process tree).
+- `agm tui` is a periodically redrawn panel + command line; no keyboard navigation yet.
+
+## 13. Development
 
 ```powershell
-cargo test                                    # ~160 test
+cargo test                                    # ~190 tests
 cargo clippy --all-targets
-python -I tools/argon_review.py               # nhờ Gemini Argon (qua agy) review theo nhóm mô-đun
-python -I tools/sanitize_fixture.py <log.jsonl> <fixture.jsonl>   # làm sạch log thật thành fixture
+python -I tools/argon_review.py               # Gemini Argon (via agy) review per module group
+python -I tools/sanitize_fixture.py <log.jsonl> <fixture.jsonl>   # sanitize a real log into a fixture
 ```
 
-| Thư mục / tệp | Nội dung |
+| Path | Contents |
 |---|---|
-| `src/parse/`, `src/ingest.rs`, `src/opencode.rs` | Đọc log Codex/Claude (jsonl) và OpenCode (SQLite) |
-| `src/store/` | CSDL SQLite (WAL) dùng chung giữa daemon và CLI |
-| `src/daemon.rs`, `src/hc.rs`, `src/correlate.rs` | Sự kiện herdr-core, client `hc`, ghép terminal ↔ phiên |
-| `src/actions.rs`, `src/policy.rs`, `src/rotation.rs` | Gửi/trả lời/sinh/dừng có bảo vệ, ngân sách, xoay vòng |
-| `src/hook.rs`, `src/ask.rs` | Hook statusline Claude, agy một lần |
-| `src/report.rs`, `src/dashboard.rs`, `src/main.rs`, `src/ops.rs`, `src/tui.rs` | Báo cáo, TUI, CLI |
-| `docs/superpowers/specs/` · `docs/superpowers/plans/` · `docs/reviews/` | Thiết kế, kế hoạch, báo cáo review |
-| `.agents/decisions/p0-research.md` | Kết quả xác minh định dạng log, sự kiện hc, statusline |
+| `src/parse/`, `src/ingest.rs`, `src/opencode.rs`, `src/agy.rs` | Read Codex/Claude/agy logs (jsonl) and OpenCode (SQLite) |
+| `src/store/` | SQLite database (WAL, schema v3) shared by daemon and CLI |
+| `src/daemon.rs`, `src/hc.rs`, `src/correlate.rs` | herdr-core events, `hc` client, terminal ↔ session matching |
+| `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/launch.rs`, `src/git.rs` | Guarded send/reply/spawn/kill, budgets, rotation & hand-off, `launch_spec`, git checks |
+| `src/hook.rs`, `src/ask.rs` | Claude statusline hook, one-shot agy |
+| `src/report.rs`, `src/dashboard.rs`, `src/main.rs`, `src/ops.rs`, `src/tui.rs` | Reports & statistics, TUI, CLI |
+| `docs/superpowers/specs/` · `docs/superpowers/plans/` · `docs/reviews/` | Design, plans, review reports |
+| `.agents/decisions/p0-research.md` | Verified log formats, hc events, statusline |
+| [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) · [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md) | Agent guide, herdr-core bot notes (Vietnamese) |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |

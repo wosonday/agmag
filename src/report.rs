@@ -402,6 +402,7 @@ pub fn usage_summary_with_offset(
         .map(|k| (k.clone(), CostAcc { usage: Usage::default(), billing: None, cost: Some(0.0) }))
         .collect();
 
+    let mut usd_unknown = [false; 3]; // 24h, hôm nay, tháng này
     let add_bucket = |b: &mut UsageBucket, u: &Usage, row_usd: Option<f64>| {
         b.usage.add(u);
         if let Some(c) = row_usd {
@@ -417,14 +418,14 @@ pub fn usage_summary_with_offset(
             (Some(Billing::Api), Some(p)) => Some(cost_usd(&usage, p)),
             _ => None,
         };
-        if ts_ms >= bounds.last_24h_start_ms {
-            add_bucket(&mut b24, &usage, row_cost);
-        }
-        if ts_ms >= bounds.today_start_ms {
-            add_bucket(&mut bday, &usage, row_cost);
-        }
-        if ts_ms >= bounds.month_start_ms {
-            add_bucket(&mut bmon, &usage, row_cost);
+        // Trả theo API mà chưa khai giá: tổng USD của ô không còn biết được (không số liệu giả).
+        let unpriced_api = billing == Some(Billing::Api) && row_cost.is_none();
+        let starts = [bounds.last_24h_start_ms, bounds.today_start_ms, bounds.month_start_ms];
+        for ((start, bucket), unknown) in starts.into_iter().zip([&mut b24, &mut bday, &mut bmon]).zip(usd_unknown.iter_mut()) {
+            if ts_ms >= start {
+                add_bucket(bucket, &usage, row_cost);
+                *unknown |= unpriced_api;
+            }
         }
         if ts_ms >= bounds.four_months_start_ms {
             let mkey = local_month_key(ts_ms, offset_at);
@@ -440,6 +441,12 @@ pub fn usage_summary_with_offset(
                     _ => None,
                 };
             }
+        }
+    }
+
+    for (bucket, unknown) in [&mut b24, &mut bday, &mut bmon].into_iter().zip(usd_unknown) {
+        if unknown {
+            bucket.api_usd = None;
         }
     }
 

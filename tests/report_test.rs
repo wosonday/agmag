@@ -192,6 +192,30 @@ fn summary_4_months_groups_local_days_and_checks_coverage() -> anyhow::Result<()
 }
 
 #[test]
+fn summary_api_usd_is_unknown_when_an_api_model_has_no_price() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let sid = store.session_id_for_path(Source::OpenCode, "opencode://s")?;
+    let mut cfg = Config::builtin();
+    cfg.providers.insert("openrouter".into(), ProviderCfg { billing: Billing::Api });
+    let model = |price| ModelCfg { provider: "openrouter".into(), context_window: None, price };
+    cfg.models.insert("api-priced".into(), model(Some(Price { input: 1.0, cache_read: 0.0, cache_write: 0.0, output: 0.0 })));
+    cfg.models.insert("api-unpriced".into(), model(None));
+    let now_ms = (report::days_from_civil(2026, 11, 18) * 86_400 + 12 * 3600) * 1000;
+    let mut utc = |_: i64| 0;
+    let rec = |key: &str, m: &str, u: Usage| UsageRecord { dedupe_key: key.into(), ts_ms: now_ms - 60_000, model: Some(m.into()), usage: u };
+
+    store.upsert_usage(sid, &rec("a", "api-priced", Usage { input_uncached: 1_000_000, ..Default::default() }))?;
+    let sum = report::usage_summary_with_offset(&store, &cfg, now_ms, &mut utc)?;
+    assert_eq!(sum.today.api_usd, Some(1.0));
+
+    // Một model trả theo API nhưng chưa khai giá: tổng USD không còn biết được — không hiện $1.00 như thể đủ.
+    store.upsert_usage(sid, &rec("b", "api-unpriced", usage(10)))?;
+    let sum = report::usage_summary_with_offset(&store, &cfg, now_ms, &mut utc)?;
+    assert_eq!((sum.last_24h.api_usd, sum.today.api_usd, sum.this_month.api_usd), (None, None, None));
+    Ok(())
+}
+
+#[test]
 fn cost_never_calls_human_pricing_for_subscription_or_missing_price() -> anyhow::Result<()> {
     let store = fixtures()?;
     let mut cfg = Config::builtin();

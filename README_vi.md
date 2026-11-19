@@ -131,7 +131,7 @@ agm tui
 │ t5  │ w-login-7-1 │ opencode    │ BLOCKED (question) │ login-7 │   340k │ 50% │
 └─────┴─────────────┴─────────────┴────────────────────┴─────────┴────────┴─────┘
 ── ◆ BUDGETS ─────────────────────────────────────────────────────
-  task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens
+  task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens soft
 ── ● INBOX ───────────────────────────────────────────────────────
   #1 [blocked] t5 — Chạy test?
 ── » RECENT MESSAGES ─────────────────────────────────────────────
@@ -148,11 +148,11 @@ Lệnh trong TUI (gõ rồi Enter):
 | `d 1` | Đóng mục 1 (không gõ gì vào terminal nào) |
 | `s t5 GIAO làm tiếp` | Gửi tin có ghi lại |
 | `c` · `c 1,2` · `c all` | Liệt kê / chọn phiên đã bàn giao để dọn (phải xác nhận `y`) |
-| `i t5` · `k t5` | Ngắt / dừng (dừng phải gõ thêm `y`) |
+| `i t5` · `k t5` | Ngắt / dừng (cả hai đều phải gõ thêm `y` xác nhận) |
 | `p off` | Tắt mọi hành động tự động |
 | `q` | Thoát |
 
-TUI cảnh báo **đỏ** khi phiên đã bàn giao và phiên kế nhiệm cùng chạy trên một thư mục, và tự backfill các tháng còn thiếu cho thống kê. TUI chỉ mở được bởi **bạn** ở terminal (agent không dùng được).
+TUI hiển thị bằng tiếng Anh có màu sắc ANSI, cảnh báo **đỏ** khi phiên đã bàn giao và phiên kế nhiệm cùng chạy trên một thư mục, và tự backfill các tháng còn thiếu cho thống kê. TUI chỉ mở được bởi **bạn** ở terminal (agent không dùng được).
 
 ## 5. Khi nào dùng `hc`, khi nào dùng `agm`
 

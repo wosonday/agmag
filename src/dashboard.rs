@@ -1,7 +1,7 @@
 //! Data snapshot and ANSI text rendering for `agm tui` (spec §5.8). Pure — no stdin/stdout I/O.
 
 use anyhow::Result;
-use comfy_table::{presets::UTF8_FULL_CONDENSED, Attribute, Cell, CellAlignment, Color, Table};
+use comfy_table::{presets::UTF8_FULL_CONDENSED, Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 
 use crate::actions::KINDS;
 use crate::config::Config;
@@ -174,14 +174,18 @@ fn month_abbr(mo: &str) -> &str {
 }
 
 fn section(icon: &str, title: &str, width: usize) -> String {
-    let prefix_len = 3 + icon.chars().count() + 1 + title.chars().count() + 1;
+    let clean_title = one_line(title, width.saturating_sub(10));
+    let prefix_len = 3 + icon.chars().count() + 1 + clean_title.chars().count() + 1;
     let line = "─".repeat(width.saturating_sub(1).saturating_sub(prefix_len));
-    format!("{CYAN}── {BOLD_CYAN}{icon} {title}{RESET} {GRAY}{line}{RESET}\n")
+    format!("{CYAN}── {BOLD_CYAN}{icon} {clean_title}{RESET} {GRAY}{line}{RESET}\n")
 }
 
 fn terminals_table(width: usize) -> Table {
     let mut t = Table::new();
-    t.load_style(UTF8_FULL_CONDENSED).enforce_styling().set_width(width as u16);
+    t.load_style(UTF8_FULL_CONDENSED)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .enforce_styling()
+        .set_width(width.saturating_sub(1) as u16);
     t.set_header(
         ["t", "name", "app", "status", "task", "tokens", "ctx"]
             .into_iter()
@@ -191,8 +195,9 @@ fn terminals_table(width: usize) -> Table {
 }
 
 fn app_cell(app: &str) -> Cell {
-    let c = Cell::new(app);
-    match app {
+    let clean = sanitize_one_line(app);
+    let c = Cell::new(&clean);
+    match clean.as_str() {
         "claude-code" => c.fg(Color::Magenta),
         "codex" => c.fg(Color::Green),
         "opencode" => c.fg(Color::Cyan),
@@ -202,16 +207,17 @@ fn app_cell(app: &str) -> Cell {
 }
 
 fn status_cell(status: &str) -> Cell {
-    let c = Cell::new(status);
-    if status.starts_with("BLOCKED") {
+    let clean = sanitize_one_line(status);
+    let c = Cell::new(&clean);
+    if clean.starts_with("BLOCKED") {
         c.fg(Color::Red).add_attribute(Attribute::Bold)
-    } else if status.contains("[HANDED OFF]") {
+    } else if clean.contains("[HANDED OFF]") {
         c.fg(Color::Yellow)
-    } else if status == "working" || status == "running" {
+    } else if clean == "working" || clean == "running" {
         c.fg(Color::Green).add_attribute(Attribute::Bold)
-    } else if status == "idle" || status == "done" {
+    } else if clean == "idle" || clean == "done" {
         c.fg(Color::Cyan)
-    } else if status == "exited" || status == "-" {
+    } else if clean == "exited" || clean == "-" {
         c.fg(Color::DarkGrey)
     } else {
         c.fg(Color::White)
@@ -219,7 +225,7 @@ fn status_cell(status: &str) -> Cell {
 }
 
 fn ctx_cell(ctx: Option<f64>) -> Cell {
-    let c = match ctx {
+    let c = match ctx.filter(|p| p.is_finite()) {
         Some(p) => {
             let cell = Cell::new(format!("{p:.0}%"));
             if p >= 70.0 {
@@ -236,8 +242,9 @@ fn ctx_cell(ctx: Option<f64>) -> Cell {
 }
 
 fn inbox_source_badge(source: &str) -> String {
-    let tag = format!("[{source}]");
-    match source {
+    let clean = sanitize_one_line(source);
+    let tag = format!("[{clean}]");
+    match clean.as_str() {
         "blocked" => paint(BOLD_RED, &tag),
         "budget" => paint(BOLD_YELLOW, &tag),
         "rotation" => paint(BRIGHT_MAGENTA, &tag),
@@ -247,8 +254,9 @@ fn inbox_source_badge(source: &str) -> String {
 }
 
 fn msg_kind_badge(kind: &str) -> String {
-    let tag = format!("[{kind}]");
-    match kind {
+    let clean = sanitize_one_line(kind);
+    let tag = format!("[{clean}]");
+    match clean.as_str() {
         "GIAO" => paint(BRIGHT_CYAN, &tag),
         "BÁO CÁO" => paint(BRIGHT_GREEN, &tag),
         "ĐẠT" => paint(BOLD_GREEN, &tag),
@@ -258,54 +266,107 @@ fn msg_kind_badge(kind: &str) -> String {
     }
 }
 
-fn render_header(s: &Snapshot) -> String {
-    let policy = if s.policy_on {
-        paint(BOLD_GREEN, "● POLICY ON")
-    } else {
-        paint(BOLD_RED, "○ POLICY OFF")
-    };
-    let blocked_cnt = s.terminals.iter().filter(|t| t.status.starts_with("BLOCKED")).count();
-    let term_noun = if s.terminals.len() == 1 { "terminal" } else { "terminals" };
-    let term_str = if blocked_cnt > 0 {
-        format!(
-            "{WHITE}{} {term_noun}{RESET} {}",
-            s.terminals.len(),
-            paint(BOLD_RED, &format!("({blocked_cnt} blocked)"))
-        )
-    } else {
-        paint(WHITE, &format!("{} {term_noun}", s.terminals.len()))
-    };
-    let inbox_str = if s.inbox.is_empty() {
-        paint(GRAY, "inbox 0")
-    } else {
-        paint(BOLD_YELLOW, &format!("inbox {}", s.inbox.len()))
-    };
-    let sep = paint(GRAY, " │ ");
-    format!(
-        " {}  {policy}{sep}{term_str}{sep}{inbox_str}{sep}{}\n",
-        paint(BOLD_CYAN, "◆ agmag"),
-        paint(GRAY, &s.usage_summary.offset_label),
-    )
-}
-
-fn wrap_styled_items(items: &[(usize, String)], sep: &str, indent: usize, max_width: usize) -> Vec<String> {
+fn wrap_styled_items(items: &[(usize, String)], sep: &str, sep_plain_len: usize, indent: usize, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
     let mut cur_len = indent;
     for (plain_len, styled) in items {
-        let add_len = if cur.is_empty() { *plain_len } else { 3 + *plain_len };
+        let add_len = if cur.is_empty() { *plain_len } else { sep_plain_len + *plain_len };
         if !cur.is_empty() && cur_len + add_len > max_width {
             lines.push(cur.join(sep));
             cur.clear();
             cur_len = indent;
         }
-        cur_len += if cur.is_empty() { *plain_len } else { 3 + *plain_len };
+        cur_len += if cur.is_empty() { *plain_len } else { sep_plain_len + *plain_len };
         cur.push(styled.as_str());
     }
     if !cur.is_empty() {
         lines.push(cur.join(sep));
     }
     lines
+}
+
+fn wrap_plain_words(text: &str, first_prefix: &str, cont_prefix: &str, max_width: usize) -> Vec<String> {
+    let clean = sanitize_one_line(text);
+    let mut out = Vec::new();
+    let mut cur = first_prefix.to_string();
+    let mut cur_len = first_prefix.chars().count();
+    let mut first_word = true;
+    for word in clean.split_whitespace() {
+        let wlen = word.chars().count();
+        let need = if first_word { wlen } else { 1 + wlen };
+        if !first_word && cur_len + need > max_width {
+            out.push(cur);
+            cur = format!("{cont_prefix}{word}");
+            cur_len = cont_prefix.chars().count() + wlen;
+        } else if first_word && cur_len + wlen > max_width {
+            let avail = max_width.saturating_sub(cur_len);
+            cur.push_str(&one_line(word, avail));
+            first_word = false;
+            cur_len = cur.chars().count();
+        } else {
+            if !first_word {
+                cur.push(' ');
+                cur_len += 1;
+            }
+            cur.push_str(word);
+            cur_len += wlen;
+            first_word = false;
+        }
+    }
+    if first_word || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn render_header(s: &Snapshot, width: usize) -> String {
+    let max_w = width.saturating_sub(1);
+    let policy_plain = if s.policy_on { "● POLICY ON" } else { "○ POLICY OFF" };
+    let policy_styled = if s.policy_on {
+        paint(BOLD_GREEN, policy_plain)
+    } else {
+        paint(BOLD_RED, policy_plain)
+    };
+    let brand_and_policy = (
+        7 + 2 + policy_plain.chars().count(), // "◆ agmag  ● POLICY ON"
+        format!("{}  {policy_styled}", paint(BOLD_CYAN, "◆ agmag")),
+    );
+
+    let blocked_cnt = s.terminals.iter().filter(|t| t.status.starts_with("BLOCKED")).count();
+    let term_noun = if s.terminals.len() == 1 { "terminal" } else { "terminals" };
+    let term_item = if blocked_cnt > 0 {
+        let blk_txt = format!("({blocked_cnt} blocked)");
+        let plain = format!("{} {term_noun} {blk_txt}", s.terminals.len());
+        (
+            plain.chars().count(),
+            format!("{} {}", paint(WHITE, &format!("{} {term_noun}", s.terminals.len())), paint(BOLD_RED, &blk_txt)),
+        )
+    } else {
+        let plain = format!("{} {term_noun}", s.terminals.len());
+        (plain.chars().count(), paint(WHITE, &plain))
+    };
+
+    let inbox_plain = format!("inbox {}", s.inbox.len());
+    let inbox_styled = if s.inbox.is_empty() {
+        paint(GRAY, &inbox_plain)
+    } else {
+        paint(BOLD_YELLOW, &inbox_plain)
+    };
+    let offset_plain = sanitize_one_line(&s.usage_summary.offset_label);
+
+    let sep = paint(GRAY, " │ ");
+    let items = [
+        brand_and_policy,
+        term_item,
+        (inbox_plain.chars().count(), inbox_styled),
+        (offset_plain.chars().count(), paint(GRAY, &offset_plain)),
+    ];
+    let mut out = String::new();
+    for line in wrap_styled_items(&items, &sep, 3, 1, max_w) {
+        out += &format!(" {line}\n");
+    }
+    out
 }
 
 fn render_footer(width: usize) -> String {
@@ -333,7 +394,7 @@ fn render_footer(width: usize) -> String {
         (plain_len, cmd(k, args))
     })
     .collect();
-    let lines = wrap_styled_items(&items, &sep, 5, width.saturating_sub(1));
+    let lines = wrap_styled_items(&items, &sep, 3, 5, width.saturating_sub(1));
     let rule = paint(GRAY, &"─".repeat(width.saturating_sub(1)));
     let mut out = format!("{rule}\n");
     for (idx, l) in lines.into_iter().enumerate() {
@@ -345,11 +406,14 @@ fn render_footer(width: usize) -> String {
 
 /// Full-screen ANSI text render (includes section headers and command bar).
 pub fn render(s: &Snapshot, width: usize) -> String {
-    let mut out = render_header(s);
+    let max_w = width.saturating_sub(1);
+    let mut out = render_header(s, width);
 
     out += &section("◈", "PLAN QUOTA", width);
     if s.quota.is_empty() {
-        out += &format!("  {}\n", paint(GRAY, "(no quota data — run `agm scan`; Claude needs `agm hook install`)"));
+        for l in wrap_plain_words("(no quota data — run `agm scan`; Claude needs `agm hook install`)", "  ", "  ", max_w) {
+            out += &format!("{}\n", paint(GRAY, &l));
+        }
     }
     for q in &s.quota {
         let win = if q.window_minutes % 1440 == 0 {
@@ -363,28 +427,48 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             let left = q.resets_at_s - s.now_s;
             paint(CYAN, &format!("resets in {}h{:02}m", left / 3600, left % 3600 / 60))
         };
-        let col = pct_color(q.used_percent);
-        let pct_str = paint(col, &format!("{:>3.0}%", q.used_percent));
-        out += &format!(
-            "  {} {}  {} {pct_str}  {reset}\n",
-            paint(WHITE, &format!("{:<8}", q.provider)),
-            paint(CYAN, &format!("{:>3}", win)),
-            colored_bar(q.used_percent, col),
-        );
+        let prov = one_line(&q.provider, 8);
+        if q.used_percent.is_finite() {
+            let col = pct_color(q.used_percent);
+            let pct_str = paint(col, &format!("{:>3.0}%", q.used_percent));
+            out += &format!(
+                "  {} {}  {} {pct_str}  {reset}\n",
+                paint(WHITE, &format!("{:<8}", prov)),
+                paint(CYAN, &format!("{:>3}", win)),
+                colored_bar(q.used_percent, col),
+            );
+        } else {
+            out += &format!(
+                "  {} {}  {} {}  {reset}\n",
+                paint(WHITE, &format!("{:<8}", prov)),
+                paint(CYAN, &format!("{:>3}", win)),
+                paint(GRAY, "··········"),
+                paint(GRAY, "   ?"),
+            );
+        }
     }
 
     out += &section("▪", &format!("USAGE ({})", s.usage_summary.offset_label), width);
-    let fmt_bucket = |label: &str, b: &UsageBucket| -> String {
-        let usd = b.api_usd.map(|u| paint(BRIGHT_GREEN, &format!(" (${u:.2})"))).unwrap_or_default();
-        format!("{} {}{usd}", paint(CYAN, label), paint(WHITE, &tokens(b.usage.total())))
+    let fmt_bucket = |label: &str, b: &UsageBucket| -> (usize, String) {
+        let tok = tokens(b.usage.total());
+        let usd_plain = b.api_usd.map(|u| format!(" (${u:.2})")).unwrap_or_default();
+        let usd_styled = if usd_plain.is_empty() {
+            String::new()
+        } else {
+            paint(BRIGHT_GREEN, &usd_plain)
+        };
+        let plain_len = label.chars().count() + 1 + tok.chars().count() + usd_plain.chars().count();
+        (plain_len, format!("{} {}{usd_styled}", paint(CYAN, label), paint(WHITE, &tok)))
     };
     let sep = paint(GRAY, " │ ");
-    out += &format!(
-        "  {}{sep}{}{sep}{}\n",
+    let bucket_items = [
         fmt_bucket("24h", &s.usage_summary.last_24h),
         fmt_bucket("Today", &s.usage_summary.today),
         fmt_bucket("This month", &s.usage_summary.this_month),
-    );
+    ];
+    for line in wrap_styled_items(&bucket_items, &sep, 3, 2, max_w) {
+        out += &format!("  {line}\n");
+    }
 
     let max_m = s.usage_summary.recent_months.iter().map(|m| m.usage.total()).max().unwrap_or(0);
     let cross_year = s
@@ -403,7 +487,7 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             let lbl = match ym.as_slice() {
                 [y, mo] if cross_year && y.len() >= 4 => format!("{}'{}", month_abbr(mo), &y[2..]),
                 [_, mo] => month_abbr(mo).to_string(),
-                _ => m.key.clone(),
+                _ => sanitize_one_line(&m.key),
             };
             let val = m.usage.total();
             let tok = tokens(val);
@@ -420,44 +504,53 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             (plain_len, styled)
         })
         .collect();
-    for line in wrap_styled_items(&month_pairs, &sep, 2, width.saturating_sub(1)) {
+    for line in wrap_styled_items(&month_pairs, &sep, 3, 2, max_w) {
         out += &format!("  {line}\n");
     }
     if s.usage_summary.incomplete_coverage {
-        out += &format!(
-            "  {}\n",
-            paint(
-                BRIGHT_YELLOW,
-                &format!("! incomplete 4-month coverage — run `agm scan --since {}`", s.usage_summary.four_months_start_day),
-            )
+        let msg = format!(
+            "! incomplete 4-month coverage — run `agm scan --since {}`",
+            s.usage_summary.four_months_start_day
         );
+        for l in wrap_plain_words(&msg, "  ", "    ", max_w) {
+            out += &format!("{}\n", paint(BRIGHT_YELLOW, &l));
+        }
     }
 
     out += &section("▸", "TERMINALS", width);
     for (old, new, cwd) in &s.live_rotation_pairs {
-        out += &format!(
-            "{BOLD_RED}  ! WARNING: {old} (handed off) and {new} are both running in {cwd} — avoid conflicting edits; type 'c' to clean up{RESET}\n"
+        let msg = format!(
+            "! WARNING: {} (handed off) and {} are both running in {} — avoid conflicting edits; type 'c' to clean up",
+            sanitize_one_line(old),
+            sanitize_one_line(new),
+            sanitize_one_line(cwd),
         );
+        for l in wrap_plain_words(&msg, "  ", "    ", max_w) {
+            out += &format!("{BOLD_RED}{l}{RESET}\n");
+        }
     }
     if s.terminals.is_empty() {
         out += &format!("  {}\n", paint(GRAY, "(no active terminals)"));
     } else {
         let mut t = terminals_table(width);
         for v in &s.terminals {
+            let addr = sanitize_one_line(&v.address);
             let addr_cell = if v.status.starts_with("BLOCKED") {
-                Cell::new(&v.address).fg(Color::Red).add_attribute(Attribute::Bold)
+                Cell::new(addr).fg(Color::Red).add_attribute(Attribute::Bold)
             } else {
-                Cell::new(&v.address).fg(Color::White)
+                Cell::new(addr).fg(Color::White)
             };
-            let name_cell = if v.name.is_empty() {
+            let name_clean = sanitize_one_line(&v.name);
+            let name_cell = if name_clean.is_empty() {
                 Cell::new("-").fg(Color::DarkGrey)
             } else {
-                Cell::new(&v.name).fg(Color::White)
+                Cell::new(name_clean).fg(Color::White)
             };
-            let task_cell = if v.task.is_empty() {
+            let task_clean = sanitize_one_line(&v.task);
+            let task_cell = if task_clean.is_empty() {
                 Cell::new("-").fg(Color::DarkGrey)
             } else {
-                Cell::new(&v.task).fg(Color::Cyan)
+                Cell::new(task_clean).fg(Color::Cyan)
             };
             let tok_cell = match v.tokens {
                 Some(n) => Cell::new(tokens(n)).fg(Color::White),
@@ -479,27 +572,37 @@ pub fn render(s: &Snapshot, width: usize) -> String {
 
     out += &section("◆", "BUDGETS", width);
     if s.budgets.is_empty() {
-        out += &format!("  {}\n", paint(GRAY, "(none set — agm budget set task:<ID> --soft … --hard …)"));
+        for l in wrap_plain_words("(none set — agm budget set task:<ID> --soft … --hard …)", "  ", "  ", max_w) {
+            out += &format!("{}\n", paint(GRAY, &l));
+        }
     }
+    let scope_w = if width >= 76 { 24 } else { 14 };
     for b in &s.budgets {
-        let pct = b.value.filter(|_| b.hard > 0.0).map(|v| v / b.hard * 100.0);
-        let (bar_col, flag) = match b.value {
+        let pct = b
+            .value
+            .filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0)
+            .map(|v| v / b.hard * 100.0);
+        let (bar_col, flag) = match b.value.filter(|v| v.is_finite()) {
             Some(v) if v >= b.hard => (BRIGHT_RED, paint(BOLD_RED, " HARD")),
             Some(v) if v >= b.soft => (BRIGHT_YELLOW, paint(BRIGHT_YELLOW, " soft")),
             _ => (BRIGHT_GREEN, String::new()),
         };
-        // Missing value → "?" (never render a fake 0%). Percent budgets keep decimals.
-        let num = |v: f64| if b.unit == "tokens" { tokens(v as u64) } else { format!("{v:.1}") };
+        // Missing or non-finite value → "?" (never render a fake 0%). Percent budgets keep decimals.
+        let num = |v: f64| if b.unit == "tokens" { tokens(v.max(0.0) as u64) } else { format!("{v:.1}") };
         let bar_str = pct.map(|p| colored_bar(p, bar_col)).unwrap_or_else(|| paint(GRAY, "··········"));
-        let pct_str = pct
-            .map(|p| paint(bar_col, &format!("{p:>3.0}%")))
-            .unwrap_or_else(|| paint(GRAY, "   ?"));
+        let pct_str = match pct {
+            Some(p) if p > 999.0 => paint(bar_col, ">999%"),
+            Some(p) => paint(bar_col, &format!("{p:>3.0}%")),
+            None => paint(GRAY, "   ?"),
+        };
+        let scope_padded = format!("{:<width$}", one_line(&b.scope, scope_w), width = scope_w);
+        let val_str = b.value.filter(|v| v.is_finite()).map(num).unwrap_or_else(|| "?".into());
+        let hard_str = if b.hard.is_finite() { num(b.hard) } else { "?".into() };
+        let unit = sanitize_one_line(&b.unit);
         out += &format!(
-            "  {} {bar_str} {pct_str}  {} / {} {}{flag}\n",
-            paint(WHITE, &format!("{:<24}", b.scope)),
-            b.value.map(num).unwrap_or_else(|| "?".into()),
-            num(b.hard),
-            paint(GRAY, &b.unit),
+            "  {} {bar_str} {pct_str}  {val_str} / {hard_str} {}{flag}\n",
+            paint(WHITE, &scope_padded),
+            paint(GRAY, &unit),
         );
     }
 
@@ -509,14 +612,17 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += &format!("  {}\n", paint(GRAY, "(empty)"));
     }
     for i in &s.inbox {
-        let term = i.terminal.as_deref().unwrap_or("-");
+        let term = sanitize_one_line(i.terminal.as_deref().unwrap_or("-"));
+        let src = sanitize_one_line(&i.source);
+        let prefix_len = 2 + format!("#{}", i.id).chars().count() + 1 + src.chars().count() + 2 + 1 + term.chars().count() + 3;
+        let max_text = max_w.saturating_sub(prefix_len).min(200);
         out += &format!(
             "  {} {} {} {} {}\n",
             paint(BOLD_YELLOW, &format!("#{}", i.id)),
-            inbox_source_badge(&i.source),
-            paint(WHITE, term),
+            inbox_source_badge(&src),
+            paint(WHITE, &term),
             paint(GRAY, "—"),
-            one_line(&i.text, 200),
+            one_line(&i.text, max_text),
         );
     }
 
@@ -525,29 +631,80 @@ pub fn render(s: &Snapshot, width: usize) -> String {
         out += &format!("  {}\n", paint(GRAY, "(no messages)"));
     }
     for m in &s.messages {
-        let st_col = match m.status.as_str() {
+        let from = sanitize_one_line(&m.from);
+        let to = sanitize_one_line(&m.to);
+        let kind = sanitize_one_line(&m.kind);
+        let status = sanitize_one_line(&m.status);
+        let st_col = match status.as_str() {
             "delivered" | "sent" => BRIGHT_GREEN,
             "failed" => BRIGHT_RED,
             "queued" => BRIGHT_YELLOW,
             _ => GRAY,
         };
+        let fixed_len = 2
+            + from.chars().count()
+            + 3
+            + to.chars().count()
+            + 2
+            + kind.chars().count()
+            + 2
+            + 2
+            + 2
+            + status.chars().count()
+            + 2;
+        let max_text = max_w.saturating_sub(fixed_len).min(60);
         out += &format!(
             "  {} {} {}  {}  {}  {}\n",
-            paint(CYAN, &m.from),
+            paint(CYAN, &from),
             paint(GRAY, "→"),
-            paint(WHITE, &m.to),
-            msg_kind_badge(&m.kind),
-            one_line(&m.text, 60),
-            paint(st_col, &format!("({})", m.status)),
+            paint(WHITE, &to),
+            msg_kind_badge(&kind),
+            one_line(&m.text, max_text),
+            paint(st_col, &format!("({status})")),
         );
     }
     out += &render_footer(width);
     out
 }
 
-/// Single-line display: replace newlines and control/ANSI characters with spaces so the TUI layout stays intact.
+/// Strip ANSI CSI escapes and replace newlines/control chars with spaces.
+fn sanitize_one_line(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for ch in chars.by_ref() {
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else if c.is_control() {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Single-line display bounded to `max` characters so the TUI layout never overflows.
 fn one_line(s: &str, max: usize) -> String {
-    s.chars().map(|c| if c.is_control() { ' ' } else { c }).take(max).collect()
+    let clean = sanitize_one_line(s);
+    if max == 0 {
+        return String::new();
+    }
+    if clean.chars().count() <= max {
+        clean
+    } else if max == 1 {
+        "…".into()
+    } else {
+        let mut out: String = clean.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

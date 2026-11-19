@@ -240,14 +240,14 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
         assert!(plain.contains("Mar'26"), "missing 5th month label at width {w}:\n{plain}");
         assert!(plain.contains("reset ready"), "missing reset ready at width {w}:\n{plain}");
         assert!(plain.contains("HARD"), "missing HARD badge at width {w}:\n{plain}");
+        assert!(plain.contains(">999%"), "missing >999% cap for extreme budget at width {w}:\n{plain}");
+        assert!(!plain.contains("NaN%"), "NaN leaked into output at width {w}:\n{plain}");
         for line in plain.lines() {
-            if line.starts_with("──") || line.starts_with("cmd:") || line.starts_with("     ") {
-                assert!(
-                    line.chars().count() < w,
-                    "line exceeded width-1 ({w}): {} chars: {line}",
-                    line.chars().count()
-                );
-            }
+            assert!(
+                line.chars().count() < w,
+                "line exceeded width-1 ({w}): {} chars: {line}",
+                line.chars().count()
+            );
         }
     }
     Ok(())

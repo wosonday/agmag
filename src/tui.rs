@@ -78,12 +78,13 @@ pub fn run(
         }
     });
     let hc = HcCli::default();
-    // Identify caller once, fail-closed. Agents (or piped stdin) cannot kill/interrupt via the TUI.
+    // Identify caller once, fail-closed. Agents (or piped stdin/stdout) cannot kill/interrupt via the TUI.
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let who = actions::detect_caller(
         store,
         &hc,
         crate::ops::hc_terminal().as_deref(),
-        std::io::stdin().is_terminal(),
+        tty,
         false,
     );
     if !matches!(who, Caller::User { .. }) {

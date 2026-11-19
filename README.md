@@ -133,7 +133,7 @@ agm tui
 │ t5  │ w-login-7-1 │ opencode    │ BLOCKED (question) │ login-7 │   340k │ 50% │
 └─────┴─────────────┴─────────────┴────────────────────┴─────────┴────────┴─────┘
 ── ◆ BUDGETS ─────────────────────────────────────────────────────
-  task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens
+  task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens soft
 ── ● INBOX ───────────────────────────────────────────────────────
   #1 [blocked] t5 — Chạy test?
 ── » RECENT MESSAGES ─────────────────────────────────────────────
@@ -150,7 +150,7 @@ TUI commands (type, then Enter):
 | `d 1` | Dismiss item 1 (types nothing anywhere) |
 | `s t5 GIAO continue` | Send a recorded message |
 | `c` · `c 1,2` · `c all` | List / select handed-off sessions to clean up (requires `y` confirmation) |
-| `i t5` · `k t5` | Interrupt / kill (kill requires an extra `y`) |
+| `i t5` · `k t5` | Interrupt / kill (both require an extra `y` confirmation) |
 | `p off` | Disable all automatic actions |
 | `q` | Quit |
 

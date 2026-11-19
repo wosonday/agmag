@@ -32,6 +32,15 @@ impl Git for FakeGit {
 
 const MIN: i64 = 60_000;
 
+fn interactive_hc(app: &str, status: &str) -> FakeHc {
+    FakeHc {
+        get_responses: [("t1".into(), serde_json::json!({
+            "address":"t1", "state":"live", "status":{"app":app,"state":status}
+        }))].into(),
+        ..Default::default()
+    }
+}
+
 fn setup(app: &str, status: &str) -> Result<Store> {
     let store = Store::open_in_memory()?;
     store.upsert_terminal(&TerminalRow {
@@ -252,7 +261,7 @@ fn claude_managed_rotation_done_status_handoff_no_kill_and_inherits_launch() -> 
     store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: 160_000, window_tokens: Some(200_000) })?;
     store.link_terminal("t1", sid, "hook")?;
 
-    let hc = FakeHc::default();
+    let hc = interactive_hc("claude-code", "done");
     let git = FakeGit::default();
     // Tick 1: phát hiện 80% >= 70%, gửi yêu cầu bàn giao với if_idle=false (vì status="done").
     rotation::tick(&store, &Config::builtin(), &hc, &git, 1_000)?;
@@ -353,7 +362,7 @@ fn codex_rotation_continues_if_old_exits_after_handoff_ready_and_links_by_tag() 
     store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: 380_000, window_tokens: Some(475_000) })?;
     store.link_terminal("t1", sid, "auto")?;
 
-    let hc = FakeHc::default();
+    let hc = interactive_hc("codex", "idle");
     let git = FakeGit::default();
     rotation::tick(&store, &Config::builtin(), &hc, &git, 1_000)?;
     assert_eq!(state(&store), "requested");
@@ -413,7 +422,7 @@ fn manual_rotate_is_not_cancelled_below_ctx_warn() -> Result<()> {
     store.link_terminal("t1", sid, "auto")?;
 
     assert!(rotation::start(&store, "t1", None, true, 1_000)?);
-    let hc = FakeHc::default();
+    let hc = interactive_hc("codex", "idle");
     rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 2_000)?;
     assert_eq!(state(&store), "requested");
     assert_eq!(hc.calls.borrow().len(), 1);
@@ -473,7 +482,7 @@ fn requested_continues_when_handoff_file_ready_even_if_old_exited() -> Result<()
     store.set_terminal_status("t1", Some("idle"), None, None, 1, 0)?;
 
     assert!(rotation::start(&store, "t1", None, true, 1_000)?);
-    let hc = FakeHc::default();
+    let hc = interactive_hc("codex", "idle");
     rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 1_500)?;
     assert_eq!(state(&store), "requested");
 

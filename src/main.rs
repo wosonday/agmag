@@ -153,6 +153,7 @@ enum Cmd {
         targets: Vec<String>,
         #[arg(long)]
         all: bool,
+        /// Compatibility flag; cleanup still requires one typed confirmation
         #[arg(long)]
         yes: bool,
     },

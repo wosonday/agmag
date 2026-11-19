@@ -283,7 +283,7 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
     Ok(())
 }
 
-pub fn cleanup(store: &Store, targets: &[String], all: bool, yes: bool, json_out: bool, now: i64) -> Result<()> {
+pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_out: bool, now: i64) -> Result<()> {
     let candidates = eligible_cleanups(store)?;
     if json_out && targets.is_empty() && !all {
         return print_json(&candidates);
@@ -333,7 +333,9 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, yes: bool, json_out
         print_cleanup_candidates(&selected);
     }
     let prompt = format!("Xác nhận dọn {} phiên cũ đã bàn giao?", selected.len());
-    let c = caller(store, yes, Some(&prompt))?;
+    // Batch cleanup always requires one typed confirmation, including --yes.
+    // A cached app classification must never authorize a protected live target.
+    let c = caller(store, false, Some(&prompt))?;
     if !matches!(c, Caller::User { confirmed: true }) {
         println!("Đã hủy.");
         return Ok(());

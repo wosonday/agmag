@@ -13,6 +13,7 @@ pub struct FakeHc {
     /// app mà `hc get` báo cho từng terminal (status.app); thiếu → không có app.
     pub apps: Vec<(String, String)>,
     pub fail_get: bool,
+    pub get_responses: std::collections::BTreeMap<String, Value>,
 }
 
 impl Hc for FakeHc {
@@ -22,6 +23,9 @@ impl Hc for FakeHc {
     fn get(&self, t: &str) -> Result<Value> {
         if self.fail_get {
             bail!("not_found");
+        }
+        if let Some(value) = self.get_responses.get(t) {
+            return Ok(value.clone());
         }
         match self.apps.iter().find(|(a, _)| a == t) {
             Some((_, app)) => Ok(json!({"address": t, "reported": true, "status": {"app": app, "state": "idle"}})),

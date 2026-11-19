@@ -47,3 +47,12 @@
 - `cargo clippy --offline --all-targets -- -D warnings`: clean.
 - Remaining Opus notes (height/scrollback, bidi/Cf, terminal width/VT differences, confirmation expiry) are nonblocking limitations, not silently claimed fixed.
 - Source correction SHA will receive a final short Opus follow-up before delivery.
+
+## 2026-11-19 · final gate and checkpoint
+- Final product correction: `bf01c9a`; Opus explicitly returned PASS on that SHA with no Critical/Major must-fix in supplied code.
+- Preserved scope and nonblocking limitations in `.agents/reviews/tui-english-color-opus-2.md`.
+- Copilot handoff report now ready subject to exact-SHA/dependency/authorization rules; no integrator was launched and no merge occurred.
+- Final tests: 202/202 offline locked; strict Clippy clean. No product file changes after Opus review.
+- Protected user files on main remain modified/untracked only by their owner, not this work. Original agy candidate worktree was not edited.
+- Durable context checkpoint: task, engineering/Opus reviews and `.agents/reports/tui-english-color-copilot.md` contain all state needed by a fresh session. Current tools expose no session compact action; no other agent is killed.
+- Report delivery to user inbox will reference the final immutable handoff head and corrected product `bf01c9a`, not the unfixed original `7e20645d`.

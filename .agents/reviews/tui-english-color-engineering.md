@@ -21,10 +21,10 @@ All three were reproduced by new tests before fixes.
 - No changes to caller detection, confirmation, policy toggling, action targets, stored messages or backend actions.
 
 ## Audit
-- `cargo test --offline --locked`: 200 passed, 0 failed.
+- `cargo test --offline --locked`: 202 passed, 0 failed after final padding/confirmation follow-ups.
 - `cargo clippy --offline --all-targets -- -D warnings`: passed, no warnings.
-- Added 6 tests covering Unicode/graphemes, long paths/prefixes, malicious note escapes, SGR/reset and cell widths at 60/80/110/200.
-- Independent review of final correction commit: pending.
+- Added 8 tests covering Unicode/graphemes, long paths/prefixes, malicious note escapes, SGR/reset, visible soft/HARD badges/confirmation guidance and cell widths at 60/80/110/200.
+- Independent Opus review of final correction `bf01c9a`: PASS; see `.agents/reviews/tui-english-color-opus-2.md`.
 
 ## Scope limits
 - No real interactive/destructive TTY trial.

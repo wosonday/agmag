@@ -109,6 +109,21 @@ fn provider_quota_budget() -> Result<()> {
 }
 
 #[test]
+fn provider_budget_ignores_quota_whose_window_has_reset() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    // 96% used, window resets at t = 9 s; nothing newer has been logged since.
+    store.insert_quota(&QuotaSnapshot { provider: "codex".into(), ts_ms: 1, windows: vec![QuotaWindow { window_minutes: 10080, used_percent: 96.0, resets_at_s: 9 }] })?;
+    budget(&store, "provider:codex:10080", "percent", 80.0, 95.0, "notify");
+    let b = store.budgets()?.into_iter().next().unwrap();
+    assert_eq!(policy::budget_value(&store, &b, 5_000)?, Some(96.0), "before the reset the logged value counts");
+    assert_eq!(policy::budget_value(&store, &b, 10_000)?, Some(0.0), "after the reset the old 96% must not count");
+    policy::tick(&store, &Config::builtin(), &hc, 10_000)?;
+    assert!(store.inbox(true)?.is_empty(), "no budget alarm from a stale, already-reset window");
+    Ok(())
+}
+
+#[test]
 fn ctx_warn_at_50() -> Result<()> {
     let store = Store::open_in_memory()?;
     let hc = FakeHc::default();

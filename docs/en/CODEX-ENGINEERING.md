@@ -30,7 +30,7 @@
   ```powershell
   agm quota
   ```
-- **Recommended threshold:** if `codex 7d` exceeds **70–80%**, stop assigning `gpt-6.1-sol` to routine tasks—route `worker-strong` to strong **OpenRouter / Ollama Cloud** models and reserve Codex for genuine blockers.
+- **Recommended threshold:** if `codex 7d` has **< 20–30% left** (over 70–80% used), stop assigning `gpt-6.1-sol` to routine tasks—route `worker-strong` to strong **OpenRouter / Ollama Cloud** models and reserve Codex for genuine blockers.
 - Note in `agm`: quota consumed by OpenCode via `openai/gpt-6.1-sol` does not appear in OpenCode's own DB; it surfaces on the next `rate_limits` entry written by Codex.
 
 ## 4. Worktree & Git Discipline

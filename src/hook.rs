@@ -50,7 +50,8 @@ pub fn statusline(store: &Store, input: &Value, hc_terminal: Option<&str>, now_m
     }
     for w in &windows {
         let label = if w.window_minutes == 300 { "5h" } else { "7d" };
-        parts.push(format!("{label} {:.0}%", w.used_percent));
+        // Hạn mức gói: hiển thị phần còn lại (ctx vẫn là phần đã dùng).
+        parts.push(format!("{label} {:.0}% left", (100.0 - w.used_percent).clamp(0.0, 100.0)));
     }
     Ok(parts.join(" · "))
 }

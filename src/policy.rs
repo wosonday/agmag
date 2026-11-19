@@ -26,24 +26,27 @@ pub fn task_tokens(store: &Store, task: &str) -> Result<u64> {
     Ok(n.max(0) as u64)
 }
 
-fn provider_percent(store: &Store, provider: &str, window: u32) -> Result<Option<f64>> {
-    Ok(store
+/// % ĐÃ DÙNG của gói (đơn vị của ngân sách `provider:`). Cửa sổ đã reset mà chưa có số mới → 0,
+/// để số cũ (vd 96%) không tiếp tục kích hoạt ngưỡng sau khi hạn mức đã đầy lại.
+fn provider_percent(store: &Store, provider: &str, window: u32, now_ms: i64) -> Result<Option<f64>> {
+    let row: Option<(f64, i64)> = store
         .conn()
         .query_row(
-            "SELECT used_percent FROM quota WHERE provider = ?1 AND window_minutes = ?2 ORDER BY ts_ms DESC LIMIT 1",
+            "SELECT used_percent, resets_at_s FROM quota WHERE provider = ?1 AND window_minutes = ?2 ORDER BY ts_ms DESC LIMIT 1",
             params![provider, window],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .optional()?)
+        .optional()?;
+    Ok(row.map(|(used, resets_at_s)| crate::report::effective_used_percent(used, resets_at_s, now_ms / 1000)))
 }
 
 /// Giá trị hiện tại của một ngân sách; None nếu chưa có số liệu.
-pub fn budget_value(store: &Store, b: &BudgetRow) -> Result<Option<f64>> {
+pub fn budget_value(store: &Store, b: &BudgetRow, now_ms: i64) -> Result<Option<f64>> {
     let parts: Vec<&str> = b.scope.split(':').collect();
     match parts.as_slice() {
         ["task", task] => Ok(Some(task_tokens(store, task)? as f64)),
         ["provider", p, w] => match w.parse() {
-            Ok(w) => provider_percent(store, p, w),
+            Ok(w) => provider_percent(store, p, w, now_ms),
             Err(_) => Ok(None),
         },
         _ => Ok(None),
@@ -54,7 +57,8 @@ pub fn budget_value(store: &Store, b: &BudgetRow) -> Result<Option<f64>> {
 pub fn spawn_blocked_by_budget(store: &Store, task: &str) -> Result<Option<String>> {
     let scope = format!("task:{task}");
     for b in store.budgets()?.into_iter().filter(|b| b.scope == scope) {
-        if let Some(v) = budget_value(store, &b)?
+        // Ngân sách `task:` đếm token, không phụ thuộc thời điểm reset → now_ms không dùng.
+        if let Some(v) = budget_value(store, &b, 0)?
             && v >= b.hard {
                 return Ok(Some(format!("ngân sách {scope} đã vượt ngưỡng cứng: {v:.0} / {:.0} {}", b.hard, b.unit)));
             }
@@ -97,7 +101,7 @@ fn level_rank(level: &str) -> u8 {
 
 fn budgets_tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()> {
     for b in store.budgets()? {
-        let Some(v) = budget_value(store, &b)? else { continue };
+        let Some(v) = budget_value(store, &b, now)? else { continue };
         let task = b.scope.strip_prefix("task:");
         // Mức đã kích hoạt được nhớ theo từng ngân sách: chỉ báo/hành động khi mức TĂNG, kể cả khi người dùng
         // đã đóng mục hộp thư; giá trị xuống dưới ngưỡng mềm (vd ngân sách được nâng) thì đặt lại.

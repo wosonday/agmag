@@ -68,9 +68,9 @@ agm cost --summary # 24h / hôm nay / tháng này + biểu đồ 4 tháng
 Ví dụ `agm quota`:
 
 ```
-gói     cửa sổ  đã dùng
-codex   5h      █░░░░░░░░░  14%   còn 4h38m
-codex   7d      █████████░  93%   còn 115h41m
+gói     cửa sổ  còn lại
+codex   5h      █████████░  86%   còn 4h38m
+codex   7d      █░░░░░░░░░  7%    còn 115h41m
 ```
 
 Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọc phần mới. Muốn có số liệu cũ hơn cho thống kê tháng: `agm scan --since 2026-08-01` (hoặc để `agm tui` tự backfill).
@@ -91,7 +91,7 @@ Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọ
 
 | Công cụ | Phải làm gì? | Thấy số liệu ở đâu |
 |---|---|---|
-| **Claude Code** | Không bắt buộc. Muốn có **% hạn mức gói 5h/7d** (và để dùng `agm manage`) thì chạy **một lần** `agm hook install` (áp dụng cho mọi session Claude) | Thanh trạng thái dưới cùng của Claude Code: `Opus 5.5 · ctx 34% · 5h 24% · 7d 41%`; và mọi lệnh `agm` |
+| **Claude Code** | Không bắt buộc. Muốn có **% hạn mức gói 5h/7d** (và để dùng `agm manage`) thì chạy **một lần** `agm hook install` (áp dụng cho mọi session Claude) | Thanh trạng thái dưới cùng của Claude Code: `Opus 5.5 · ctx 34% · 5h 76% left · 7d 59% left`; và mọi lệnh `agm` |
 | **Codex** | Không gì cả (hạn mức gói có sẵn trong log Codex) | `agm quota / ls / tui` |
 | **OpenCode** | Không gì cả (agm đọc `opencode.db`, chỉ đọc) | `agm ls / cost / tui` |
 | **agy (Gemini)** | Không gì cả. agm đọc `transcript.jsonl` của mọi phiên tương tác `antigravity-cli` và `conversation_summaries.db` (chỉ đọc, để biết thư mục làm việc); `agm ask` được ghi riêng và không bị đếm trùng | `agm ls / cost / tui` |
@@ -116,9 +116,9 @@ agm tui
 
 ```
  ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ UTC+07:00
-── ◈ PLAN QUOTA ──────────────────────────────────────────────────
-  codex      5h  █░░░░░░░░░  14%  resets in 4h38m
-  codex      7d  █████████░  93%  resets in 115h41m
+── ◈ PLAN QUOTA (left) ───────────────────────────────────────────
+  codex      5h  █████████░  86% left  resets in 4h38m
+  codex      7d  █░░░░░░░░░   7% left  resets in 115h41m
 ── ▪ USAGE (UTC+07:00) ───────────────────────────────────────────
   24h 125k │ Today 480k │ This month 4.2M
   Aug ▂ 1.1M │ Sep ▄ 2.3M │ Oct ▆ 3.4M │ Nov █ 4.2M
@@ -240,7 +240,7 @@ agm scan --since 2026-08-01     # backfill log cũ (TUI tự làm việc này ch
 
 ```powershell
 agm budget set task:login-7 --soft 2000000 --hard 5000000              # token cho một đầu việc
-agm budget set provider:codex:10080 --soft 80 --hard 95                 # % hạn mức gói tuần (10080 phút)
+agm budget set provider:codex:10080 --soft 80 --hard 95                 # % ĐÃ DÙNG của hạn mức tuần (10080 phút); TUI/quota hiển thị phần còn lại
 agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # vượt cứng → dừng thợ OpenCode của việc đó
 ```
 

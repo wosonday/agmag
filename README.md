@@ -70,9 +70,9 @@ agm cost --summary # 24h / today / this month + 4-month chart
 Example `agm quota` (columns: plan, window, used; `còn` = time left):
 
 ```
-gói     cửa sổ  đã dùng
-codex   5h      █░░░░░░░░░  14%   còn 4h38m
-codex   7d      █████████░  93%   còn 115h41m
+gói     cửa sổ  còn lại
+codex   5h      █████████░  86%   còn 4h38m
+codex   7d      █░░░░░░░░░  7%    còn 115h41m
 ```
 
 The first run is a bit slow (it reads the last 7 days of logs); after that only new data is read. For older data in the monthly statistics: `agm scan --since 2026-08-01` (or let `agm tui` backfill automatically).
@@ -93,7 +93,7 @@ The first run is a bit slow (it reads the last 7 days of logs); after that only 
 
 | Tool | What do I need to do? | Where do I see the numbers? |
 |---|---|---|
-| **Claude Code** | Optional. For **5h/7d subscription quota %** (and to use `agm manage`), run `agm hook install` **once** (applies to every Claude session) | Claude Code's bottom status line: `Opus 5.5 · ctx 34% · 5h 24% · 7d 41%`; and every `agm` command |
+| **Claude Code** | Optional. For **5h/7d subscription quota %** (and to use `agm manage`), run `agm hook install` **once** (applies to every Claude session) | Claude Code's bottom status line: `Opus 5.5 · ctx 34% · 5h 76% left · 7d 59% left`; and every `agm` command |
 | **Codex** | Nothing (quota is already in Codex's logs) | `agm quota / ls / tui` |
 | **OpenCode** | Nothing (agm reads `opencode.db`, read-only) | `agm ls / cost / tui` |
 | **agy (Gemini)** | Nothing. agm reads `transcript.jsonl` of every interactive `antigravity-cli` session and `conversation_summaries.db` (read-only, for the working directory); `agm ask` is recorded separately and never double-counted | `agm ls / cost / tui` |
@@ -118,9 +118,9 @@ agm tui
 
 ```
  ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ UTC+07:00
-── ◈ PLAN QUOTA ──────────────────────────────────────────────────
-  codex      5h  █░░░░░░░░░  14%  resets in 4h38m
-  codex      7d  █████████░  93%  resets in 115h41m
+── ◈ PLAN QUOTA (left) ───────────────────────────────────────────
+  codex      5h  █████████░  86% left  resets in 4h38m
+  codex      7d  █░░░░░░░░░   7% left  resets in 115h41m
 ── ▪ USAGE (UTC+07:00) ───────────────────────────────────────────
   24h 125k │ Today 480k │ This month 4.2M
   Aug ▂ 1.1M │ Sep ▄ 2.3M │ Oct ▆ 3.4M │ Nov █ 4.2M
@@ -244,7 +244,7 @@ agm scan --since 2026-08-01     # backfill older logs (the TUI does this for mis
 
 ```powershell
 agm budget set task:login-7 --soft 2000000 --hard 5000000              # tokens for one task
-agm budget set provider:codex:10080 --soft 80 --hard 95                 # % of weekly quota (10080 minutes)
+agm budget set provider:codex:10080 --soft 80 --hard 95                 # % of weekly quota USED (10080 min); TUI/quota show what is left
 agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # hard limit → kill that task's OpenCode workers
 ```
 

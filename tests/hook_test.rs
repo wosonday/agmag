@@ -59,7 +59,8 @@ fn missing_rate_limits_ok_and_prints_compact_line() -> anyhow::Result<()> {
     let line = statusline(&store, &v, None, 5000)?;
     assert_eq!(line, "Opus 5.5 · ctx 34%");
     let full = statusline(&store, &input("x.jsonl"), None, 5000)?;
-    assert_eq!(full, "Opus 5.5 · ctx 34% · 5h 24% · 7d 41%");
+    // Plan quota shows what is LEFT (23.5% used → 76% left; 41.2% used → 59% left); ctx stays "used".
+    assert_eq!(full, "Opus 5.5 · ctx 34% · 5h 76% left · 7d 59% left");
     Ok(())
 }
 

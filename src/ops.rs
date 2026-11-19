@@ -423,10 +423,10 @@ pub fn budget_set(store: &Store, scope: &str, soft: f64, hard: f64, action: &str
     Ok(())
 }
 
-pub fn budget_ls(store: &Store, json_out: bool) -> Result<()> {
+pub fn budget_ls(store: &Store, json_out: bool, now_ms: i64) -> Result<()> {
     let mut rows = Vec::new();
     for b in store.budgets()? {
-        let v = policy::budget_value(store, &b)?;
+        let v = policy::budget_value(store, &b, now_ms)?;
         rows.push(json!({"scope": b.scope, "unit": b.unit, "soft": b.soft, "hard": b.hard, "action": b.action, "value": v}));
     }
     if json_out {

@@ -108,7 +108,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
         .collect::<rusqlite::Result<Vec<(String, String, String)>>>()?;
     let mut budgets = Vec::new();
     for b in store.budgets()? {
-        budgets.push(BudgetView { value: budget_value(store, &b)?, scope: b.scope, unit: b.unit, soft: b.soft, hard: b.hard });
+        budgets.push(BudgetView { value: budget_value(store, &b, now_ms)?, scope: b.scope, unit: b.unit, soft: b.soft, hard: b.hard });
     }
     Ok(Snapshot {
         now_s: now_ms / 1000,
@@ -415,7 +415,8 @@ pub fn render(s: &Snapshot, width: usize) -> String {
     let max_w = width.saturating_sub(1);
     let mut out = render_header(s, width);
 
-    out += &section("◈", "PLAN QUOTA", width);
+    // Hạn mức hiển thị theo phần CÒN LẠI (giảm dần từ 100%, như Codex `/status` và agy `/usage`).
+    out += &section("◈", "PLAN QUOTA (left)", width);
     if s.quota.is_empty() {
         for l in wrap_plain_words("(no quota data — run `agm scan`; Claude needs `agm hook install`)", "  ", "  ", max_w) {
             out += &format!("{}\n", paint(GRAY, &l));
@@ -434,14 +435,15 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             paint(CYAN, &format!("resets in {}h{:02}m", left / 3600, left % 3600 / 60))
         };
         let prov = one_line(&q.provider, 8);
-        if q.used_percent.is_finite() {
-            let col = pct_color(q.used_percent);
-            let pct_str = paint(col, &format!("{:>3.0}%", q.used_percent));
+        if q.left_percent.is_finite() {
+            // Màu vẫn theo mức đã dùng (còn ít → đỏ); thanh và con số theo phần còn lại.
+            let col = pct_color(100.0 - q.left_percent);
+            let pct_str = paint(col, &format!("{:>3.0}% left", q.left_percent));
             out += &format!(
                 "  {} {}  {} {pct_str}  {reset}\n",
                 paint(WHITE, &pad_cells(&prov, 8)),
                 paint(CYAN, &format!("{:>3}", win)),
-                colored_bar(q.used_percent, col),
+                colored_bar(q.left_percent, col),
             );
         } else {
             out += &format!(

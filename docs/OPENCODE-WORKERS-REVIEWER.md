@@ -25,7 +25,7 @@ OpenCode v2 (`@opencode/cli`) là động cơ thực thi chính cho các vai ch�
 | **`gitnexus-sync.md`** (Cập nhật chỉ mục GitNexus) | **Nhẹ / Miễn phí:** `:free` hoặc Ollama cục bộ | Chạy `gitnexus status`, `gitnexus analyze --index-only`, kiểm tra MCP HTTP server. Không sửa repo |
 | **`worker-fast.md`** (Thợ bậc Nhanh — **mặc định ưu tiên**) | **Nhẹ / Miễn phí / Rẻ:** `opencode/deepseek-v4.1-flash-free`, OpenRouter `:free` (dự phòng 2–3 slug), Ollama cục bộ 7B–14B, hoặc `gpt-6.1-terra-fast` | Nhờ có hàng rào ESLint + typecheck + test tự kiểm trong worktree, nhận **mặc định mọi task rõ đặc tả ≤ 2–3 tệp** (CRUD, UI component, API handler, unit test, fixture, refactor cục bộ). Chỉ nâng lên `worker-mid` khi không qua được cổng lint/test sau 2 lần tự sửa |
 | **`worker-mid.md`** (Thợ bậc Vừa) | **Trả phí vừa (non-OpenAI):** OpenRouter / Ollama Cloud | Task liên kết 3–5 tệp, logic nghiệp vụ nhiều nhánh hoặc vừa fail 2 lần ở `worker-fast` |
-| **`worker-strong.md`** (Thợ bậc Mạnh) | **Trả phí mạnh trên OpenRouter** hoặc `openai/gpt-6.1-sol` *(chỉ khi `agm quota` cho `codex` < 70–80%)* | Logic phức tạp, đa tệp, cứu hộ task fail ở `worker-mid` |
+| **`worker-strong.md`** (Thợ bậc Mạnh) | **Trả phí mạnh trên OpenRouter** hoặc `openai/gpt-6.1-sol` *(chỉ khi `agm quota` cho thấy `codex` còn > 20–30%)* | Logic phức tạp, đa tệp, cứu hộ task fail ở `worker-mid` |
 | **`reviewer.md`** (Reviewer mặc định) | **Model mạnh non-OpenAI** (OpenRouter / Ollama Cloud) | Duyệt độc lập không ăn vào hạn mức ChatGPT/Codex & Claude; chủ động gọi GitNexus MCP (`detect_changes`, `impact`) |
 
 ### Mẹo dùng model nhẹ / miễn phí không bị phản tác dụng

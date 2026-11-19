@@ -59,7 +59,10 @@ fn cost_json_unknown_model_null_usd() {
 fn cli_quota_json() {
     let tmp = sandbox(None);
     let v = json(&agm(tmp.path(), &["quota", "--json"]));
-    assert!(v.as_array().unwrap().iter().any(|r| r["used_percent"] == 22.0));
+    let row = v.as_array().unwrap().iter().find(|r| r["used_percent"] == 22.0).expect("22% used row");
+    // JSON keeps `used_percent` (as logged) and adds `left_percent` (what the TUI/table show).
+    let left = row["left_percent"].as_f64().expect("left_percent");
+    assert!(left == 78.0 || (left == 100.0 && row["reset_passed"] == true), "left_percent = {left}");
 }
 
 #[test]

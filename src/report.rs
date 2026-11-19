@@ -86,10 +86,25 @@ pub struct CostRow {
 pub struct QuotaRow {
     pub provider: String,
     pub window_minutes: u32,
+    /// Phần đã dùng, đúng như log/hook ghi (Codex `used_percent`, Claude `used_percentage`).
     pub used_percent: f64,
+    /// Phần còn lại để hiển thị (giảm dần từ 100%, như Codex `/status` và agy `/usage`);
+    /// 100 khi cửa sổ đã reset mà chưa có số liệu mới.
+    pub left_percent: f64,
     pub resets_at_s: i64,
     pub observed_ms: i64,
     pub reset_passed: bool,
+}
+
+/// % đã dùng còn hiệu lực: cửa sổ đã reset mà chưa có số mới thì số cũ không còn đúng → 0.
+pub fn effective_used_percent(used_percent: f64, resets_at_s: i64, now_s: i64) -> f64 {
+    if resets_at_s <= now_s { 0.0 } else { used_percent }
+}
+
+/// % còn lại (0–100) từ % đã dùng; NaN giữ nguyên để hiển thị là chưa rõ.
+pub fn left_percent(used_percent: f64, resets_at_s: i64, now_s: i64) -> f64 {
+    let used = effective_used_percent(used_percent, resets_at_s, now_s);
+    if used.is_nan() { f64::NAN } else { (100.0 - used).clamp(0.0, 100.0) }
 }
 
 const USAGE_SUMS: &str = "COALESCE(SUM(u.input_uncached),0), COALESCE(SUM(u.cache_read),0), \
@@ -526,10 +541,12 @@ pub fn quota(store: &Store, now_s: i64) -> Result<Vec<QuotaRow>> {
     )?;
     let rows = stmt.query_map([], |r| {
         let resets_at_s: i64 = r.get(3)?;
+        let used_percent: f64 = r.get(2)?;
         Ok(QuotaRow {
             provider: r.get(0)?,
             window_minutes: r.get(1)?,
-            used_percent: r.get(2)?,
+            used_percent,
+            left_percent: left_percent(used_percent, resets_at_s, now_s),
             resets_at_s,
             observed_ms: r.get(4)?,
             reset_passed: resets_at_s <= now_s,

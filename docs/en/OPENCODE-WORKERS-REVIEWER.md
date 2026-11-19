@@ -25,7 +25,7 @@ OpenCode v2 (`@opencode/cli`) is the primary execution engine for worktree-isola
 | **`gitnexus-sync.md`** (GitNexus index updater) | **Lightweight / Free:** `:free` or local Ollama | Runs `gitnexus status`, `gitnexus analyze --index-only`, checks MCP HTTP server. Never edits repo files |
 | **`worker-fast.md`** (Fast worker — **default**) | **Lightweight / Free / Cheap:** `opencode/deepseek-v4.1-flash-free`, OpenRouter `:free` (2–3 fallback slugs), local Ollama 7B–14B, or `gpt-6.1-terra-fast` | Backed by ESLint + typecheck + tests in worktree, handles **all well-specified tasks ≤ 2–3 files by default** (CRUD, UI components, API handlers, unit tests, fixtures, local refactors). Escalates to `worker-mid` only after failing lint/tests twice |
 | **`worker-mid.md`** (Mid worker) | **Paid mid-tier (non-OpenAI):** OpenRouter / Ollama Cloud | Tasks spanning 3–5 files, multi-branch business logic, or escalated after 2 `worker-fast` failures |
-| **`worker-strong.md`** (Strong worker) | **Strong OpenRouter model** or `openai/gpt-6.1-sol` *(only when `agm quota` for `codex` < 70–80%)* | Complex multi-file logic, rescues tasks failing `worker-mid` |
+| **`worker-strong.md`** (Strong worker) | **Strong OpenRouter model** or `openai/gpt-6.1-sol` *(only when `agm quota` shows `codex` with > 20–30% left)* | Complex multi-file logic, rescues tasks failing `worker-mid` |
 | **`reviewer.md`** (Default Reviewer) | **Strong non-OpenAI model** (OpenRouter / Ollama Cloud) | Independent review without consuming ChatGPT/Codex or Claude quotas; proactively calls GitNexus MCP (`detect_changes`, `impact`) |
 
 ### Tips for Running Lightweight / Free Models Reliably

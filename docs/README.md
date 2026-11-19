@@ -20,12 +20,12 @@ Thư mục này cụ thể hóa cách khởi chạy, phạm vi quyền, lệnh `
 Trước khi giao đợt việc nặng, kiểm tra nhanh trong `agm tui` hoặc CLI:
 
 ```powershell
-agm quota                     # xem % hạn mức 5h / 7d của Claude và Codex
+agm quota                     # xem % hạn mức CÒN LẠI 5h / 7d của Claude và Codex
 agm cost --by source          # xem tỷ lệ token đang dồn vào claude / codex / opencode / agy
 ```
 
 | Tình huống | Hành động điều chỉnh tải |
 |---|---|
-| `codex` 7d > 70–80% | Giữ `openai/gpt-6.1-sol` cho ca engineering thực sự khó; chuyển Reviewer mặc định sang OpenRouter/Ollama Cloud hoặc `agy` (`Argon/Hydrogen High`), và chuyển `worker-strong` sang OpenRouter |
-| `claude` 5h/7d tăng nhanh | Mở phiên tương tác `agy` Opus High trong repo (`--mode plan --sandbox`, giữ `conversation_id` để ăn prompt cache) gánh thay bước bàn thiết kế / chia việc và phân xử review ca khó; không mở Claude cho Reviewer thường |
+| `codex` 7d còn < 20–30% | Giữ `openai/gpt-6.1-sol` cho ca engineering thực sự khó; chuyển Reviewer mặc định sang OpenRouter/Ollama Cloud hoặc `agy` (`Argon/Hydrogen High`), và chuyển `worker-strong` sang OpenRouter |
+| `claude` 5h/7d giảm nhanh | Mở phiên tương tác `agy` Opus High trong repo (`--mode plan --sandbox`, giữ `conversation_id` để ăn prompt cache) gánh thay bước bàn thiết kế / chia việc và phân xử review ca khó; không mở Claude cho Reviewer thường |
 | Endpoint `:free` gặp `429` | Đổi sang slug `:free` dự phòng khác hoặc Ollama cục bộ (`num_ctx ≥ 64k`) |

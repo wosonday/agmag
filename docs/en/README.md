@@ -20,12 +20,12 @@ This directory specifies startup commands, permission boundaries, `agm`/`hc` usa
 Before dispatching a heavy batch, check current usage in `agm tui` or CLI:
 
 ```powershell
-agm quota                     # check 5h / 7d quota % for Claude and Codex
+agm quota                     # check 5h / 7d quota % LEFT for Claude and Codex
 agm cost --by source          # check token share across claude / codex / opencode / agy
 ```
 
 | Situation | Load-balancing action |
 |---|---|
-| `codex` 7d > 70–80% | Reserve `openai/gpt-6.1-sol` for genuinely hard engineering; route default Reviewer to OpenRouter/Ollama Cloud or `agy` (`Argon/Hydrogen High`), and `worker-strong` to OpenRouter |
-| `claude` 5h/7d rising fast | Open an interactive `agy` Opus High session inside the repo (`--mode plan --sandbox`, keeping `conversation_id` for prompt cache) to offload design/task splitting and hard-case review; never open Claude for routine reviews |
+| `codex` 7d < 20–30% left | Reserve `openai/gpt-6.1-sol` for genuinely hard engineering; route default Reviewer to OpenRouter/Ollama Cloud or `agy` (`Argon/Hydrogen High`), and `worker-strong` to OpenRouter |
+| `claude` 5h/7d dropping fast | Open an interactive `agy` Opus High session inside the repo (`--mode plan --sandbox`, keeping `conversation_id` for prompt cache) to offload design/task splitting and hard-case review; never open Claude for routine reviews |
 | `:free` endpoint hits `429` | Switch to a fallback `:free` slug or local Ollama (`num_ctx ≥ 64k`) |

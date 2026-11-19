@@ -30,7 +30,7 @@
   ```powershell
   agm quota
   ```
-- **Ngưỡng điều phối đề xuất:** nếu cửa sổ 7 ngày (`codex 7d`) đã vượt **70–80%**, tạm ngưng giao `gpt-6.1-sol` cho các task thường — đẩy `worker-strong` sang model mạnh trên **OpenRouter / Ollama Cloud** và chỉ giữ Codex cho ca bế tắc thật sự.
+- **Ngưỡng điều phối đề xuất:** nếu cửa sổ 7 ngày (`codex 7d`) chỉ **còn < 20–30%** (đã dùng > 70–80%), tạm ngưng giao `gpt-6.1-sol` cho các task thường — đẩy `worker-strong` sang model mạnh trên **OpenRouter / Ollama Cloud** và chỉ giữ Codex cho ca bế tắc thật sự.
 - Lưu ý trong `agm`: hạn mức OpenCode dùng `openai/gpt-6.1-sol` không hiện riêng trong log OpenCode mà phản ánh ở lần ghi `rate_limits` tiếp theo của Codex.
 
 ## 4. Kỷ luật worktree & git

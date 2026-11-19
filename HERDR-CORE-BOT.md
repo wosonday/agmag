@@ -90,7 +90,7 @@ Thiết lập ngân sách (tùy chọn, `agm daemon` kiểm mỗi chu kỳ):
 
 ```powershell
 agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill   # vượt cứng -> dừng thợ OpenCode của việc đó
-agm budget set provider:codex:10080 --soft 80 --hard 95                   # cảnh báo % hạn mức tuần
+agm budget set provider:codex:10080 --soft 80 --hard 95                   # ngưỡng theo % ĐÃ DÙNG: đã dùng ≥ 80% (còn ≤ 20%) thì cảnh báo
 ```
 
 Còn `.agents/bot.env` trong từng dự án chỉ giữ phần Git/worktree cho wrapper:

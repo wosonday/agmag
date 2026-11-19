@@ -61,6 +61,27 @@ fn quota_latest() -> anyhow::Result<()> {
 }
 
 #[test]
+fn quota_left_percent_counts_down_and_is_full_after_reset() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    store.insert_quota(&QuotaSnapshot {
+        provider: "codex".into(),
+        ts_ms: 1,
+        windows: vec![
+            // 5h window already reset: the stored 2% is stale, so the plan is full again.
+            QuotaWindow { window_minutes: 300, used_percent: 2.0, resets_at_s: 100 },
+            QuotaWindow { window_minutes: 10080, used_percent: 16.0, resets_at_s: 5_000 },
+        ],
+    })?;
+    let rows = report::quota(&store, 1_000)?;
+    let short = rows.iter().find(|r| r.window_minutes == 300).unwrap();
+    let week = rows.iter().find(|r| r.window_minutes == 10080).unwrap();
+    assert_eq!(short.used_percent, 2.0, "stored value is kept as logged");
+    assert_eq!(short.left_percent, 100.0);
+    assert_eq!(week.left_percent, 84.0);
+    Ok(())
+}
+
+#[test]
 fn turns_ambiguous_prefix() -> anyhow::Result<()> {
     let store = fixtures()?;
     let error = report::turns(&store, "", 50).err().unwrap().to_string();

@@ -77,6 +77,18 @@ fn seeded() -> anyhow::Result<Store> {
 }
 
 #[test]
+fn plan_quota_shows_percent_left() -> anyhow::Result<()> {
+    let store = seeded()?;
+    // codex: 22% used on 5h, 86% used on 7d → 78% / 14% left.
+    let plain = strip_ansi(&render(&snapshot(&store, &Config::builtin(), 1_000_000)?, 110));
+    assert!(plain.contains("PLAN QUOTA (left)"), "{plain}");
+    assert!(plain.contains("78% left"), "{plain}");
+    assert!(plain.contains("14% left"), "{plain}");
+    assert!(!plain.contains("22%") && !plain.contains("86%"), "used % must not be shown as the quota figure: {plain}");
+    Ok(())
+}
+
+#[test]
 fn snapshot_sections() -> anyhow::Result<()> {
     let store = seeded()?;
     let s = snapshot(&store, &Config::builtin(), 1_000_000)?;
@@ -103,7 +115,7 @@ fn render_contains_all_english_sections_and_colors() -> anyhow::Result<()> {
         "inbox 1",
         "PLAN QUOTA",
         "codex",
-        "86%",
+        "14% left",
         "USAGE (",
         "24h",
         "Today",
@@ -222,6 +234,7 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
         provider: "claude".into(),
         window_minutes: 300,
         used_percent: f64::NAN,
+        left_percent: f64::NAN,
         resets_at_s: 2_000,
         observed_ms: 1,
         reset_passed: true,

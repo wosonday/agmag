@@ -316,7 +316,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Manage { target, off, cmd, argv } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
         Cmd::Cleanup { targets, all, yes } => ops::cleanup(&store, &targets, all, yes, json, now),
         Cmd::Budget { cmd: BudgetCmd::Set { scope, soft, hard, action } } => ops::budget_set(&store, &scope, soft, hard, &action),
-        Cmd::Budget { cmd: BudgetCmd::Ls } => ops::budget_ls(&store, json),
+        Cmd::Budget { cmd: BudgetCmd::Ls } => ops::budget_ls(&store, json, now),
         Cmd::Budget { cmd: BudgetCmd::Rm { scope } } => {
             if !store.rm_budget(&scope)? {
                 anyhow::bail!("không có ngân sách {scope}");
@@ -653,9 +653,11 @@ fn window_label(minutes: u32) -> String {
 }
 
 fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
-    let mut t = table(&["gói", "cửa sổ", "đã dùng", "", "reset"]);
+    // Hiển thị phần CÒN LẠI (giảm dần từ 100%); JSON vẫn có cả `used_percent` lẫn `left_percent`.
+    let mut t = table(&["gói", "cửa sổ", "còn lại", "", "reset"]);
     for r in rows {
-        let filled = ((r.used_percent / 10.0).round() as usize).min(10);
+        let left = if r.left_percent.is_finite() { r.left_percent } else { 0.0 };
+        let filled = ((left / 10.0).round() as usize).min(10);
         let reset = if r.reset_passed {
             "đã reset".to_string()
         } else {
@@ -666,7 +668,7 @@ fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
             r.provider.clone(),
             window_label(r.window_minutes),
             format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled)),
-            format!("{:.0}%", r.used_percent),
+            if r.left_percent.is_finite() { format!("{:.0}%", r.left_percent) } else { "?".into() },
             reset,
         ]);
     }

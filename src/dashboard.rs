@@ -693,6 +693,14 @@ fn sanitize_one_line(s: &str) -> String {
                         }
                     }
                 }
+                Some(ch) if (' '..='/').contains(&ch) => {
+                    chars.next();
+                    for final_ch in chars.by_ref() {
+                        if ('0'..='~').contains(&final_ch) {
+                            break;
+                        }
+                    }
+                }
                 Some(_) => {
                     chars.next();
                 }
@@ -708,7 +716,7 @@ fn sanitize_one_line(s: &str) -> String {
 }
 
 /// Single-line display bounded to `max` characters so the TUI layout never overflows.
-fn one_line(s: &str, max: usize) -> String {
+pub fn one_line(s: &str, max: usize) -> String {
     let clean = sanitize_one_line(s);
     if max == 0 {
         return String::new();

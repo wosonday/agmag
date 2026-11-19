@@ -11,7 +11,7 @@ use anyhow::Result;
 
 use agmag::actions::{self, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate};
 use agmag::config::Config;
-use agmag::dashboard::{parse_command, render, snapshot, TuiCmd};
+use agmag::dashboard::{one_line, parse_command, render, snapshot, TuiCmd};
 use agmag::hc::HcCli;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
@@ -27,15 +27,18 @@ fn width() -> usize {
     std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(110).clamp(60, 200)
 }
 
-fn render_frame(text: &str, cleanup_list: Option<&[CleanupCandidate]>, note: Option<(NoteKind, &str)>) -> String {
+fn render_frame(text: &str, w: usize, cleanup_list: Option<&[CleanupCandidate]>, note: Option<(NoteKind, &str)>) -> String {
+    let max_w = w.saturating_sub(1);
     let mut body = String::with_capacity(text.len() + 512);
     body.push_str(text);
     if let Some(list) = cleanup_list {
-        body.push_str("\x1b[1;93m── MANUAL CLEANUP (enter 'c 1,2' or 'c all'; Enter to refresh) ──\x1b[0m\n");
+        let hdr = one_line("── MANUAL CLEANUP (enter 'c 1,2' or 'c all'; Enter to refresh) ──", max_w);
+        let _ = writeln!(body, "\x1b[1;93m{hdr}\x1b[0m");
         for (i, c) in list.iter().enumerate() {
             let st = if c.old_live { "live" } else { "exited" };
-            let succ = c.new_terminal.as_deref().unwrap_or("-");
-            let _ = writeln!(body, "  \x1b[1;93m#{}\x1b[0m {} ({st}) \x1b[90m→\x1b[0m \x1b[96m{succ}\x1b[0m", i + 1, c.old_terminal);
+            let old = one_line(&c.old_terminal, 24);
+            let succ = one_line(c.new_terminal.as_deref().unwrap_or("-"), max_w.saturating_sub(old.chars().count() + 18));
+            let _ = writeln!(body, "  \x1b[1;93m#{}\x1b[0m {old} ({st}) \x1b[90m→\x1b[0m \x1b[96m{succ}\x1b[0m", i + 1);
         }
     }
     if let Some((kind, msg)) = note {
@@ -44,7 +47,8 @@ fn render_frame(text: &str, cleanup_list: Option<&[CleanupCandidate]>, note: Opt
             NoteKind::Warn => "\x1b[1;93m",
             NoteKind::Err => "\x1b[1;91m",
         };
-        let _ = writeln!(body, "{color}» {msg}\x1b[0m");
+        let clean = one_line(msg, max_w.saturating_sub(2));
+        let _ = writeln!(body, "{color}» {clean}\x1b[0m");
     }
     // Move cursor home, clear trailing chars on each line, and clear below the frame in a single write.
     let mut frame = String::with_capacity(body.len() + 128);
@@ -119,12 +123,14 @@ pub fn run(
     loop {
         let _ = scan(store);
         let now = crate::now_ms();
+        let w = width();
         let text = match snapshot(store, cfg, now) {
-            Ok(s) => render(&s, width()),
-            Err(e) => format!("\x1b[1;91mfailed to read database: {e:#}\x1b[0m\n"),
+            Ok(s) => render(&s, w),
+            Err(e) => format!("\x1b[1;91m{}\x1b[0m\n", one_line(&format!("failed to read database: {e:#}"), w.saturating_sub(1))),
         };
         let frame = render_frame(
             &text,
+            w,
             cleanup_list.as_deref(),
             note.as_ref().map(|(k, s)| (*k, s.as_str())),
         );

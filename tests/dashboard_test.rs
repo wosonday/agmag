@@ -250,5 +250,6 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
             );
         }
     }
+    assert_eq!(agmag::dashboard::one_line("\x1b[2~LEAK \x1b]52;c;YQ==\x07OK \x1b(BHI", 50), "LEAK OK HI");
     Ok(())
 }

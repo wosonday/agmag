@@ -28,3 +28,10 @@
 - Remaining risk: hc has no identity-conditional kill; get/kill races are reduced by immediate revalidation, not eliminated.
 - No real TTY destructive cleanup trial performed; all destructive calls in tests use mocks.
 - Ready for independent Opus inspection of the committed diff; no merge/release/install performed.
+
+## 2026-11-19 · Reviewer dispatch
+- Committed implementation and red/green evidence as `ddbd79c`.
+- Attempted independent `anthropic/claude-opus-5-5#high` subagent review; API returned insufficient credit before reviewing. No pass claimed.
+- Started fallback independent Claude Code Opus (`claude-opus-5-5`, high effort), no tools, safe mode, plan permission mode, permission prompts disabled; source/diff supplied through stdin outside the repo.
+- Pending review tracked in `.agents/reports/safety--agy-followup.md`; no source changed after the reviewed implementation commit.
+- Additional file for handoff: `.agents/reports/safety--agy-followup.md`.

@@ -19,6 +19,7 @@ pub struct TermView {
     /// None khi terminal chưa ghép được với phiên log (không biết, không phải 0).
     pub tokens: Option<u64>,
     pub context_pct: Option<f64>,
+    pub handoff_state: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,12 +56,15 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
             }
             None => (None, None),
         };
-        let status = match (t.status.as_deref(), t.kind.as_deref()) {
+        let mut status = match (t.status.as_deref(), t.kind.as_deref()) {
             (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
             (Some("blocked"), None) => "BLOCKED".into(),
             (Some(s), _) => s.to_string(),
             (None, _) => "-".into(),
         };
+        if t.handoff_state == "handed_off" {
+            status.push_str(" [ĐÃ BÀN GIAO]");
+        }
         terminals.push(TermView {
             address: t.address,
             name: t.name.unwrap_or_default(),
@@ -69,6 +73,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
             task: t.task.unwrap_or_default(),
             tokens,
             context_pct: ctx,
+            handoff_state: t.handoff_state,
         });
     }
     let mut budgets = Vec::new();

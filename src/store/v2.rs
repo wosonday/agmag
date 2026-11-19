@@ -318,6 +318,25 @@ impl Store {
         Ok((n > 0).then(|| self.conn.last_insert_rowid()))
     }
 
+    /// Như `open_inbox` nhưng khử trùng theo (terminal, nguồn, kind) thay vì nội dung: nếu đã có mục
+    /// đang mở cùng khóa thì chỉ cập nhật nội dung mới nhất (vd. % ngữ cảnh 86% → 87%) và trả None.
+    pub fn open_inbox_keyed(&self, terminal: &str, source: &str, kind: &str, text: &str, now: i64) -> Result<Option<i64>> {
+        let n = self.conn.execute(
+            "INSERT INTO inbox (ts_ms, terminal, source, kind, text)
+             SELECT ?1, ?2, ?3, ?4, ?5
+             WHERE NOT EXISTS (SELECT 1 FROM inbox WHERE resolved_ms IS NULL AND terminal = ?2 AND source = ?3 AND kind = ?4)",
+            params![now, terminal, source, kind, text],
+        )?;
+        if n > 0 {
+            return Ok(Some(self.conn.last_insert_rowid()));
+        }
+        self.conn.execute(
+            "UPDATE inbox SET text = ?4 WHERE resolved_ms IS NULL AND terminal = ?1 AND source = ?2 AND kind = ?3",
+            params![terminal, source, kind, text],
+        )?;
+        Ok(None)
+    }
+
     pub fn resolve_inbox_for_terminal(&self, terminal: &str, source: &str, now: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE inbox SET resolved_ms = ?3 WHERE terminal = ?1 AND source = ?2 AND resolved_ms IS NULL",

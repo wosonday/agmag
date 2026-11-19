@@ -189,6 +189,54 @@ pub fn spawn_precheck(store: &Store, cfg: &Config, req: &SpawnReq, replacing: Op
     Ok(name)
 }
 
+/// Kiểm tra điều kiện mở phiên kế nhiệm cho Claude/Codex (không đòi hỏi `task` hay `template` như OpenCode worker).
+pub fn spawn_successor_precheck(
+    store: &Store,
+    task: Option<&str>,
+    old_name: Option<&str>,
+    old_addr: &str,
+    rot_id: i64,
+    spec: &LaunchSpec,
+) -> Result<String> {
+    if !std::path::Path::new(&spec.cwd).is_dir() {
+        bail!("thư mục làm việc '{}' không còn tồn tại", spec.cwd);
+    }
+    if let Some(task_id) = task
+        && let Some(reason) = crate::policy::spawn_blocked_by_budget(store, task_id)?
+    {
+        bail!("{reason}");
+    }
+    let live_names: std::collections::HashSet<String> = store
+        .terminals(true)?
+        .into_iter()
+        .filter_map(|t| t.name)
+        .collect();
+    let app_tag = if spec.app == "claude-code" { "claude" } else { "codex" };
+    let base_raw = old_name
+        .filter(|n| !n.is_empty())
+        .map(|n| n.split("-r").next().unwrap_or(n))
+        .unwrap_or(old_addr);
+    let sanitized: String = base_raw
+        .bytes()
+        .map(|b| if b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' { b as char } else { '-' })
+        .collect();
+    let prefix = if sanitized.is_empty() { format!("rot-{app_tag}") } else { sanitized };
+    for n in 1..=99u32 {
+        let suffix = format!("-r{n}");
+        let max_prefix = 32usize.saturating_sub(suffix.len());
+        let p: String = prefix.chars().take(max_prefix).collect();
+        let candidate = format!("{p}{suffix}");
+        if valid_name(&candidate) && !live_names.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    let fallback = format!("rot-{app_tag}-{rot_id}");
+    if valid_name(&fallback) && !live_names.contains(&fallback) {
+        return Ok(fallback);
+    }
+    bail!("không tạo được tên terminal kế nhiệm duy nhất")
+}
+
 /// Sinh agent qua `hc run --bg --outlive-parent` sau khi kiểm hạn mức. Trả địa chỉ terminal mới.
 pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64) -> Result<String> {
     let name = spawn_precheck(store, cfg, req, None)?;

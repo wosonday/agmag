@@ -55,15 +55,24 @@ pub struct Policy {
     pub manager: Option<String>,
     /// % ngữ cảnh: cảnh báo.
     pub ctx_warn: f64,
-    /// % ngữ cảnh: xoay vòng thợ OpenCode.
+    /// % ngữ cảnh: xoay vòng phiên.
     pub ctx_rotate: f64,
     /// Phút chờ agent bàn giao trước khi bỏ cuộc và báo người dùng.
     pub handoff_timeout_min: u64,
+    /// Phút chờ ghép phiên kế nhiệm trước khi chuyển `needs_attention`.
+    pub link_timeout_min: u64,
 }
 
 impl Default for Policy {
     fn default() -> Self {
-        Policy { max_workers: 3, manager: None, ctx_warn: 50.0, ctx_rotate: 70.0, handoff_timeout_min: 10 }
+        Policy {
+            max_workers: 3,
+            manager: None,
+            ctx_warn: 50.0,
+            ctx_rotate: 70.0,
+            handoff_timeout_min: 10,
+            link_timeout_min: 5,
+        }
     }
 }
 

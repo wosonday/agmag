@@ -178,22 +178,38 @@ pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Res
 
 pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
     let Some(t) = store.terminal(target)? else { bail!("không biết terminal {target}") };
-    // Danh sách trắng: chỉ thợ OpenCode được xoay vòng (bước cuối là kill phiên cũ).
-    if t.app.as_deref() != Some("opencode") {
-        // Xoay vòng kết thúc bằng kill phiên cũ: Codex/Claude chỉ khi người dùng ra lệnh, và v1 chỉ tự xoay OpenCode.
-        let c = caller(store, yes, None)?;
-        bail!(
-            "xoay vòng chỉ áp dụng cho thợ OpenCode; {target} là {} — hãy tự bàn giao rồi `agm kill {target}`{}",
-            t.app.unwrap_or_else(|| "app chưa rõ".into()),
-            if matches!(c, Caller::Agent(_)) { " (chỉ người dùng được kill)" } else { "" }
-        );
+    match t.app.as_deref() {
+        Some("opencode") => {
+            if rotation::start(store, &t.address, None, true, now)? {
+                println!("Đã xếp {target} vào hàng xoay vòng; daemon sẽ yêu cầu bàn giao khi agent rảnh.");
+            } else {
+                println!("{target} đang trong một vòng xoay.");
+            }
+            Ok(())
+        }
+        Some(app @ ("claude-code" | "codex")) => {
+            if t.handoff_state == "handed_off" {
+                bail!("{target} đã bàn giao sang phiên mới rồi; dùng `agm cleanup` để dọn.");
+            }
+            if !t.managed {
+                bail!("{target} ({app}) là phiên mở tay chưa bật quản lý — chạy `agm manage {target}` trước.");
+            }
+            if rotation::start(store, &t.address, None, true, now)? {
+                println!("Đã xếp {target} ({app}) vào hàng bàn giao & mở phiên kế nhiệm (không kill phiên cũ).");
+            } else {
+                println!("{target} đang trong một vòng bàn giao hoặc đã bàn giao.");
+            }
+            Ok(())
+        }
+        other => {
+            let c = caller(store, yes, None)?;
+            bail!(
+                "xoay vòng chưa hỗ trợ {}; hãy tự bàn giao rồi `agm kill {target}`{}",
+                other.unwrap_or("app chưa rõ"),
+                if matches!(c, Caller::Agent(_)) { " (chỉ người dùng được kill)" } else { "" }
+            );
+        }
     }
-    if rotation::start(store, &t.address, None, true, now)? {
-        println!("Đã xếp {target} vào hàng xoay vòng; daemon sẽ yêu cầu bàn giao khi agent rảnh.");
-    } else {
-        println!("{target} đang trong một vòng xoay.");
-    }
-    Ok(())
 }
 
 fn claude_settings_home() -> Option<std::path::PathBuf> {

@@ -226,3 +226,263 @@ fn rotation_does_not_send_handoff_while_done_only_when_idle() -> Result<()> {
     assert!(hc.calls.borrow().is_empty());
     Ok(())
 }
+
+#[test]
+fn claude_managed_rotation_done_status_handoff_no_kill_and_inherits_launch() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo)?;
+    // Tạo repo git thật để kiểm `ensure_handoff_excluded` qua `git rev-parse --git-path info/exclude`.
+    assert!(std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status()?.success());
+    let cwd = repo.to_string_lossy().to_string();
+
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("claude-code", &["claude".into(), "--model".into(), "opus".into(), "--add-dir".into(), "extra".into()], &cwd)?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some("arch".into()),
+        app: Some("claude-code".into()),
+        cwd: Some(cwd.clone()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("done"), None, None, 5, 0)?;
+    let sid = store.session_id_for_path(Source::Claude, "claude://s1")?;
+    store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: 160_000, window_tokens: Some(200_000) })?;
+    store.link_terminal("t1", sid, "hook")?;
+
+    let hc = FakeHc::default();
+    let git = FakeGit::default();
+    // Tick 1: phát hiện 80% >= 70%, gửi yêu cầu bàn giao với if_idle=false (vì status="done").
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 1_000)?;
+    assert_eq!(state(&store), "requested");
+    let send_call = hc.calls.borrow()[0].clone();
+    assert!(send_call.starts_with("send t1 if_idle=false force=false "), "{send_call}");
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude"))?;
+    assert!(exclude.lines().any(|l| l.trim() == ".agents/handoff/"), "{exclude}");
+
+    // Ghi tệp bàn giao đúng đường dẫn với marker ở dòng cuối (kèm CRLF).
+    let rel: String = store.conn().query_row("SELECT handoff_path FROM rotations", [], |r| r.get(0))?;
+    let abs = repo.join(&rel);
+    std::fs::write(&abs, "rotation_id: 1\r\nDa lam xong phan A, con phan B.\r\n<!-- agm:handoff-done -->\r\n")?;
+    store.set_terminal_status("t1", Some("done"), None, None, 6, 2_000)?;
+
+    // Tick 2: handoff_ready → spawn t99 với `--` trước prompt 1 dòng ASCII, KHÔNG kill t1!
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 2_000)?;
+    assert_eq!(state(&store), "awaiting_link");
+    let calls = hc.calls.borrow().clone();
+    assert!(!calls.iter().any(|c| c.starts_with("kill") || c.starts_with("interrupt")), "{calls:?}");
+    let run_call = calls.iter().find(|c| c.starts_with("run ")).expect("run call");
+    assert!(run_call.contains("\"--add-dir\", \"extra\", \"--\", \"Read .agents/handoff/"), "{run_call}");
+    assert!(run_call.contains("\"agm.parent_rotation\": \"1\""), "{run_call}");
+
+    // `link_all` không ghép non terminal có `agm.parent_rotation`.
+    let sid_new = store.session_id_for_path(Source::Claude, "claude://s2")?;
+    store.set_meta(sid_new, &agmag::model::SessionMeta { session_id: "s2".into(), cwd: Some(cwd.clone()), cli_version: None, started_ms: Some(2_000) })?;
+    assert_eq!(agmag::correlate::link_all(&store)?, 0);
+
+    // Nếu không phải hook thì Claude vẫn chưa tính là linked.
+    store.link_terminal("t99", sid_new, "auto")?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 3_000)?;
+    assert_eq!(state(&store), "awaiting_link");
+
+    // Khi hook statusline gắn `link_source = "hook"` → hoàn tất và đánh dấu old handed_off + new managed.
+    store.link_terminal("t99", sid_new, "hook")?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 4_000)?;
+    assert_eq!(state(&store), "done");
+    let old = store.terminal("t1")?.unwrap();
+    let new = store.terminal("t99")?.unwrap();
+    assert_eq!(old.handoff_state, "handed_off");
+    assert_eq!(old.state, "live");
+    assert!(new.managed);
+    assert!(new.launch_spec.is_some());
+
+    // Phiên cũ `handed_off` không bao giờ tự xoay vòng lần nữa.
+    assert!(!rotation::start(&store, "t1", None, false, 5_000)?);
+    Ok(())
+}
+
+#[test]
+fn pending_rotation_cancels_when_context_drops_below_warn() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("codex", &["codex".into()], &tmp.path().to_string_lossy())?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("codex".into()),
+        cwd: Some(tmp.path().to_string_lossy().into()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("working"), None, None, 5, 0)?;
+    let sid = store.session_id_for_path(Source::Codex, "codex://s1")?;
+    store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: 380_000, window_tokens: Some(475_000) })?;
+    store.link_terminal("t1", sid, "auto")?;
+
+    let hc = FakeHc::default();
+    let git = FakeGit::default();
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 1_000)?;
+    assert_eq!(state(&store), "pending");
+
+    // Sau /compact, ngữ cảnh giảm xuống dưới ctx_warn (50%) → hủy pending.
+    store.set_context(sid, &ContextSnapshot { ts_ms: 2, used_tokens: 100_000, window_tokens: Some(475_000) })?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 2_000)?;
+    assert_eq!(state(&store), "cancelled");
+    assert!(hc.calls.borrow().is_empty());
+    Ok(())
+}
+
+#[test]
+fn codex_rotation_continues_if_old_exits_after_handoff_ready_and_links_by_tag() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("codex", &["codex".into(), "-m".into(), "gpt-6.1-sol".into()], &cwd)?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("codex".into()),
+        cwd: Some(cwd.clone()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("idle"), None, None, 1, 0)?;
+    let sid = store.session_id_for_path(Source::Codex, "codex://old")?;
+    store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: 380_000, window_tokens: Some(475_000) })?;
+    store.link_terminal("t1", sid, "auto")?;
+
+    let hc = FakeHc::default();
+    let git = FakeGit::default();
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 1_000)?;
+    assert_eq!(state(&store), "requested");
+
+    let rel: String = store.conn().query_row("SELECT handoff_path FROM rotations", [], |r| r.get(0))?;
+    std::fs::write(tmp.path().join(&rel), "rotation_id: 1\nNoi dung ban giao day du cho codex.\n<!-- agm:handoff-done -->\n")?;
+    store.set_terminal_status("t1", Some("idle"), None, None, 2, 2_000)?;
+    // Phiên cũ thoát ngay sau khi chuyển sang handoff_ready vẫn phải mở/ghép tiếp.
+    store.conn().execute("UPDATE rotations SET state = 'handoff_ready', handoff_ms = 2000", [])?;
+    store.finish_terminal("t1", Some(0), 2_500)?;
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 3_000)?;
+    assert_eq!(state(&store), "awaiting_link");
+
+    // Codex ghi `<environment_context>` làm turn user đầu tiên, sau đó mới tới turn chứa `[agm-rot:1]`.
+    let sid_new = store.session_id_for_path(Source::Codex, "codex://new")?;
+    store.set_meta(sid_new, &agmag::model::SessionMeta { session_id: "new".into(), cwd: Some(cwd), cli_version: None, started_ms: Some(3_000) })?;
+    store.insert_turn(sid_new, &agmag::model::TurnSummary { ts_ms: 3_010, role: agmag::model::Role::User, summary: "<environment_context>...</environment_context>".into(), byte_offset: 0 })?;
+    store.insert_turn(sid_new, &agmag::model::TurnSummary { ts_ms: 3_020, role: agmag::model::Role::User, summary: "[agm-rot:1] Read .agents/handoff/1-1000.md...".into(), byte_offset: 100 })?;
+
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 4_000)?;
+    assert_eq!(state(&store), "done");
+    assert_eq!(store.terminal("t99")?.unwrap().session, Some(sid_new));
+    assert_eq!(store.terminal("t1")?.unwrap().handoff_state, "handed_off");
+    Ok(())
+}
+
+#[test]
+fn link_timeout_moves_to_needs_attention() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow { address: "t1".into(), app: Some("codex".into()), cwd: Some(cwd.clone()), state: "live".into(), ..Default::default() })?;
+    store.upsert_terminal(&TerminalRow { address: "t99".into(), app: Some("codex".into()), cwd: Some(cwd.clone()), state: "live".into(), ..Default::default() })?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal, new_terminal, app, cwd, state, requested_ms, updated_ms)
+         VALUES ('t1', 't99', 'codex', ?1, 'awaiting_link', 1000, 1000)",
+        [&cwd],
+    )?;
+    rotation::tick(&store, &Config::builtin(), &FakeHc::default(), &FakeGit::default(), 7 * MIN)?;
+    assert_eq!(state(&store), "needs_attention");
+    assert!(store.inbox(true)?.iter().any(|i| i.kind.as_deref() == Some("needs_attention")));
+    Ok(())
+}
+
+#[test]
+fn manual_rotate_is_not_cancelled_below_ctx_warn() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("codex", &["codex".into()], &cwd)?;
+    store.upsert_terminal(&TerminalRow { address: "t1".into(), app: Some("codex".into()), cwd: Some(cwd), state: "live".into(), ..Default::default() })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("idle"), None, None, 1, 0)?;
+    let sid = store.session_id_for_path(Source::Codex, "codex://s-manual")?;
+    // Chỉ dùng 10% ngữ cảnh (< ctx_warn 50%) — gọi tay `agm rotate` vẫn phải chạy, không được hủy.
+    store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: 47_500, window_tokens: Some(475_000) })?;
+    store.link_terminal("t1", sid, "auto")?;
+
+    assert!(rotation::start(&store, "t1", None, true, 1_000)?);
+    let hc = FakeHc::default();
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 2_000)?;
+    assert_eq!(state(&store), "requested");
+    assert_eq!(hc.calls.borrow().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn unmanaged_claude_and_codex_warn_at_ctx_rotate() -> Result<()> {
+    for (app, source, path, window) in [
+        ("claude-code", Source::Claude, "claude://unmanaged", 200_000_u64),
+        ("codex", Source::Codex, "codex://unmanaged", 475_000_u64),
+    ] {
+        let store = Store::open_in_memory()?;
+        store.upsert_terminal(&TerminalRow {
+            address: "t1".into(),
+            name: Some("tay".into()),
+            app: Some(app.into()),
+            state: "live".into(),
+            ..Default::default()
+        })?;
+        let sid = store.session_id_for_path(source, path)?;
+        // 86% ngữ cảnh (≥ ctx_rotate) ở tick đầu.
+        store.set_context(sid, &ContextSnapshot { ts_ms: 1, used_tokens: window * 86 / 100, window_tokens: Some(window) })?;
+        store.link_terminal("t1", sid, "hook")?;
+
+        let hc = FakeHc::default();
+        rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 1_000)?;
+        // % tăng lên 87% → nội dung cảnh báo đổi nhưng không được mở thêm mục mới.
+        store.set_context(sid, &ContextSnapshot { ts_ms: 2, used_tokens: window * 87 / 100, window_tokens: Some(window) })?;
+        rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 2_000)?;
+
+        // Không tạo rotation, không gọi hc, chỉ có đúng 1 cảnh báo `rotation`/`unmanaged` mang % mới nhất.
+        let rot_cnt: i64 = store.conn().query_row("SELECT COUNT(*) FROM rotations", [], |r| r.get(0))?;
+        assert_eq!(rot_cnt, 0, "{app}");
+        assert!(hc.calls.borrow().is_empty(), "{app}");
+        let warns: Vec<_> = store
+            .inbox(false)?
+            .into_iter()
+            .filter(|i| i.source == "rotation" && i.kind.as_deref() == Some("unmanaged"))
+            .collect();
+        assert_eq!(warns.len(), 1, "{app}: {warns:?}");
+        assert!(warns[0].text.contains("agm manage t1"), "{app}");
+        assert!(warns[0].text.contains(&format!("({app})")), "{app}");
+        assert!(warns[0].text.contains("87%"), "{app}: {}", warns[0].text);
+    }
+    Ok(())
+}
+
+#[test]
+fn requested_continues_when_handoff_file_ready_even_if_old_exited() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("codex", &["codex".into()], &cwd)?;
+    store.upsert_terminal(&TerminalRow { address: "t1".into(), app: Some("codex".into()), cwd: Some(cwd.clone()), state: "live".into(), ..Default::default() })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("idle"), None, None, 1, 0)?;
+
+    assert!(rotation::start(&store, "t1", None, true, 1_000)?);
+    let hc = FakeHc::default();
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 1_500)?;
+    assert_eq!(state(&store), "requested");
+
+    let rel: String = store.conn().query_row("SELECT handoff_path FROM rotations", [], |r| r.get(0))?;
+    std::fs::write(tmp.path().join(&rel), "rotation_id: 1\nNoi dung ban giao da hoan tat.\n<!-- agm:handoff-done -->\n")?;
+    store.finish_terminal("t1", Some(0), 2_000)?;
+
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 2_500)?;
+    assert_eq!(state(&store), "awaiting_link");
+    assert_eq!(store.terminal("t99")?.unwrap().state, "live");
+    Ok(())
+}

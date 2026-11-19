@@ -120,7 +120,7 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
-    /// Xoay vòng một thợ OpenCode: bàn giao → kill → phiên mới cùng model
+    /// Xoay vòng phiên: OpenCode (bàn giao + kill + spawn) hoặc Claude/Codex đã quản lý (bàn giao + mở mới, không kill)
     Rotate {
         target: String,
         #[arg(long)]

@@ -31,11 +31,12 @@ fn source_for_app(app: &str) -> Option<&'static str> {
 }
 
 /// Ghép mọi terminal đang sống chưa có phiên. Trả số liên kết mới.
+/// Bỏ qua terminal có nhãn `agm.parent_rotation` (để vòng xoay tự ghép chính xác, không ghép non theo cwd+time).
 pub fn link_all(store: &Store) -> Result<usize> {
     // terminal → danh sách phiên ứng viên
     let mut cands: Vec<(String, Vec<i64>)> = Vec::new();
     for t in store.terminals(true)? {
-        if t.session.is_some() {
+        if t.session.is_some() || t.labels.contains_key("agm.parent_rotation") {
             continue;
         }
         let (Some(app), Some(cwd)) = (t.app.as_deref(), t.cwd.as_deref()) else { continue };
@@ -73,4 +74,56 @@ pub fn link_all(store: &Store) -> Result<usize> {
         }
     }
     Ok(linked)
+}
+
+/// Ghép phiên kế nhiệm Codex dựa vào thẻ `[agm-rot:<rot_id>]` ở đầu một lượt user bất kỳ từ `requested_ms`,
+/// cùng `cwd` chuẩn hóa (không quy về repo root) và chưa gắn với terminal nào.
+pub fn link_codex_rotation(
+    store: &Store,
+    terminal_addr: &str,
+    rot_id: i64,
+    cwd: &str,
+    requested_ms: i64,
+) -> Result<Option<i64>> {
+    let want = norm_cwd(cwd);
+    let tag = format!("[agm-rot:{rot_id}]");
+    let tx = store.conn().unchecked_transaction()?;
+    let already: Option<i64> = tx
+        .query_row("SELECT session FROM terminals WHERE address = ?1", [terminal_addr], |r| r.get(0))
+        .ok()
+        .flatten();
+    if let Some(sid) = already {
+        return Ok(Some(sid));
+    }
+    let mut stmt = tx.prepare(
+        "SELECT DISTINCT s.id, s.cwd
+         FROM sessions s
+         JOIN turns t ON t.session = s.id
+         WHERE s.source = 'codex'
+           AND COALESCE(s.started_ms, 0) >= ?1
+           AND t.role = 'user'
+           AND t.ts_ms >= ?1
+           AND substr(t.summary, 1, length(?2)) = ?2
+           AND NOT EXISTS (SELECT 1 FROM terminals x WHERE x.session = s.id)",
+    )?;
+    let matches: Vec<i64> = stmt
+        .query_map(params![requested_ms, tag], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)))?
+        .filter_map(|r| r.ok())
+        .filter(|(_, c)| c.as_deref().map(norm_cwd).as_deref() == Some(want.as_str()))
+        .map(|(id, _)| id)
+        .collect();
+    drop(stmt);
+    if let [only] = matches.as_slice() {
+        let updated = tx.execute(
+            "UPDATE terminals SET session = ?2, link_source = 'rotation'
+             WHERE address = ?1 AND session IS NULL
+               AND NOT EXISTS (SELECT 1 FROM terminals x WHERE x.session = ?2)",
+            params![terminal_addr, only],
+        )?;
+        tx.commit()?;
+        if updated > 0 {
+            return Ok(Some(*only));
+        }
+    }
+    Ok(None)
 }

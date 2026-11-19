@@ -204,6 +204,12 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # vượ
 3. Khi thợ xong lượt: agm kiểm **worktree sạch** và **có commit mới chạm tệp đó**, kiểm luôn điều kiện mở phiên mới → dừng phiên cũ → mở phiên mới **cùng template/model/thư mục** với nhiệm vụ "đọc tasks/log/git log rồi làm tiếp".
 4. Chưa bàn giao xong thì chờ; quá `handoff_timeout_min` → báo hộp thư, **giữ nguyên phiên cũ**. Thất bại rồi thì không tự thử lại — dùng `agm rotate <t>`.
 
+**Xoay vòng phiên Claude Code & Codex (không tự kill phiên cũ):**
+
+1. Phiên mở tay cần bật quản lý một lần qua `agm manage <t>` (lưu `launch_spec` an toàn theo app; Claude yêu cầu đã cài `agm hook install`).
+2. Khi đạt `ctx_rotate` và rảnh (`idle` hoặc `done`), agm yêu cầu ghi bàn giao vào `.agents/handoff/<id>-<ts>.md` (tự thêm `.agents/handoff/` vào `info/exclude` của repo, không ép commit WIP) với marker cuối `<!-- agm:handoff-done -->`.
+3. Khi tệp bàn giao hợp lệ, agm mở phiên mới đọc tệp đó rồi **chờ bạn** gõ tiếp; phiên cũ giữ nguyên ở trạng thái `[ĐÃ BÀN GIAO]` để bạn kiểm tra và dọn thủ công bằng `agm cleanup` (hoặc `c` trong TUI). Đây là quy ước điều phối (không khóa ghi cấp hệ điều hành trên phiên cũ — tránh sửa trùng trên cả hai cửa sổ).
+
 `agm policy off` tắt toàn bộ hành động tự động (vẫn chạy được cả khi `providers.toml` hỏng).
 
 ## 9. Cấu hình
@@ -232,7 +238,7 @@ price = { input = 3.0, cache_read = 0.3, cache_write = 3.75, output = 15.0 }   #
 max_workers = 3                 # số thợ chạy cùng lúc tối đa
 manager = "codex-mgr"           # terminal nhận cảnh báo ngân sách; bỏ trống = chỉ hộp thư
 ctx_warn = 50                   # % ngữ cảnh: cảnh báo
-ctx_rotate = 70                 # % ngữ cảnh: xoay vòng thợ OpenCode
+ctx_rotate = 70                 # % ngữ cảnh: xoay vòng phiên
 handoff_timeout_min = 10
 ```
 

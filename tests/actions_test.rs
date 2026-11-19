@@ -199,6 +199,19 @@ fn reply_only_to_agent_questions_and_done_dismisses() -> Result<()> {
 }
 
 #[test]
+fn spawn_successor_precheck_allows_no_task_and_checks_budget() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("codex", &["codex".into()], &cwd)?;
+    let name = actions::spawn_successor_precheck(&store, None, Some("main-codex"), "t1", 5, &spec)?;
+    assert_eq!(name, "main-codex-r1");
+    store.set_budget(&agmag::store::BudgetRow { scope: "task:x".into(), unit: "tokens".into(), soft: 0.0, hard: 0.0, action: "notify".into() })?;
+    assert!(actions::spawn_successor_precheck(&store, Some("x"), None, "t1", 5, &spec).is_err());
+    Ok(())
+}
+
+#[test]
 fn set_managed_launch_blocks_agents_and_unconfirmed_users() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let cwd = tmp.path().to_string_lossy().to_string();

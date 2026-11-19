@@ -1,5 +1,5 @@
-use agmag::correlate::link_all;
-use agmag::model::{SessionMeta, Source};
+use agmag::correlate::{link_all, link_codex_rotation};
+use agmag::model::{Role, SessionMeta, Source, TurnSummary};
 use agmag::store::{Store, TerminalRow};
 
 fn term(store: &Store, addr: &str, app: &str, cwd: &str, created: i64) {
@@ -82,5 +82,34 @@ fn session_of_finished_terminal_not_reused() -> anyhow::Result<()> {
     store.finish_terminal("old", Some(0), 1_050_000)?;
     term(&store, "new", "codex", r"D:\w", 1_060_000);
     assert_eq!(link_all(&store)?, 0);
+    Ok(())
+}
+
+#[test]
+fn link_all_skips_rotation_successor_and_codex_tag_links_across_worktrees() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let mut t = TerminalRow {
+        address: "t99".into(),
+        app: Some("codex".into()),
+        cwd: Some(r"D:\repo\.wt\a".into()),
+        state: "live".into(),
+        created_ms: 1_000_000,
+        ..Default::default()
+    };
+    t.labels.insert("agm.parent_rotation".into(), "7".into());
+    store.upsert_terminal(&t)?;
+
+    // Hai phiên khác worktree: một ở repo/.wt/b (khác cwd), một ở repo/.wt/a (đúng cwd + có tag).
+    let wrong_wt = session(&store, Source::Codex, "b.jsonl", r"D:\repo\.wt\b", 1_005_000);
+    store.insert_turn(wrong_wt, &TurnSummary { ts_ms: 1_006_000, role: Role::User, summary: "[agm-rot:7] Read...".into(), byte_offset: 0 })?;
+
+    let right = session(&store, Source::Codex, "a.jsonl", r"D:\repo\.wt\a", 1_005_000);
+    store.insert_turn(right, &TurnSummary { ts_ms: 1_006_000, role: Role::User, summary: "<environment_context>".into(), byte_offset: 0 })?;
+    store.insert_turn(right, &TurnSummary { ts_ms: 1_007_000, role: Role::User, summary: "[agm-rot:7] Read...".into(), byte_offset: 100 })?;
+
+    // link_all phải bỏ qua t99 có nhãn agm.parent_rotation.
+    assert_eq!(link_all(&store)?, 0);
+    assert_eq!(link_codex_rotation(&store, "t99", 7, r"D:\repo\.wt\a", 1_000_000)?, Some(right));
+    assert_eq!(store.terminal("t99")?.unwrap().session, Some(right));
     Ok(())
 }

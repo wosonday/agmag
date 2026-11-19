@@ -214,7 +214,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Kill / interrupt — Codex, Claude, unknown apps: **you only**, always requires typing `y` (`--yes` doesn't apply) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Enable/disable rotation management for a hand-opened Claude Code or Codex session |
 | `agm rotate <t> [--yes]` | Rotate now: OpenCode worker (hand-off + kill + respawn) or a managed Claude/Codex session (hand-off + new session, old one is **not** killed) |
-| `agm cleanup [targets…] [--all] [--yes]` | Manually clean up old handed-off sessions (one `y/N` confirmation) |
+| `agm cleanup [targets…] [--all] [--yes]` | Manually clean up old handed-off sessions (one typed `y/N` confirmation; `--yes` is accepted for compatibility but does not skip it) |
 | `agm budget set <scope> --soft X --hard Y [--action notify\|interrupt\|kill]` · `ls` · `rm <scope>` | Budgets: `task:<ID>` (tokens) or `provider:<name>:<minutes>` (% quota) |
 | `agm policy on\|off\|status` | Enable/disable all automatic actions (emergency stop) |
 | `agm link <t> <session>` | Manually pair terminal ↔ session when agm isn't sure |

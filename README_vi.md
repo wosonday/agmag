@@ -210,7 +210,7 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Dừng / ngắt — Codex, Claude, app chưa rõ: **chỉ bạn**, luôn phải gõ `y` (`--yes` không áp dụng) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay |
 | `agm rotate <t> [--yes]` | Xoay vòng ngay: OpenCode worker (bàn giao + dừng + sinh mới) hoặc Claude/Codex đã `manage` (bàn giao + mở mới, **không** dừng phiên cũ) |
-| `agm cleanup [targets…] [--all] [--yes]` | Dọn thủ công các phiên cũ đã bàn giao (1 lần xác nhận `y/N`) |
+| `agm cleanup [targets…] [--all] [--yes]` | Dọn thủ công các phiên cũ đã bàn giao (1 lần gõ xác nhận `y/N`; `--yes` vẫn được nhận để tương thích nhưng không bỏ qua bước này) |
 | `agm budget set <phạm vi> --soft X --hard Y [--action notify\|interrupt\|kill]` · `ls` · `rm <phạm vi>` | Ngân sách: `task:<ID>` (token) hoặc `provider:<tên>:<phút>` (% hạn mức) |
 | `agm policy on\|off\|status` | Bật/tắt mọi hành động tự động (nút dừng khẩn) |
 | `agm link <t> <session>` | Ghép tay terminal ↔ phiên khi agm không chắc |

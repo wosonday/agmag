@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Thay đổi
+
+- TUI chuyển sang giao diện tiếng Anh có màu ANSI; bảng co giãn theo `COLUMNS` (60–200, mặc định 110), đo đúng độ rộng Unicode (CJK/emoji) và lọc mọi chuỗi điều khiển CSI/OSC trong dữ liệu hiển thị.
+- `agm cleanup` an toàn hơn: kiểm lại trạng thái mới nhất, app, thời điểm tạo và thư mục của cả phiên cũ lẫn phiên kế nhiệm trước khi dọn; luôn cần một lần gõ xác nhận, kể cả khi có `--yes`.
+- Bàn giao phiên Claude/Codex chỉ hoàn tất khi đọc được trạng thái sống mới nhất; lỗi đọc không còn dựa vào trạng thái `done` đã lưu.
+
 ## [0.2.0] - 2026-11-19
 
 ### Thêm mới

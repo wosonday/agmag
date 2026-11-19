@@ -330,3 +330,18 @@ fn render_wide_untrusted_content_stays_inside_terminal_cells() -> anyhow::Result
     }
     Ok(())
 }
+
+#[test]
+fn wide_budget_scope_preserves_soft_and_hard_badges() -> anyhow::Result<()> {
+    use unicode_width::UnicodeWidthStr;
+    let store = seeded()?;
+    let mut snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    snap.budgets[0].scope = "界".repeat(40);
+    for (value, badge) in [(340_000.0, "soft"), (9_000_000.0, "HARD")] {
+        snap.budgets[0].value = Some(value);
+        let plain = strip_ansi(&render(&snap, 60));
+        assert!(plain.contains(&format!(" {badge}")), "{badge} missing:\n{plain}");
+        assert!(plain.lines().all(|line| line.width() < 60));
+    }
+    Ok(())
+}

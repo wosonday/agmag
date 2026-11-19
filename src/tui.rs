@@ -27,6 +27,10 @@ fn width() -> usize {
     std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(110).clamp(60, 200)
 }
 
+fn confirmation_note(action: &str) -> String {
+    format!("type y + Enter to confirm {action} (anything else cancels)")
+}
+
 fn render_frame(text: &str, w: usize, cleanup_list: Option<&[CleanupCandidate]>, note: Option<(NoteKind, &str)>) -> String {
     let max_w = w.saturating_sub(1);
     let mut body = String::with_capacity(text.len() + 512);
@@ -218,11 +222,11 @@ pub fn run(
                                     .collect();
                                 note = Some((
                                     NoteKind::Warn,
-                                    format!(
-                                        "confirm cleanup of {} session(s) ({})? type y + Enter (anything else cancels)",
+                                    confirmation_note(&format!(
+                                        "cleanup of {} session(s) ({})",
                                         chosen.len(),
                                         items.join(", ")
-                                    ),
+                                    )),
                                 ));
                                 cleanup_selected = Some(chosen);
                             }
@@ -250,7 +254,7 @@ pub fn run(
                     TuiCmd::Interrupt(t) => format!("interrupt {t}"),
                     _ => unreachable!(),
                 };
-                note = Some((NoteKind::Warn, format!("confirm {prompt_desc}? type y + Enter (anything else cancels)")));
+                note = Some((NoteKind::Warn, confirmation_note(&prompt_desc)));
                 pending = Some(cmd);
             }
             Ok(TuiCmd::Reply(id, text)) => {
@@ -285,7 +289,7 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{render_frame, NoteKind};
+    use super::{confirmation_note, render_frame, NoteKind};
     use unicode_width::UnicodeWidthStr;
 
     #[test]
@@ -308,5 +312,14 @@ mod tests {
         }
         assert!(plain.lines().all(|line| line.width() < 60), "{plain}");
         assert!(plain.contains("agm>"));
+    }
+
+    #[test]
+    fn confirmation_instruction_precedes_long_action_details() {
+        let note = confirmation_note(&format!("kill {}", "long-target".repeat(30)));
+        assert!(note.starts_with("type y + Enter to confirm kill "));
+        let clipped = agmag::dashboard::one_line(&note, 57);
+        assert!(clipped.starts_with("type y + Enter to confirm kill "));
+        assert!(clipped.width() <= 57);
     }
 }

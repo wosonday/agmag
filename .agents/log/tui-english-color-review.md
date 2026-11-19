@@ -36,3 +36,14 @@
 - Prepared `.agents/reports/tui-english-color-copilot.md` as a pending-review draft, with exact-SHA, safety dependency and protected-main-file rules.
 - Checked `copilot --help`; did not launch an integrator or grant blanket permissions.
 - Tool catalog does not expose a current-session compact operation. Final context/handoff will be persisted before ending work; no other agent will be killed.
+
+## 2026-11-19 · Opus follow-up
+- Opus returned PASS on `5d42e71`, no Critical/Major in supplied TUI code; review details in `.agents/reviews/tui-english-color-opus-1.md`.
+- Reproduced its concrete padding finding with a new red test: wide scope clipped the `soft` badge.
+- Replaced scalar-based provider/scope padding with terminal-cell padding; badges remain visible.
+- Moved typed-y instructions to the front of confirmation notes; added a unit test for long action descriptions.
+- Clarified `COLUMNS` defaults/clamping in both README files instead of claiming automatic pane-size detection.
+- `cargo test --offline --locked`: 202 passed, 0 failed.
+- `cargo clippy --offline --all-targets -- -D warnings`: clean.
+- Remaining Opus notes (height/scrollback, bidi/Cf, terminal width/VT differences, confirmation expiry) are nonblocking limitations, not silently claimed fixed.
+- Source correction SHA will receive a final short Opus follow-up before delivery.

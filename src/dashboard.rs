@@ -127,6 +127,10 @@ fn paint(style: &str, text: &str) -> String {
     format!("{style}{text}{RESET}")
 }
 
+fn pad_cells(text: &str, width: usize) -> String {
+    format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
+}
+
 fn pct_color(pct: f64) -> &'static str {
     if pct >= 85.0 {
         BRIGHT_RED
@@ -435,14 +439,14 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             let pct_str = paint(col, &format!("{:>3.0}%", q.used_percent));
             out += &format!(
                 "  {} {}  {} {pct_str}  {reset}\n",
-                paint(WHITE, &format!("{:<8}", prov)),
+                paint(WHITE, &pad_cells(&prov, 8)),
                 paint(CYAN, &format!("{:>3}", win)),
                 colored_bar(q.used_percent, col),
             );
         } else {
             out += &format!(
                 "  {} {}  {} {}  {reset}\n",
-                paint(WHITE, &format!("{:<8}", prov)),
+                paint(WHITE, &pad_cells(&prov, 8)),
                 paint(CYAN, &format!("{:>3}", win)),
                 paint(GRAY, "··········"),
                 paint(GRAY, "   ?"),
@@ -599,7 +603,7 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             Some(p) => paint(bar_col, &format!("{p:>3.0}%")),
             None => paint(GRAY, "   ?"),
         };
-        let scope_padded = format!("{:<width$}", one_line(&b.scope, scope_w), width = scope_w);
+        let scope_padded = pad_cells(&one_line(&b.scope, scope_w), scope_w);
         let val_str = b.value.filter(|v| v.is_finite()).map(num).unwrap_or_else(|| "?".into());
         let hard_str = if b.hard.is_finite() { num(b.hard) } else { "?".into() };
         let unit = sanitize_one_line(&b.unit);

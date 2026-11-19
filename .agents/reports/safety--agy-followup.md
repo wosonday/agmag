@@ -28,3 +28,10 @@
 - Documentation follow-up after approval: `cleanup --yes` is accepted for compatibility but cannot bypass its single typed confirmation.
 - hc lacks identity-conditional kill; fresh checks reduce get/kill TOCTOU but cannot remove that race.
 - No destructive real-TTY manual trial performed.
+
+## Opus round 1 follow-up
+- Opus reviewed `ddbd79c`: PASS with documented limitations, no Critical/Major must-fix in supplied code.
+- Review artifact: `.agents/reviews/safety--agy-followup-opus-1.md`.
+- Proactively addressed selection-time identity drift, missing fresh-finished audit entries, per-item audit errors and additional negative coverage.
+- Full suite after follow-up: 206 passed, 0 failed; strict Clippy passed.
+- Final review of the follow-up commit is pending; the round-1 verdict does not automatically cover later changes.

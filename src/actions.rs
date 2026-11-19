@@ -14,7 +14,7 @@ const PROTECTED_APPS: [&str; 2] = ["codex", "claude-code"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Caller {
-    /// Lệnh gõ từ terminal của người (có TTY, không phải agent); `confirmed` = đã trả lời y hoặc `--yes`.
+    /// Lệnh gõ từ terminal của người; `confirmed` = đã trả lời y hoặc `--yes` nếu lệnh cho phép (cleanup luôn hỏi).
     User { confirmed: bool },
     /// Lệnh do một agent (hoặc script không TTY) gọi; kèm terminal gọi nếu biết.
     Agent(Option<String>),
@@ -344,6 +344,10 @@ pub struct CleanupCandidate {
     pub new_terminal: Option<String>,
     pub new_live: bool,
     pub handoff_path: Option<String>,
+    pub old_created_ms: i64,
+    pub new_created_ms: Option<i64>,
+    pub old_session: Option<i64>,
+    pub new_session: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
@@ -354,10 +358,11 @@ pub struct CleanupReport {
 }
 
 /// Danh sách phiên nguồn đã `handed_off` đủ điều kiện dọn thủ công:
-/// 1) `old live` + phiên kế nhiệm đã `linked` & `live`, hoặc 2) `old` đã thoát (`exited`).
+/// 1) `old live` + phiên kế nhiệm đã `linked` & `live`, hoặc 2) `old` đã thoát (`finished`).
 pub fn eligible_cleanups(store: &Store) -> Result<Vec<CleanupCandidate>> {
     let mut stmt = store.conn().prepare(
-        "SELECT r.id, o.address, o.name, o.app, o.state, r.new_terminal, n.state, n.session, r.handoff_path
+        "SELECT r.id, o.address, o.name, o.app, o.state, r.new_terminal, n.state, n.session, r.handoff_path,
+                o.created_ms, n.created_ms, o.session
          FROM rotations r
          JOIN terminals o ON o.address = r.old_terminal
          LEFT JOIN terminals n ON n.address = r.new_terminal
@@ -381,6 +386,10 @@ pub fn eligible_cleanups(store: &Store) -> Result<Vec<CleanupCandidate>> {
                     new_terminal: r.get(5)?,
                     new_live: new_state.as_deref() == Some("live") && new_sess.is_some(),
                     handoff_path: r.get(8)?,
+                    old_created_ms: r.get(9)?,
+                    new_created_ms: r.get(10)?,
+                    old_session: r.get(11)?,
+                    new_session: new_sess,
                 },
                 new_state,
                 new_sess,
@@ -411,6 +420,13 @@ fn fresh_cleanup_terminal(hc: &dyn Hc, expected: &crate::store::TerminalRow) -> 
         bail!("không xác minh được danh tính hiện tại của {}", expected.address);
     }
     Ok(fresh)
+}
+
+fn record_cleanup(store: &Store, address: &str, detail: &str, now: i64) -> Result<()> {
+    store.remove_terminal(address)?;
+    store.resolve_inbox_for_terminal(address, "rotation", now)?;
+    store.resolve_inbox_for_terminal(address, "context", now)?;
+    store.log_action("user", "cleanup", address, detail, true, now)
 }
 
 /// Thực thi dọn dẹp cho danh sách đã đóng băng, chỉ chấp nhận `Caller::User { confirmed: true }`.
@@ -446,9 +462,17 @@ pub fn execute_cleanup_batch(
             report.skipped.push(format!("{}: không còn ở trạng thái chờ dọn", item.old_terminal));
             continue;
         }
+        if old_row.created_ms != item.old_created_ms || old_row.session != item.old_session {
+            report.skipped.push(format!("{}: danh tính nguồn đã đổi từ lúc chọn", item.old_terminal));
+            continue;
+        }
         if old_row.state == "live" {
             let successor = match item.new_terminal.as_deref().map(|a| store.terminal(a)).transpose()?.flatten() {
-                Some(nt) if nt.state == "live" && nt.session.is_some() && nt.app == item.old_app => nt,
+                Some(nt) if nt.state == "live"
+                    && nt.session.is_some()
+                    && nt.app == item.old_app
+                    && Some(nt.created_ms) == item.new_created_ms
+                    && nt.session == item.new_session => nt,
                 _ => {
                     report.skipped.push(format!("{}: phiên kế nhiệm không còn live hoặc chưa ghép", item.old_terminal));
                     continue;
@@ -473,36 +497,35 @@ pub fn execute_cleanup_batch(
                 }
             };
             if fresh.state == "finished" {
-                store.finish_terminal(&item.old_terminal, fresh.exit_code, now)?;
-                store.remove_terminal(&item.old_terminal)?;
-                store.resolve_inbox_for_terminal(&item.old_terminal, "rotation", now)?;
-                store.resolve_inbox_for_terminal(&item.old_terminal, "context", now)?;
-                report.done += 1;
+                let result = store.finish_terminal(&item.old_terminal, fresh.exit_code, now)
+                    .and_then(|()| record_cleanup(store, &item.old_terminal, "old freshly finished", now));
+                match result {
+                    Ok(()) => report.done += 1,
+                    Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
+                }
                 continue;
             }
             // Caller was explicitly confirmed above; kill immediately after identity checks,
             // without a second lookup that could silently fall back to stale database state.
             let result = hc.kill(&item.old_terminal);
-            store.log_action("user", "kill", &item.old_terminal, "cleanup", result.is_ok(), now)?;
+            if let Err(e) = store.log_action("user", "kill", &item.old_terminal, "cleanup", result.is_ok(), now) {
+                report.errors.push(format!("{}: lỗi ghi nhật ký kill: {e:#}", item.old_terminal));
+            }
             match result {
                 Ok(()) => {
-                    let _ = store.finish_terminal(&item.old_terminal, None, now);
-                    let _ = store.remove_terminal(&item.old_terminal);
-                    let _ = store.resolve_inbox_for_terminal(&item.old_terminal, "rotation", now);
-                    let _ = store.resolve_inbox_for_terminal(&item.old_terminal, "context", now);
-                    report.done += 1;
+                    let tracked = store.finish_terminal(&item.old_terminal, None, now)
+                        .and_then(|()| record_cleanup(store, &item.old_terminal, "old killed after handoff", now));
+                    match tracked {
+                        Ok(()) => report.done += 1,
+                        Err(e) => report.errors.push(format!("{}: đã kill nhưng lỗi ghi nhận: {e:#}", item.old_terminal)),
+                    }
                 }
                 Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
             }
         } else if old_row.state == "finished" {
             // Nhánh old exited: dọn bản ghi terminal và đóng inbox liên quan, không gọi hc.
-            match store.remove_terminal(&item.old_terminal) {
-                Ok(()) => {
-                    let _ = store.resolve_inbox_for_terminal(&item.old_terminal, "rotation", now);
-                    let _ = store.resolve_inbox_for_terminal(&item.old_terminal, "context", now);
-                    let _ = store.log_action("user", "cleanup", &item.old_terminal, "old exited", true, now);
-                    report.done += 1;
-                }
+            match record_cleanup(store, &item.old_terminal, "old exited", now) {
+                Ok(()) => report.done += 1,
                 Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
             }
         } else {

@@ -199,6 +199,10 @@ fn newly_finished_old_cleanup_resolves_inbox_without_killing() -> Result<()> {
     assert_eq!(report.done, 1);
     assert!(!hc.calls.borrow().iter().any(|c| c.starts_with("kill ")));
     assert!(store.inbox(true)?.is_empty());
+    let audits: i64 = store.conn().query_row(
+        "SELECT COUNT(*) FROM actions WHERE kind='cleanup' AND target='t1' AND ok=1", [], |r| r.get(0)
+    )?;
+    assert_eq!(audits, 1);
     Ok(())
 }
 
@@ -211,5 +215,83 @@ fn cleanup_rejects_agents_and_unconfirmed_users_without_contacting_hc() -> Resul
         assert!(actions::execute_cleanup_batch(&store, &hc, &caller, &items, 3).is_err());
         assert!(hc.calls.borrow().is_empty());
     }
+    Ok(())
+}
+
+#[test]
+fn cleanup_rejects_identity_drift_after_selection_even_if_db_and_hc_agree() -> Result<()> {
+    for target in ["t1", "t2"] {
+        for field in ["created_ms", "session"] {
+            let store = cleanup_fixture()?;
+            let items = actions::eligible_cleanups(&store)?;
+            let mut value = live(target);
+            if field == "created_ms" {
+                store.conn().execute("UPDATE terminals SET created_ms=99 WHERE address=?1", [target])?;
+                value["created_ms"] = json!(99);
+            } else {
+                let sid = store.session_id_for_path(Source::Codex, "codex://replacement")?;
+                store.link_terminal(target, sid, "manual")?;
+            }
+            let hc = SafetyHc { responses: [(target.into(), value)].into(), ..Default::default() };
+            let report = actions::execute_cleanup_batch(&store, &hc, &Caller::User { confirmed: true }, &items, 3)?;
+            assert!(!hc.calls.borrow().iter().any(|c| c.starts_with("kill ")), "{target}/{field}: {:?}", hc.calls.borrow());
+            assert_eq!(report.skipped.len(), 1);
+            assert_eq!(store.terminal("t1")?.unwrap().state, "live");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cleanup_skips_unknown_or_changed_cwd_app_and_creation_without_mutating_old() -> Result<()> {
+    for target in ["t1", "t2"] {
+        for field in ["cwd", "app", "created_ms"] {
+            let store = cleanup_fixture()?;
+            let mut value = live(target);
+            if field == "cwd" {
+                store.conn().execute("UPDATE terminals SET cwd='D:/expected' WHERE address=?1", [target])?;
+                value["cwd"] = json!("D:/different");
+            } else if field == "created_ms" {
+                store.conn().execute("UPDATE terminals SET created_ms=0 WHERE address=?1", [target])?;
+            }
+            let items = actions::eligible_cleanups(&store)?;
+            if field == "app" {
+                store.conn().execute("UPDATE terminals SET app='pwsh' WHERE address=?1", [target])?;
+            }
+            let hc = SafetyHc { responses: [(target.into(), value)].into(), ..Default::default() };
+            let report = actions::execute_cleanup_batch(&store, &hc, &Caller::User { confirmed: true }, &items, 3)?;
+            assert_eq!(report.done, 0, "{target}/{field}");
+            assert!(!hc.calls.borrow().iter().any(|c| c.starts_with("kill ")));
+            let old = store.terminal("t1")?.unwrap();
+            assert_eq!(old.state, "live");
+            assert_eq!(old.handoff_state, "handed_off");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn cleanup_audit_failure_is_reported_without_losing_later_batch_items() -> Result<()> {
+    let store = cleanup_fixture()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t3".into(), app: Some("codex".into()), state: "finished".into(),
+        created_ms: 1, ..Default::default()
+    })?;
+    store.set_terminal_handoff_state("t3", "handed_off")?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal,app,state,updated_ms) VALUES ('t3','codex','done',1)", []
+    )?;
+    store.conn().execute_batch(
+        "CREATE TRIGGER fail_kill_audit BEFORE INSERT ON actions WHEN NEW.kind='kill'
+         BEGIN SELECT RAISE(FAIL, 'audit unavailable'); END;"
+    )?;
+    let items = actions::eligible_cleanups(&store)?;
+    let hc = SafetyHc::default();
+    let report = actions::execute_cleanup_batch(&store, &hc, &Caller::User { confirmed: true }, &items, 3)?;
+    assert_eq!(report.done, 2);
+    assert_eq!(report.errors.len(), 1);
+    assert!(report.errors[0].contains("audit unavailable"));
+    assert_eq!(store.terminal("t1")?.unwrap().state, "removed");
+    assert_eq!(store.terminal("t3")?.unwrap().state, "removed");
     Ok(())
 }

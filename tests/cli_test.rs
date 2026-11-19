@@ -371,3 +371,31 @@ fn cli_cleanup_help_documents_mandatory_confirmation_even_with_yes() {
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("cleanup still requires one typed confirmation"));
 }
+
+#[test]
+fn cli_cleanup_yes_without_human_confirmation_does_not_touch_terminals() {
+    let tmp = sandbox(None);
+    {
+        let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+        for address in ["t1", "t2"] {
+            store.upsert_terminal(&agmag::store::TerminalRow {
+                address: address.into(), app: Some("codex".into()), state: "live".into(),
+                created_ms: 1, ..Default::default()
+            }).unwrap();
+        }
+        let sid = store.session_id_for_path(agmag::model::Source::Codex, "codex://successor").unwrap();
+        store.link_terminal("t2", sid, "rotation").unwrap();
+        store.set_terminal_handoff_state("t1", "handed_off").unwrap();
+        store.conn().execute(
+            "INSERT INTO rotations (old_terminal,new_terminal,app,state,updated_ms) VALUES ('t1','t2','codex','done',1)", []
+        ).unwrap();
+    }
+    let out = agm_env(tmp.path(), &["cleanup", "--all", "--yes"], &[]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Đã hủy."));
+    let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+    assert_eq!(store.terminal("t1").unwrap().unwrap().state, "live");
+    assert_eq!(store.conn().query_row(
+        "SELECT COUNT(*) FROM actions WHERE kind='kill'", [], |r| r.get::<_, i64>(0)
+    ).unwrap(), 0);
+}

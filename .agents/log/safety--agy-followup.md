@@ -35,3 +35,16 @@
 - Started fallback independent Claude Code Opus (`claude-opus-5-5`, high effort), no tools, safe mode, plan permission mode, permission prompts disabled; source/diff supplied through stdin outside the repo.
 - Pending review tracked in `.agents/reports/safety--agy-followup.md`; no source changed after the reviewed implementation commit.
 - Additional file for handoff: `.agents/reports/safety--agy-followup.md`.
+
+## 2026-11-19 · Opus round 1 and hardening
+- Claude Code Opus review succeeded (session `1988cff7-0db1-4628-8b17-4f4442daf5ef`): PASS with stated limitations, no Critical/Major must-fix in supplied excerpts.
+- Recorded its findings in `.agents/reviews/safety--agy-followup-opus-1.md` without treating them as release approval.
+- Added a new regression for DB+hc identity drift after selection; it failed before the follow-up fix (`get t2`, `get t1`, `kill t1`).
+- Froze old/successor creation timestamps and linked session row IDs in `CleanupCandidate`, checking those before cleanup. These are additive JSON metadata fields; no database migration.
+- Added cleanup audit entries for freshly finished old terminals and per-item error reporting for audit/bookkeeping failures; later batch items continue.
+- Added negative cwd/app/unknown-creation tests, nonmutation assertions, audit-failure injection, and CLI `cleanup --all --yes` non-TTY cancellation coverage.
+- `cargo test --offline` → 206 passed, 0 failed.
+- `cargo clippy --offline --all-targets -- -D warnings` → passed.
+- Non-destructive real schema observation via `hc get`: `t2s` returned top-level live and created_ms=1795003409789; finished `t34` returned finished and retained created_ms=1795007307899. No terminal actions performed.
+- Confirmed source `Store::finish_terminal` writes `finished`; `upsert_terminal` preserves nonzero creation timestamps. Legacy unknown timestamps still fail closed.
+- Follow-up files: `src/actions.rs`, `tests/safety_test.rs`, `tests/cli_test.rs`, this log and Opus review artifact. Request final Opus review of the follow-up SHA before declaring the gate passed.

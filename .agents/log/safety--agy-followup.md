@@ -48,3 +48,13 @@
 - Non-destructive real schema observation via `hc get`: `t2s` returned top-level live and created_ms=1795003409789; finished `t34` returned finished and retained created_ms=1795007307899. No terminal actions performed.
 - Confirmed source `Store::finish_terminal` writes `finished`; `upsert_terminal` preserves nonzero creation timestamps. Legacy unknown timestamps still fail closed.
 - Follow-up files: `src/actions.rs`, `tests/safety_test.rs`, `tests/cli_test.rs`, this log and Opus review artifact. Request final Opus review of the follow-up SHA before declaring the gate passed.
+
+## 2026-11-19 · final Opus gate and handoff
+- Committed follow-ups as `b2ac868`; no product code changed afterward.
+- Opus final review returned **PASS for b2ac868**, with no Critical/Major must-fix in supplied source. Reviewer did not independently execute tests.
+- Preserved review scope and nonblocking limitations in `.agents/reviews/safety--agy-followup-opus-2.md`; updated `.agents/reports/safety--agy-followup.md`.
+- Per Opus suggestion, opened production SQLite with `mode=ro`, querying only `terminals` for `t2s`: stored created_ms 1795003409789 matches hc. No data write, agent stop or permission bypass.
+- This observation covers one real terminal, not all launch variants. Real-TTY destructive cleanup remains untested.
+- Attempt to notify active agy `t38` was guarded and sent no input because it was working. Design discussion did complete through the separate read-only agy consultation recorded above.
+- Final record-only changed files: this log, final report and Opus round-2 artifact.
+- No merge, install, release, shared-checkout edit or TUI-lane modification.

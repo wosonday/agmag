@@ -881,22 +881,34 @@ fn window_label(minutes: u32) -> String {
     }
 }
 
-fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
+fn quota_table(rows: &[report::QuotaRow], now_s: i64) -> Table {
     // Hiển thị phần CÒN LẠI (giảm dần từ 100%); JSON vẫn có cả `used_percent` lẫn `left_percent`.
     let mut t = table(&["plan", "window", "left", "", "reset"]);
     for r in rows {
-        let left = if r.left_percent.is_finite() {
-            r.left_percent
-        } else {
-            0.0
-        };
-        let filled = ((left / 10.0).round() as usize).min(10);
         let reset = if r.reset_passed {
             "reset passed".to_string()
         } else {
             let left = r.resets_at_s - now_s;
             format!("in {}h{:02}m", left / 3600, left % 3600 / 60)
         };
+        if r.stale {
+            // Cùng nhãn với TUI: số cũ không được trình bày như số tươi (không bar, không %).
+            let age = agmag::dashboard::format_age_s(r.observed_age_s);
+            t.add_row(vec![
+                r.provider.clone(),
+                window_label(r.window_minutes),
+                "··········".into(),
+                format!("stale · seen {age} ago"),
+                reset,
+            ]);
+            continue;
+        }
+        let left = if r.left_percent.is_finite() {
+            r.left_percent
+        } else {
+            0.0
+        };
+        let filled = ((left / 10.0).round() as usize).min(10);
         t.add_row(vec![
             r.provider.clone(),
             window_label(r.window_minutes),
@@ -909,5 +921,52 @@ fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
             reset,
         ]);
     }
-    println!("{t}");
+    t
+}
+
+fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
+    println!("{}", quota_table(rows, now_s));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quota_row(stale: bool, age_s: i64) -> report::QuotaRow {
+        report::QuotaRow {
+            provider: "codex".into(),
+            window_minutes: 10080,
+            used_percent: 22.0,
+            left_percent: 78.0,
+            resets_at_s: 1_000_000 + 3600,
+            observed_ms: 0,
+            reset_passed: false,
+            stale,
+            observed_age_s: age_s,
+        }
+    }
+
+    #[test]
+    fn quota_table_marks_stale_rows_without_fresh_bar() {
+        let now_s = 1_000_000;
+        let stale = quota_table(&[quota_row(true, 90_000)], now_s).to_string();
+        assert!(
+            stale.contains("stale · seen 1d01h ago"),
+            "bảng stale phải có nhãn tuổi như TUI: {stale}"
+        );
+        assert!(
+            !stale.contains('█') && !stale.contains("78%"),
+            "hàng stale không được trình bày như số tươi: {stale}"
+        );
+
+        let fresh = quota_table(&[quota_row(false, 0)], now_s).to_string();
+        assert!(
+            fresh.contains("78%"),
+            "hàng tươi vẫn hiện phần trăm: {fresh}"
+        );
+        assert!(
+            !fresh.contains("stale"),
+            "hàng tươi không có nhãn stale: {fresh}"
+        );
+    }
 }

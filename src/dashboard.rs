@@ -182,7 +182,8 @@ fn pad_cells(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
 }
 
-fn format_age_s(s: i64) -> String {
+/// Định dạng tuổi dữ liệu (giây) cho cả TUI và bảng `agm quota`: `1d05h`, `2h30m`, `12m`.
+pub fn format_age_s(s: i64) -> String {
     let s = s.max(0);
     let days = s / 86400;
     let hours = (s % 86400) / 3600;

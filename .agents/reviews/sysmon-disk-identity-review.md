@@ -64,3 +64,12 @@ Logic nằm ở `src/sysmon.rs:271-285`:
 - Độc lập với phần hiển thị: `src/dashboard.rs` / header TUI không đổi trong diff, chỉ nhận `Vec<DiskStats>` đã gộp từ `src/sysmon.rs:456`.
 
 `nhỏ`: không có.
+
+## 4. JSON / riêng tư — không có lỗi; một nhận xét `nhỏ`
+
+- `src/sysmon.rs:51`: `DiskStats` chỉ `#[derive(Debug, Clone, PartialEq, Serialize)]` — **không** có `Deserialize`. Vậy câu hỏi "serde `skip_serializing` có làm hỏng deserialize không" là không áp dụng: không có đường deserialize nào cho struct này (đã grep toàn bộ `*.rs`: chỉ các struct ở `config.rs`, `model.rs`, `launch.rs` derive `Deserialize`).
+- `src/sysmon.rs:66-67`: `#[serde(skip_serializing)] pub volume_id: Option<String>`. Thuộc tính đúng để giả trường khỏi JSON. Brief cho phép "`#[serde(skip)]` hoặc tương đương" → `skip_serializing` là tương đương hợp lệ.
+- Đường xuất JSON: `src/main.rs:266-268` gọi `emit(json, &stats, ..)` với `stats: SysStats`; `src/main.rs:684-688` dùng `serde_json::to_string_pretty`. `SysStats` chứa `Vec<DiskStats>` (`src/sysmon.rs:116-120`) nên trường được bỏ qua ở mọi cấp. Cách tái hiện: `cargo run --offline -- sys --json` → JSON có `mount`, `file_system`, `also_mounted_at`, ... nhưng không có khóa `volume_id`.
+- Không có chỗ nào đọc nhãn volume: grep toàn repo cho `GetVolumeInformation` / `VolumeName` / `Win32_LogicalDisk` → **không có kết quả mã nguồn**. Chuỗi `GetVolumeNameForVolumeMountPointW` (`src/sysmon.rs:291`, doc ở `:288`) là API lấy GUID mount, không phải API đọc nhãn; feature `Win32_Storage_FileSystem` (`Cargo.toml:22`) chỉ mở module chứa API đó, không tự gọi API nhãn. Phần hiển thị (`src/dashboard.rs:846-848`, `src/sysmon.rs:101-103`) chỉ dùng `mount` / `also_mounted_at`, không đụng đến `volume_id`.
+
+`nhỏ` (phòng sau này): nếu sau này `DiskStats` được thêm `Deserialize`, nên đổi sang `#[serde(skip)]` để JSON cũ thiếu `volume_id` vẫn deserialize được. Hiện tại không ảnh hưởng nghiệm thu. Không ghi nhãn/email nào vào tệp review này.

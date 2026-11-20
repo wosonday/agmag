@@ -29,3 +29,16 @@
 - mount mạng / đầu đọc thẻ không thẻ: `SysSampler::sample` bỏ qua đĩa có `total_space() == 0` ở `src/sysmon.rs:439` **trước** lời gọi ở `src/sysmon.rs:450`, nên ổ trống không bao giờ gọi FFI. Mount mạng vẫn đi qua API nhưng đây là tra cứu metadata cục bộ, không I/O mạng trên volume cục bộ; brief đã chấp nhận độ trễ này. Không có lời gọi nào có khả năng treo lâu.
 
 `nhỏ` (ghi nhận, không cần sửa): có thể thêm bước chuẩn hóa "đảm bảo kết thúc bằng `\`" trước khi gọi để xử lý mount folder trên Windows, nhưng hiện tại failure mode đã an toàn (`None`) nên không ảnh hưởng nghiệm thu.
+
+## 2. Unix `dev()` — không có lỗi (đúng hành vi, cfg đầy đủ)
+
+- `src/sysmon.rs:308-312`: `#[cfg(unix)] volume_id` dùng `std::os::unix::fs::MetadataExt::dev()` trên `std::fs::metadata(mount)`. `metadata` đi theo symlink; `st_dev` là định danh filesystem của mount point.
+  - Bind mount / hai path cùng một fs → cùng `dev()` → `merge_disks` gộp. Đúng kỳ vọng mục 2.
+  - Hai fs khác nhau → `dev()` khác nhau → không gộp (bất kể `file_system`/dung lượng). Đúng.
+  - `metadata()` lỗi (mount point cũ/không truy cập được) → `.ok()` → `None` → không gộp, đúng quy tắc "không lấy được thì chỉ gộp khi trùng mount".
+- Biên dịch đa nền tảng (đọc tĩnh, không chạy cross-compile theo hướng dẫn mục 2):
+  - `std::os::unix::fs::MetadataExt` và `MetadataExt::dev()` có trên cả Linux lẫn macOS → nhánh `#[cfg(unix)]` biên dịch được ở cả hai.
+  - `src/sysmon.rs:314-317` có nhánh `#[cfg(not(any(windows, unix)))]` trả `None`, nên mọi target đều có ký hiệu `volume_id` — phép `use ... volume_id` không điều kiện ở `tests/sysmon_test.rs:6` không bị lỗi unresolved import.
+  - `windows-sys` chỉ được `use` bên trong thân hàm có `#[cfg(windows)]` (`src/sysmon.rs:291`) và chỉ khai báo trong `[target.'cfg(windows)'.dependencies]` (`Cargo.toml:21-22`) → Linux/macOS không biên dịch/link crate này. Không dùng `libc` ở đây nên không phát sinh lỗi cfg.
+
+`nhỏ`: không có.

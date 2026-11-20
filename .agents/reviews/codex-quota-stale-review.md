@@ -77,4 +77,12 @@ Lệnh: `cargo test --offline` (chạy 2 lần; lần 2 gom tóm tắt).
 
 ## KẾT LUẬN
 
-CHƯA ĐẠT (đang hoàn thiện phần cuối).
+**CHƯA ĐẠT.**
+
+Lý do (xếp theo mức ưu tiên):
+1. **Nên sửa — mục (5):** `src/main.rs:884-913` bảng chữ `agm quota` (không `--json`) không hiển thị `stale`/`seen … ago`, trong khi `.agents/tasks/codex-quota-stale.md:21` yêu cầu `agm quota` (bảng + `--json`) thêm stale. Log tự ghi nhận lệch tại `.agents/log/codex-quota-stale.md:32`. Đây là bề mặt người dùng ban đầu nhìn thấy con số 84% gây hiểu lầm, nên không nên bỏ qua. Cách sửa: thêm nhãn/định dạng stale vào `print_quota` giống TUI; hoặc nếu CEO xác nhận ý dòng 21 chỉ là `--json` + TUI, cần ghi rõ quyết định đó vào tệp tác vụ/log để reviewer đối chiếu.
+2. **Nên sửa — mục (4):** `tests/codex_quota_test.rs:124` assert `elapsed.as_secs() <= 8` với `FETCH_TIMEOUT = 8s` (`src/codex_quota.rs:103`) chỉ còn ~0.7s biên an toàn (thực đo 8.33s); có rủi ro chập chờn trên máy tải cao do chi phí `taskkill`/`wait()` nằm sau deadline. Nên chừa biên rõ ràng hoặc hạ `FETCH_TIMEOUT`.
+
+Các mục (1), (2), (3), (6) đạt yêu cầu; chỉ còn các phát hiện mức `nhỏ` nêu trên (tùy chọn dọn dẹp). `cargo test --offline`: **290 đạt / 0 lỗi**.
+
+Khi hai mục "nên sửa" ở trên được xử lý (hoặc được CEO chấp nhận bằng văn bản), review này sẽ chuyển sang **ĐẠT**.

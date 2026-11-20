@@ -52,3 +52,19 @@ Không sửa: schema SQLite (`src/store/**`) trừ khi bắt buộc — nếu c�
 
 Xong: `agm send t4v --type "BÁO CÁO" --task opencode-metrics "Xong: <SHA cuối>, xem .agents/log/opencode-metrics.md"`.
 Bị chặn / cần quyết định: `agm send user --type HỎI --task opencode-metrics "<câu hỏi ngắn>"`.
+
+## Vòng sửa 1 (sau review `f4ed2fe`, CEO đã xác minh #1)
+
+Nguồn: `.agents/reviews/opencode-metrics-review.md`.
+
+1. **Chặn (#1) — `load_with` phải có hạn chót cho TOÀN BỘ thao tác.** Hiện nhánh timeout gọi `reader.join()` không giới hạn (`src/opencode_models.rs` ~126), nhánh thành công `child.wait()` cũng không giới hạn. Trên Windows `opencode` có thể là `opencode.cmd` → `node.exe`, hoặc khởi động dịch vụ nền kế thừa stdout; kill tiến trình trực tiếp không đóng pipe → treo vĩnh viễn.
+   - Một hạn chót chung (5 s) tính từ lúc spawn cho: chờ dữ liệu + chờ thoát.
+   - Hết hạn: diệt **cả cây** tiến trình (Windows: `taskkill /T /F /PID <pid>` qua `std::process::Command`; nơi khác: `child.kill()`), **không `join` luồng đọc** (để nó tự kết thúc/bị bỏ), trả `Err`.
+   - Nhánh thành công: chờ thoát bằng vòng `try_wait()` trong phần thời gian còn lại; quá hạn thì xử lý như trên.
+   - Không thêm crate.
+2. **Test cho #1 (bắt buộc).** Cho phép chỉ định binary trong test (vd biến môi trường `AGM_OPENCODE_BIN`, hoặc hàm `load_with` công khai). Fake treo mà tiến trình con giữ stdout: Windows `.cmd` có `ping -n 30 127.0.0.1` (`#[cfg(windows)]`); Unix `sh` script `sleep 30` (`#[cfg(unix)]`). Kiểm: trả `Err` trong ≤ 8 s. Thêm fake trả JSON hợp lệ → `Ok`.
+3. **Nên sửa (#2).** Thêm test: `ctx_rotate` kích hoạt với phiên OpenCode chỉ có cửa sổ từ danh mục; hồi quy cảnh báo `unknown format?` cho Claude và agy (không chỉ Codex). Test "chỉ tải một lần" chỉ làm nếu không cần hack trạng thái toàn cục.
+4. **Nhỏ (#3).** Thêm xuống dòng cuối `.agents/decisions/opencode-go-quota.md`.
+
+Nghiệm thu: `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings` sạch; `rustfmt --edition 2024 --check` sạch **trên các tệp bạn sửa** (không fmt cả cây). Cập nhật `.agents/log/opencode-metrics.md`.
+Báo cáo: `agm send user --type "BÁO CÁO" --task opencode-metrics "Vòng sửa 1 xong: <SHA>"`.

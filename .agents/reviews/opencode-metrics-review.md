@@ -48,3 +48,36 @@
 ## KẾT LUẬN: CHƯA ĐẠT
 
 Lý do: phát hiện 1 là lỗi chặn — cơ chế timeout của `opencode_models.rs` không giới hạn được toàn bộ thao tác và đã được tái hiện là treo vô hạn, vi phạm trực tiếp yêu cầu "giới hạn thời gian thật sự, không treo daemon". Các yêu cầu còn lại (1), (3), (4), (5) đạt; (6) đạt một phần. Cần sửa phát hiện 1 (và bổ sung test tương ứng) trước khi nghiệm thu.
+
+## Xem lại vòng sửa 1
+
+- Reviewer: reviewer độc lập; ngày 2026-11-20 (vòng xem lại).
+- Đối tượng: HEAD `6824155` (merge `main`/spawn-fixes + fmt), diff `main..HEAD`. Không sửa mã sản phẩm; mọi thí nghiệm chạy ở thư mục temp ngoài worktree.
+
+### Phát hiện 1 (chặn) — đã hết
+
+Chạy lại đúng thí nghiệm tái hiện cũ với `opencode.cmd` giả `@echo off` + `ping -n 40 127.0.0.1` (tiến trình con giữ đầu ghi stdout, không trả EOF), gọi trực tiếp hàm `load_with` công khai mới (`src/opencode_models.rs:99-146`) thay vì bản sao chuỗi cũ:
+
+- `NEW returned after 5.3879s` / `NEW Err: ... timed out after 5 s` (wall-clock 5.70 s) → có hạn chót thật, trả `Err`, không treo.
+- Đối chứng, chạy lại chuỗi cũ (spawn → reader → `recv_timeout(5s)` → `kill` → `wait` → `join`) dưới đồng hồ 12 s: `TIMEOUT at 5.0274s; killing child`, `ABOUT_TO_JOIN at 5.0300s`, **không in `JOINED`, vẫn còn sống sau 12 s => HANG** — đúng kết quả review trước.
+- Kết luận cơ chế: mọi nhánh timeout/giải mã lỗi (`src/opencode_models.rs:116-124`, `130-139`) gọi `kill_tree` rồi trả `Err`, **không join luồng đọc**; Windows dùng `taskkill /T /F /PID` diệt cả cây (`cmd.exe` + `ping.exe`/`node.exe`) trước khi `child.kill()`/`child.wait()` (chỉ chờ tiến trình trực tiếp, có giới hạn). Nhánh thành công dùng vòng `try_wait()` trong phần thời gian còn lại của cùng một `deadline` tính từ lúc spawn; `reader.join()` chỉ thực hiện sau khi đã nhận EOF và tiến trình thoát, nên không chặn. Không có lời gọi eager nào mới; `cached()` vẫn là `OnceLock` (`src/opencode_models.rs:66-69`).
+- Ghi chú nhỏ (không chặn): `load()` thử lần lượt `opencode` rồi `opencode.cmd`, nên trường hợp cả hai cùng treo cho tổng ~10 s; task yêu cầu hạn chót 5 s **tính từ lúc spawn** cho mỗi lần chạy, và đây là đúng như vậy. Trên máy này `opencode` phân giải tới `opencode.ps1` (CreateProcess lỗi ngay), nên đường thực tế chỉ chịu một hạn chót 5 s.
+
+### Phát hiện 2 (nên sửa) — đã hốt đủ phần task yêu cầu
+
+- Bổ sung `load_with_returns_catalog_from_cli_json`, `load_with_bails_within_deadline_when_cli_holds_stdout` (fake CLI giữ stdout; assert `Err` chứa "timed out" và `elapsed <= 8s`) trong `tests/opencode_models_test.rs:216-241`. Đây chính là test sẽ **hỏng/treo nếu bỏ bản sửa**: với chuỗi cũ, `load_with` không bao giờ trả về (xem đối chứng ở trên), nên assert `<= 8s` bị vi phạm.
+- Bổ sung `zero_token_claude_and_agy_keep_the_unknown_format_warning` (hồi quy Claude/agy) và `ctx_rotate_triggers_from_catalog_only_window` trong `tests/rotation_test.rs:924-963` (80% của cửa sổ chỉ có trong danh mục → `ctx_pct = 80.0`, trạng thái `pending`).
+- Test "chỉ tải một lần/process" không thêm — đúng miễn trừ của task ("chỉ làm nếu không cần hack trạng thái toàn cục"); `OnceLock` vẫn hiện diện và được rà soát bằng mã.
+
+### Phát hiện 3 (nhỏ) — đã hết
+
+`.agents/decisions/opencode-go-quota.md` kết thúc bằng byte `0x0A`; `git diff main HEAD` không còn marker `\ No newline at end of file`.
+
+### Kiểm chứng vòng này
+
+- `cargo test --offline`: **280 passed / 0 failed** qua 28 binary (riêng `opencode_models_test`: 8/8, `rotation_test`: 8/8; timeout test chạy 5.36 s).
+- `cargo fmt --all -- --check`: exit 0. `cargo clippy --offline --all-targets -- -D warnings`: exit 0.
+
+## KẾT LUẬN MỚI: ĐẠT
+
+Cả ba phát hiện của review trước đã được xử lý; phát hiện chặn (#1) được tái kiểm nghiệm bằng chính thí nghiệm cũ — `load_with` mới trả lỗi có hạn trong ~5.4 s trong khi chuỗi cũ vẫn treo vô hạn, và test mới phân biệt được sự khác biệt đó. Nghiệm thu.

@@ -12,7 +12,7 @@
 
 - [x] (1) Phụ thuộc mới `sysinfo 0.40.4`: feature, số crate kéo thêm, trùng phiên bản lớn, build offline; đọc số liệu không cần crate (ghi nhận)
 - [x] (2) Đúng số liệu: % CPU baseline, RAM/swap, `merge_disks`, tốc độ đọc/ghi, `attribute` theo cây tiến trình, `agent_of`
-- [ ] (3) Chi phí/treo: refresh TUI, sleep chặn luồng, lệnh ngoài không hạn chót
+- [x] (3) Chi phí/treo: refresh TUI, sleep chặn luồng, lệnh ngoài không hạn chót
 - [ ] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
 - [ ] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
 - [ ] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
@@ -44,6 +44,18 @@
 
 **Phát hiện 2.2 — mức: nhỏ.** `src/sysmon.rs:185` (`c.contains("/opencode/")`) và `:183` (`"@openai/codex"`) khớp trên toàn bộ cmd line đã lower-case. Một tiến trình `node` chạy script trong thư mục **có tên là `opencode`** nhưng không phải agent (vd `node D:/projects/opencode/server.js`) → cmd chứa `/opencode/` → bị gán nhãn `"opencode"`; tương tự `node -e "console.log('@openai/codex')"`. Test `tests/sysmon_test.rs:101-112` chỉ phủ MCP server và tên gần giống `claude-helper`, chưa có ca path/project trùng tên. Không chặn vì chỉ sai nhãn thống kê.
 - Cách tái hiện: `agent_of("node", None, "node D:/projects/opencode/server.js")` → `Some("opencode")` (kỳ vọng `None`); so sánh với ca `node @modelcontextprotocol/server-filesystem` đã trả `None`.
+
+### (3) Chi phí / treo — ĐẠT (2 phát hiện nhỏ)
+
+- **Không có lệnh ngoài nào.** `git diff main HEAD -- '*.rs'` chỉ có hai dòng `std::thread::sleep` mới (`src/sysmon.rs:320`, `:432`); không có `Command::new` / `.spawn()` nào trong `main.rs`/`dashboard.rs`/`tui.rs`/`sysmon.rs` (đã `git grep`). Không có rủi ro lệnh ngoài thiếu hạn chót.
+- **Không có `sleep` trong vòng lặp TUI.** `sleep` 200 ms nằm trong `SysSampler::new()` (`src/sysmon.rs:320`), được gọi **một lần** lúc khởi động TUI (`src/tui.rs:220`, trước `loop` ở `:226`). `sleep` 500 ms nằm trong `read_once()` (`:432`), chỉ dùng bởi `agm sys` (`src/main.rs:267`). Trong `loop`, TUI chờ có chủ đích qua `rx.recv_timeout(Duration::from_secs(refresh.max(1)))` (`src/tui.rs:257`) — không phải sleep chặn vô hạn.
+- **Có refresh toàn bộ tiến trình mỗi lần vẽ — nhưng được chặn nhịp.** `src/tui.rs:232` gọi `sampler.sample()` trên **mọi** iteration (kể cả khi bỏ qua ghi frame ở `:249`), và `sample()` dùng `ProcessesToUpdate::All` (`src/sysmon.rs:346`) + `attribute()` (`:422`). Tuy `:334-339` trả bản cache nếu chưa tới 200 ms, nên các lần gõ phím liên tiếp không gây refresh lại; nhịp refresh thực chất = `refresh` (mặc định ≥1 s).
+
+**Phát hiện 3.1 — mức: nhỏ.** `src/tui.rs:232` + `src/sysmon.rs:346`: mỗi lần sample quét toàn bộ bảng tiến trình (kèm `with_cpu`/`with_exe`/`with_cmd` ở `:298-304`) và tính lại cây agent, dù header (`src/dashboard.rs:574-595`) chỉ cần số máy-wide CPU/RAM/đĩa; phần per-agent chỉ hiện khi `Section::System` được chọn. Đo thực tế bằng chương trình Rust ngoài repo link trực tiếp rlib `agmag`: `new(): ~689 ms` (đã gồm 200 ms sleep), `sample(): 70.7 / 46.3 / 43.9 ms` trên máy 12 core này. Nghĩa là TUI bị chặn ~45 ms mỗi chu kỳ refresh ~1 s (~4.5% duty cycle) — không treo, nhưng có thể thấy khựng nhẹ; nếu người dùng bật `view` không có `system` thì công việc per-agent bị lãng phí.
+- Cách tái hiện: chạy `agm sys` trực tiếp (`target/debug/agm.exe sys`) đo bằng Stopwatch được ~1.24–1.28 s/lần (trong đó 700 ms là hai `sleep`, phần còn lại là quét tiến trình); hoặc chương trình bench gọi `SysSampler::new()`/`sample()` như trên. Hướng sửa gợi ý: chỉ tính `attribute()` khi `Section::System` nằm trong `view`, hoặc giảm tần suất refresh tiến trình so với refresh CPU/RAM.
+
+**Phát hiện 3.2 — mức: nhỏ.** `src/tui.rs:220` gọi `SysSampler::new()` đồng bộ trước vòng lặp → khởi động TUI bị chặn ~689 ms (đo ở trên, riêng phần refresh ~489 ms ngoài sleep). Chỉ xảy ra một lần, không chặn, nhưng là độ trễ có thể cảm nhận được trước frame đầu tiên.
+- Cách tái hiện: thêm timestamp trước/sau dòng `SysSampler::new()` trong `src/tui.rs:220` và chạy `agm tui` (cần TTY) — reviewer không chạy TUI theo quy tắc, số liệu lấy từ bench `new()` ở trên.
 
 _(các mục còn lại sẽ điền dần)_
 

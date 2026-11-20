@@ -159,7 +159,10 @@ fn fetch_with(bin: &str, deadline: Instant) -> Result<String> {
         Err(_) => {
             // Không join luồng đọc: tiến trình con còn giữ stdout có thể chặn mãi.
             kill_tree(&mut child);
-            bail!("`{bin} api GET /api/experimental/usage/limits` quá thời hạn sau 8 s");
+            bail!(
+                "`{bin} api GET /api/experimental/usage/limits` quá thời hạn sau {}s",
+                FETCH_TIMEOUT.as_secs()
+            );
         }
     };
     let status = loop {
@@ -167,7 +170,10 @@ fn fetch_with(bin: &str, deadline: Instant) -> Result<String> {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
                 kill_tree(&mut child);
-                bail!("`{bin} api GET /api/experimental/usage/limits` quá thời hạn sau 8 s");
+                bail!(
+                    "`{bin} api GET /api/experimental/usage/limits` quá thời hạn sau {}s",
+                    FETCH_TIMEOUT.as_secs()
+                );
             }
             Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(err) => {

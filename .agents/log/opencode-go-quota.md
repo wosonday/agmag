@@ -141,7 +141,7 @@
 - Exit: 0
 - Reference: `opencode api GET /api/experimental/usage/limits`
 ``text
-{"location":{"directory":"C:\\Users\\thanh"},"data":{"workspace":{"id":"org_<redacted>","name":"<redacted>","usageURL":"<redacted>"},"go":{"rolling":{"percent":0,"limited":false,"resetsAt":1795177392862},"weekly":{"percent":40,"limited":false,"resetsAt":1795392000000},"monthly":{"percent":20,"limited":false,"resetsAt":1797728748000}},"budgets":[]}}
+{"data":{"workspace":{…},"go":{"rolling":{"percent":0,"limited":false,"resetsAt":…},"weekly":{"percent":40,…},"monthly":{"percent":20,…}},"budgets":[]}}
 ``
 
 ## Step 8 - docs and decision

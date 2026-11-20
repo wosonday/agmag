@@ -39,3 +39,6 @@ Nguồn loại trừ: `opencode stats --json` (không có hạn mức), `opencod
 - Stale: theo tuổi `quota_stale_min` **hoặc** có usage mới cùng gói sau `observed_ms`. Gói `opencode-go` ⇐ phiên OpenCode có model tiền tố `opencode-go/`. Khi không chắc biến thể `*-free` có tính vào Go hay không, **mọi `opencode-go/*` được coi là cùng gói** (an toàn, tránh bỏ sót stale).
 - Ngân sách provider: `agm budget set provider:opencode-go:300 --soft 80 --hard 95` (và 10080/43200) hoạt động; dữ liệu stale xử lý như không có dữ liệu.
 - Go Console vẫn là nơi xem Extra Usage/budget chi tiết.
+## Giới hạn đã biết
+
+- Diệt **cả cây** tiến trình khi quá hạn chỉ làm trên Windows (`taskkill /T /F`); Linux/macOS chỉ `kill` tiến trình trực tiếp — `agm` không treo (không `join` luồng đọc) nhưng tiến trình cháu có thể còn sống. Giống `src/opencode_models.rs` và `src/codex_quota.rs`; nếu cần thì sửa chung cả ba (process group) trong một việc riêng. (Review `opencode-go-quota`, phát hiện 2.1.)

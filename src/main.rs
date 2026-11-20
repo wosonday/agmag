@@ -915,7 +915,10 @@ fn quota_table(rows: &[report::QuotaRow], now_s: i64) -> Table {
                 r.provider.clone(),
                 window_label(r.window_minutes),
                 "··········".into(),
-                format!("stale · seen {age} ago"),
+                format!(
+                    "stale · seen {age} ago{}",
+                    if r.limited { " [91mlimited[0m" } else { "" }
+                ),
                 reset,
             ]);
             continue;

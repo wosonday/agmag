@@ -4,10 +4,10 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use serde_json::Value;
@@ -91,8 +91,13 @@ impl ModelCatalog {
     }
 }
 
-/// Chạy một tiến trình `opencode api GET /api/model`, giới hạn 5 giây rồi kill.
-fn load_with(bin: &str) -> Result<ModelCatalog> {
+/// Hạn chót cho toàn bộ một lần tra cứu: chờ dữ liệu + chờ tiến trình thoát.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Chạy một tiến trình `opencode api GET /api/model`, giới hạn 5 giây cho cả đọc và thoát.
+/// Public để test có thể chỉ định binary giả lập.
+pub fn load_with(bin: &str) -> Result<ModelCatalog> {
+    let deadline = Instant::now() + LOAD_TIMEOUT;
     let mut child = Command::new(bin)
         .args(["api", "GET", "/api/model"])
         .stdout(Stdio::piped())
@@ -106,25 +111,52 @@ fn load_with(bin: &str) -> Result<ModelCatalog> {
         let read = stdout.read_to_string(&mut buf).map(|_| buf);
         let _ = tx.send(read);
     });
-    match rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(text)) => {
-            let status = child.wait()?;
-            let _ = reader.join();
-            if !status.success() {
-                bail!("`{bin} api GET /api/model` exited with {status}");
-            }
-            ModelCatalog::from_json(&text)
-        }
+    let text = match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(Ok(text)) => text,
         Ok(Err(err)) => {
-            let _ = child.wait();
-            let _ = reader.join();
-            Err(err.into())
+            kill_tree(&mut child);
+            return Err(err.into());
         }
         Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = reader.join();
+            // Do not join the reader: a child that still holds stdout would block it forever.
+            kill_tree(&mut child);
             bail!("`{bin} api GET /api/model` timed out after 5 s");
         }
+    };
+    // EOF on stdout usually means exit, but a wrapper process may linger: bound that wait too.
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                kill_tree(&mut child);
+                bail!("`{bin} api GET /api/model` timed out after 5 s");
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(err) => {
+                kill_tree(&mut child);
+                return Err(err.into());
+            }
+        }
+    };
+    let _ = reader.join();
+    if !status.success() {
+        bail!("`{bin} api GET /api/model` exited with {status}");
     }
+    ModelCatalog::from_json(&text)
+}
+
+/// Diệt cả cây tiến trình. Trên Windows `opencode` là shim `.cmd` → `node.exe`; giết riêng `cmd.exe`
+/// sẽ để tiến trình con giữ stdout và treo luồng đọc.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", pid.as_str()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }

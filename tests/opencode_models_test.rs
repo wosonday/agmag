@@ -160,6 +160,87 @@ fn zero_token_opencode_session_has_no_warning_but_codex_still_does() -> anyhow::
 }
 
 #[test]
+fn zero_token_claude_and_agy_keep_the_unknown_format_warning() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let cfg = Config::builtin();
+    for (source, path) in [
+        (Source::Claude, "claude://empty"),
+        (Source::Agy, "agy://empty"),
+    ] {
+        let sid = store.session_id_for_path(source, path)?;
+        store.insert_turn(
+            sid,
+            &agmag::model::TurnSummary {
+                ts_ms: 1,
+                role: agmag::model::Role::Assistant,
+                summary: "error".into(),
+                byte_offset: 0,
+            },
+        )?;
+    }
+    let rows = agmag::report::sessions(&store, &cfg, 0)?;
+    for path in ["claude://empty", "agy://empty"] {
+        let row = rows.iter().find(|r| r.path == path).unwrap();
+        assert_eq!(row.warning.as_deref(), Some("unknown format?"), "{path}");
+    }
+    Ok(())
+}
+
+/// Ghi một script giả lập CLI. Windows dùng `.cmd` (đi qua `cmd.exe`), Unix dùng `sh`.
+#[cfg(windows)]
+fn fake_cli(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    let path = dir.join(format!("{name}.cmd"));
+    std::fs::write(&path, format!("@echo off\r\n{body}\r\n")).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn fake_cli(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+const OK_CATALOG_BODY: &str = r#"echo {"data":[{"providerID":"opencode-go","id":"fixture-kimi","limit":{"context":1000000}}]}"#;
+#[cfg(unix)]
+const OK_CATALOG_BODY_UNIX: &str = r#"printf '%s\n' '{"data":[{"providerID":"opencode-go","id":"fixture-kimi","limit":{"context":1000000}}]}'"#;
+
+// Tiến trình con giữ đầu ghi stdout và không trả EOF: kill tiến trình trực tiếp sẽ treo luồng đọc.
+#[cfg(windows)]
+const HANG_BODY: &str = "ping -n 30 127.0.0.1";
+#[cfg(unix)]
+const HANG_BODY: &str = "exec sleep 30";
+
+#[test]
+fn load_with_returns_catalog_from_cli_json() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    #[cfg(windows)]
+    let body = OK_CATALOG_BODY;
+    #[cfg(unix)]
+    let body = OK_CATALOG_BODY_UNIX;
+    let bin = fake_cli(tmp.path(), "fake-ok", body);
+    let catalog = agmag::opencode_models::load_with(bin.to_str().unwrap())?;
+    assert_eq!(catalog.context("opencode-go/fixture-kimi"), Some(1_000_000));
+    Ok(())
+}
+
+#[test]
+fn load_with_bails_within_deadline_when_cli_holds_stdout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_cli(tmp.path(), "fake-hang", HANG_BODY);
+    let started = std::time::Instant::now();
+    let err = agmag::opencode_models::load_with(bin.to_str().unwrap()).unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(err.to_string().contains("timed out"), "{err}");
+    assert!(
+        elapsed <= std::time::Duration::from_secs(8),
+        "load_with returned after {elapsed:?}, deadline was not enforced"
+    );
+}
+
+#[test]
 fn catalog_rejects_bad_json_and_ignores_unusable_entries() -> anyhow::Result<()> {
     assert!(ModelCatalog::from_json("not json").is_err());
     let empty = ModelCatalog::from_json(r#"{"data":[{"providerID":"p","id":"m"}]}"#)?;

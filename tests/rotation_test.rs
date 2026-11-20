@@ -472,6 +472,46 @@ fn unmanaged_claude_and_codex_warn_at_ctx_rotate() -> Result<()> {
 }
 
 #[test]
+fn ctx_rotate_triggers_from_catalog_only_window() -> Result<()> {
+    let catalog = r#"{"data":[{"providerID":"opencode-go","id":"fixture-kimi","limit":{"context":1000000}}]}"#;
+    let mut cfg = Config::builtin();
+    cfg.opencode_models = Some(agmag::opencode_models::ModelCatalog::from_json(catalog)?);
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some("w-a-1".into()),
+        app: Some("opencode".into()),
+        cwd: Some(r"D:\w".into()),
+        task: Some("a".into()),
+        role: Some("worker".into()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_status("t1", Some("working"), None, None, 5, 0)?;
+    let sid = store.session_id_for_path(Source::OpenCode, "opencode://catalog-only")?;
+    store.set_model(sid, "opencode-go/fixture-kimi")?;
+    // 80% của 1 000 000 token (≥ ctx_rotate 70%) nhưng phiên chỉ có cửa sổ từ danh mục.
+    store.set_context(
+        sid,
+        &ContextSnapshot {
+            ts_ms: 1,
+            used_tokens: 800_000,
+            window_tokens: None,
+        },
+    )?;
+    store.link_terminal("t1", sid, "auto")?;
+
+    rotation::tick(&store, &cfg, &FakeHc::default(), &FakeGit::default(), 0)?;
+
+    assert_eq!(state(&store), "pending");
+    let pct: Option<f64> = store
+        .conn()
+        .query_row("SELECT ctx_pct FROM rotations", [], |r| r.get(0))?;
+    assert_eq!(pct, Some(80.0));
+    Ok(())
+}
+
+#[test]
 fn requested_continues_when_handoff_file_ready_even_if_old_exited() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let cwd = tmp.path().to_string_lossy().to_string();

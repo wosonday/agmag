@@ -116,3 +116,32 @@
 - Verification: `cargo test --offline` → 259 passed / 0 failed across 27 test binaries (two targets have 0 tests, incl. doc-tests); `cargo clippy --offline --all-targets -- -D warnings` clean.
 - Format: `src/opencode_models.rs`, `tests/opencode_models_test.rs` and every line added/changed here are rustfmt-clean. `cargo fmt --check` still reports pre-existing files at HEAD (e.g. `src/actions.rs`, `src/ask.rs`, `src/rotation.rs`, `src/store/v2.rs`); it fails both with rustfmt 1.99.1 and 1.97.1, so it is not caused by this task and the whole tree was not reformatted (Files scope).
 - Real run: `cargo run --offline -- ls --json` → 101 sessions (opencode 86, 67 with `context_pct`; claude 8, 7; agy 7, 0). `opencode-go/kimi-k3` gets `context_pct` (5.2 %, 1.2 %) from the 1 048 576-token catalog entry; only one agy session keeps `unknown format?`; live catalog `GET /api/model` returned 237 models.
+
+## 2026-11-20 - 5. Vòng sửa 1 (review `f4ed2fe`)
+
+### #1 (chặn) — hạn chót cho toàn bộ `load_with`
+
+- TDD RED: thêm test `load_with_bails_within_deadline_when_cli_holds_stdout` (fake `.cmd` Windows: `ping -n 30 127.0.0.1` giữ stdout; Unix: `exec sleep 30`). Chạy riêng test → FAIL sau **29.28 s** (`load_with returned after 29.28s, deadline was not enforced`): đúng lỗi `reader.join()` không giới hạn sau khi chỉ kill tiến trình trực tiếp.
+- Sửa `src/opencode_models.rs`: một `Instant` hạn chót chung 5 s tính từ lúc spawn, dùng cho cả `recv_timeout` (chờ dữ liệu) và vòng `try_wait()` 20 ms (chờ thoát). Hết hạn hoặc `try_wait` lỗi → `kill_tree()` rồi trả `Err`, **không join** luồng đọc.
+- `kill_tree`: Windows chạy `taskkill /T /F /PID <pid>` (diệt cả cây `cmd.exe` → `node.exe`) rồi `child.kill()`/`child.wait()` làm dự phòng; nền tảng khác chỉ `kill`/`wait`. Không thêm crate.
+- `load_with` chuyển thành `pub` để test chỉ định binary giả lập (đúng gợi ý review; không dùng biến môi trường).
+- GREEN: 8/8 test trong `tests/opencode_models_test.rs`, test timeout trả `Err` trong ~5 s (toàn bộ tệp 5.37 s).
+- Test thêm `load_with_returns_catalog_from_cli_json` (fake CLI trả JSON hợp lệ → `Ok`, 1 000 000 token).
+
+### #2 (nên sửa) — test bổ sung
+
+- `ctx_rotate_triggers_from_catalog_only_window` (trong `tests/rotation_test.rs`): terminal opencode worker, model `opencode-go/fixture-kimi` chỉ có trong danh mục fixture, `used_tokens = 800 000`, `window_tokens = None` → `rotation::tick` tạo vòng `pending` với `ctx_pct = 80.0`. Đây là test bảo vệ (tính năng đã đúng từ vòng trước), không phải RED.
+- `zero_token_claude_and_agy_keep_the_unknown_format_warning`: hồi quy `unknown format?` cho Claude và agy (Codex đã có ở test cũ). Cũng là test bảo vệ.
+- Bỏ test "chỉ tải một lần": cần thao tác trạng thái `OnceLock` toàn cục, đúng điều kiện "chỉ làm nếu không cần hack trạng thái toàn cục" → không làm.
+
+### #3 (nhỏ) — tệp quyết định
+
+- Thêm `\n` cuối `.agents/decisions/opencode-go-quota.md` (byte cuối trước: `.`; sau: `0x0A`).
+
+### Kiểm chứng
+
+- `cargo test --offline`: **263 passed / 0 failed** (27 binary; trước vòng sửa 259 → +4 test mới).
+- `cargo clippy --offline --all-targets -- -D warnings`: sạch.
+- `rustfmt --edition 2024 --check`: `src/opencode_models.rs` và `tests/opencode_models_test.rs` sạch (`--config skip_children=true` để không kéo `tests/common/mod.rs` có sẵn ở baseline). `tests/rotation_test.rs` có sẵn nhiều lệch fmt từ baseline; riêng khối test mới được kiểm bằng cách trích ra tệp tạm → sạch. Không fmt cả cây.
+- Chạy thật: `cargo run --offline -- ls --json` → 1.40 s, 104 phiên; opencode 89 (70 có `context_pct`), claude 8 (7), agy 7 (0). Ví dụ `opencode/deepseek-v4.1-flash-free` 34.3 %, `opencode/iceman-free` 43.8 %, `openai/gpt-6.1-sol` 60.2 %. Không còn treo khi CLI chậm/treo.
+

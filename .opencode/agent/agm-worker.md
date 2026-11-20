@@ -1,7 +1,7 @@
 ---
 description: Thợ cơ khí agmag. Làm đúng một đầu việc (tasks/t<N>.md) trong một worktree, theo TDD.
 mode: primary
-model: openai/gpt-6.1-sol
+model: opencode-go/deepseek-v4.1-flash
 temperature: 0.2
 permission:
   edit: allow

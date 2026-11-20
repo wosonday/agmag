@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-20
+
 ### Thay đổi
 
 - Bảng và kết quả CLI (`agm ls`, `quota`, `cost`, `ps`, `log`, `inbox`, `budget ls`, `cleanup`, `scan`) chuyển sang tiếng Anh; JSON không đổi.
@@ -11,11 +13,11 @@
 - TUI in đầy đủ (lướt chuột để xem phần trên), xoá màn hình và lịch sử cuộn trước mỗi lần vẽ nên không còn khung lặp; chỉ vẽ lại khi dữ liệu đổi hoặc sau khi gõ lệnh; tự nhận bề rộng pane (`COLUMNS` để ghi đè).
 - Model OpenCode được lưu dạng `providerID/id` (lần quét đầu sau nâng cấp nạp lại `opencode.db` một lần, không đếm trùng). Billing tra theo model đã khai, nếu không thì theo tiền tố provider; thêm `[providers."opencode-go"] billing = "subscription"` vào cấu hình mặc định.
 - Ghép terminal OpenCode với phiên mới nhất cùng thư mục, kể cả phiên bắt đầu muộn hơn 10 phút hoặc qua `/new`; liên kết thủ công không bị đổi.
-
 - TUI chuyển sang giao diện tiếng Anh có màu ANSI; bảng co giãn theo `COLUMNS` (60–200, mặc định 110), đo đúng độ rộng Unicode (CJK/emoji) và lọc mọi chuỗi điều khiển CSI/OSC trong dữ liệu hiển thị.
 - `agm cleanup` an toàn hơn: kiểm lại trạng thái mới nhất, app, thời điểm tạo và thư mục của cả phiên cũ lẫn phiên kế nhiệm trước khi dọn; luôn cần một lần gõ xác nhận, kể cả khi có `--yes`.
 - Bàn giao phiên Claude/Codex chỉ hoàn tất khi đọc được trạng thái sống mới nhất; lỗi đọc không còn dựa vào trạng thái `done` đã lưu.
 - Hạn mức gói hiển thị theo **phần còn lại** (giảm dần từ 100%, như Codex `/status` và agy `/usage`) trong `agm quota`, TUI (`PLAN QUOTA (left)`) và statusline Claude (`5h 76% left`). JSON của `agm quota` giữ `used_percent` và thêm `left_percent`. Ngưỡng `agm budget set provider:…` vẫn tính theo % **đã dùng**.
+- Thợ OpenCode `agm-worker` (`.opencode/agent/agm-worker.md`) mặc định dùng `opencode-go/deepseek-v4.1-flash` thay cho `openai/gpt-6.1-sol`, để thợ thường không tiêu chung hạn mức ChatGPT/Codex; vẫn ghi đè được bằng `opencode run --model`.
 
 ### Thêm mới
 
@@ -23,7 +25,6 @@
 - `agm tui`: lệnh `view` chọn tối đa 3 bảng (`quota`, `usage`, `terminals`, `budgets`, `inbox`; mặc định `quota terminals inbox`, được nhớ); RECENT MESSAGES luôn hiện ngay trên thanh lệnh.
 - Theo dõi effort của phiên (Codex `effort`, Claude Code `effort`, `variant` của OpenCode, hậu tố tên model agy); schema CSDL v4 thêm cột `sessions.effort`.
 - Cửa sổ ngữ cảnh của model OpenCode: `providers.toml` (`[models."<providerID/id>"]` rồi `[models."<id>"]`) luôn thắng; nếu thiếu, `agm` đọc `limit.context` từ danh mục của OpenCode (`opencode api GET /api/model`, cache trong tiến trình). Nhờ đó `ctx %`, `ctx_warn` và `ctx_rotate` hoạt động với `opencode/*`, `opencode-go/*`; model không có ở đâu vẫn để trống, không đoán.
-
 - Hạn mức gói của agy: ba provider `agy-gemini`, `agy-3p` (Claude/GPT qua agy, tách khỏi hạn mức Claude Code) và `agy-argon`, đọc qua `agy --print /usage` (không tốn token). Daemon đọc trên luồng riêng mỗi `[policy].agy_quota_poll_min` phút (mặc định 15, `0` = tắt); `agm quota --refresh` đọc ngay. Dùng được cho ngân sách, vd `agm budget set provider:agy-gemini:10080 --soft 80 --hard 95`.
 - Hạn mức gói Codex từ nguồn tươi (0 token): `agm quota --refresh` và daemon (`[policy].codex_quota_poll_min`, mặc định 15 phút) đọc `codex app-server` (`account/rateLimits/read`), ghi provider `codex` (cửa sổ 300/10080 phút); lỗi/không đăng nhập/timeout không ghi dữ liệu giả. Thêm cấu hình `[policy].quota_stale_min` (mặc định 60 phút) và `[policy].codex_quota_poll_min`.
 - Hạn mức gói OpenCode Go (0 token): `agm quota --refresh` và daemon (`[policy].opencode_quota_poll_min`, mặc định 15 phút) đọc `opencode api GET /api/experimental/usage/limits`, ghi provider `opencode-go` với 3 cửa sổ `5h`/`7d`/`mo` (300/10080/43200 phút). Hiển thị nhãn `limited` (đỏ) khi bị chặn; dữ liệu stale (tuổi hoặc usage `opencode-go/*` mới sau lần quan sát) được coi như chưa có cho policy/ngân sách. Hỗ trợ ngân sách `provider:opencode-go:<window>` (vd 300). Go Console vẫn là nơi xem Extra Usage/budget.

@@ -58,3 +58,14 @@ Việc còn lại:
 
 Không fmt cả cây (đã fmt); chỉ `cargo fmt` các tệp bạn sửa. Không ghi vào `~/.agmag` thật khi chạy thử: dùng `AGM_HOME` tạm.
 Báo cáo: `agm send user --type "BÁO CÁO" --task codex-quota-stale "Xong: <SHA>"`.
+
+## Vòng sửa 1 (sau review `7e7f8fb`, CEO đồng ý cả 2 điểm)
+
+Nguồn: `.agents/reviews/codex-quota-stale-review.md`.
+
+1. **Bảng chữ `agm quota` hiện stale** (`src/main.rs` ~884–913). Dòng stale phải có nhãn `stale · seen <tuổi> ago` (cùng cách định dạng tuổi với TUI, dùng lại hàm sẵn có nếu được) và **không** trình bày như số tươi. Test CLI: quota cũ → bảng có `stale`; quota tươi → không có.
+2. **Test treo có biên an toàn** (`tests/codex_quota_test.rs` ~124). Giữ `FETCH_TIMEOUT = 8s` (cần thời gian khởi động `codex app-server`); đổi assert thành `elapsed <= FETCH_TIMEOUT + 4s` (so sánh `Duration`, không `as_secs()`), và assert `elapsed >= FETCH_TIMEOUT - 1s` để chắc lỗi đến từ hạn chót. Nếu cần, công khai hằng số để test dùng.
+3. Ghi `.agents/log/codex-quota-stale.md` mục "Vòng sửa 1"; README nếu mô tả bảng `agm quota` thay đổi.
+
+Commit sau mỗi mục (tiền tố `codex-quota-stale:`). Chỉ `cargo fmt` tệp bạn sửa. Nghiệm thu: `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings`, `cargo fmt --check` sạch; chạy thật `AGM_HOME=<tạm> cargo run --offline -- quota` có dòng stale.
+Báo cáo: `agm send user --type "BÁO CÁO" --task codex-quota-stale "Vòng sửa 1 xong: <SHA>"`.

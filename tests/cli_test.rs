@@ -654,3 +654,93 @@ fn cli_cleanup_yes_without_human_confirmation_does_not_touch_terminals() {
         0
     );
 }
+
+#[test]
+fn cli_help_is_english_for_every_command() {
+    let tmp = sandbox(None);
+    let commands: &[&[&str]] = &[
+        &[],
+        &["scan"],
+        &["ls"],
+        &["cost"],
+        &["quota"],
+        &["log"],
+        &["daemon"],
+        &["ps"],
+        &["send"],
+        &["inbox"],
+        &["done"],
+        &["reply"],
+        &["spawn"],
+        &["kill"],
+        &["interrupt"],
+        &["rotate"],
+        &["manage"],
+        &["cleanup"],
+        &["budget"],
+        &["budget", "set"],
+        &["budget", "ls"],
+        &["budget", "rm"],
+        &["policy"],
+        &["link"],
+        &["ask"],
+        &["hook"],
+        &["hook", "statusline"],
+        &["hook", "install"],
+        &["sys"],
+        &["tui"],
+    ];
+    for command in commands {
+        let mut args = command.to_vec();
+        args.push("--help");
+        let out = agm_env(tmp.path(), &args, &[]);
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let help = String::from_utf8(out.stdout).unwrap();
+        if help.contains("--json") {
+            assert!(help.contains("Print JSON"), "{args:?}: {help}");
+        }
+        // Message codes are existing protocol values, not prose to translate.
+        let mut prose = help.clone();
+        for code in ["CHƯA ĐẠT", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "GIAO"] {
+            prose = prose.replace(code, "");
+        }
+        assert!(prose.is_ascii(), "{args:?}: untranslated help: {help}");
+    }
+}
+
+#[test]
+fn cli_stop_help_preserves_user_confirmation_warning() {
+    let tmp = sandbox(None);
+    for command in ["kill", "interrupt"] {
+        let out = agm_env(tmp.path(), &[command, "--help"], &[]);
+        assert!(out.status.success());
+        let help = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            help.contains("Codex/Claude and unknown apps still require a user to type y"),
+            "{help}"
+        );
+    }
+}
+
+#[test]
+fn cli_send_help_explains_existing_message_codes() {
+    let tmp = sandbox(None);
+    let out = agm_env(tmp.path(), &["send", "--help"], &[]);
+    assert!(out.status.success());
+    let help = String::from_utf8(out.stdout).unwrap();
+    for description in [
+        "GIAO (assign)",
+        "\"BÁO CÁO\" (report)",
+        "LỖI (error)",
+        "HỎI (ask)",
+        "CHẶN (blocked)",
+        "ĐẠT (pass)",
+        "\"CHƯA ĐẠT\" (fail)",
+    ] {
+        assert!(help.contains(description), "{help}");
+    }
+}

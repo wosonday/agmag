@@ -17,7 +17,7 @@
 - [x] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
 - [x] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
 - [x] (7) Docs/decision khớp mã
-- [ ] Chạy `cargo test --offline`
+- [x] Chạy `cargo test --offline`
 
 ## Phát hiện
 
@@ -102,6 +102,17 @@ Kiểm `git diff main 2913a4d` (diff sản phẩm, trước khi tôi thêm tệp
 
 **Phát hiện 7.1 — mức: nhỏ.** `README.md:99` ghi "Go plan quota (5h/7d/**30d**)", trong khi task `:22` và decision `:29` chốt nhãn cửa sổ 43200 là **`mo`, không phải `30d`**. `README_vi.md:97` dùng "30 ngày" (mang tính mô tả, chấp nhận được). Đây là sai lệch tài liệu, không ảnh hưởng hiển thị thực tế (`src/main.rs:890-891` trả `mo`).
 - Cách tái hiện: so sánh `README.md:99` với `src/main.rs:889-899` — chạy `agm quota --json` với dữ liệu `window_minutes: 43200` → dòng JSON có `window_minutes: 43200` và bảng in nhãn `mo`; README ghi `30d`. Nên sửa thành `5h/7d/mo (30 ngày)`.
+
+### (8) `cargo test --offline` — ĐẠT
+
+Lệnh (PowerShell, `AGM_HOME` tạm để không ghi `~/.agmag` thật):
+
+```powershell
+$env:AGM_HOME = Join-Path $env:TEMP 'agmag-review-opencode-go-quota'
+cargo test --offline
+```
+
+Kết quả: **299 test passed, 0 failed, 0 ignored** (cộng 0 doc-test), mọi dòng `test result:` đều `ok`; `$LASTEXITCODE = 0`. Các test mới của task đều xanh: `opencode_quota_test` (5), `report_test::opencode_go_quota_stale_by_age_and_new_usage`, `report_test::opencode_go_budget_provider_window`, `dashboard_test::render_opencode_go_quota_labels_limited_and_stale_fit_60_110`, `src/main.rs::quota_table_marks_stale_rows_without_fresh_bar`. Không thêm/sửa dependency hay `Cargo.toml`.
 
 ## KẾT LUẬN
 

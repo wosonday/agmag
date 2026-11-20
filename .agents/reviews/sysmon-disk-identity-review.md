@@ -73,3 +73,12 @@ Logic nằm ở `src/sysmon.rs:271-285`:
 - Không có chỗ nào đọc nhãn volume: grep toàn repo cho `GetVolumeInformation` / `VolumeName` / `Win32_LogicalDisk` → **không có kết quả mã nguồn**. Chuỗi `GetVolumeNameForVolumeMountPointW` (`src/sysmon.rs:291`, doc ở `:288`) là API lấy GUID mount, không phải API đọc nhãn; feature `Win32_Storage_FileSystem` (`Cargo.toml:22`) chỉ mở module chứa API đó, không tự gọi API nhãn. Phần hiển thị (`src/dashboard.rs:846-848`, `src/sysmon.rs:101-103`) chỉ dùng `mount` / `also_mounted_at`, không đụng đến `volume_id`.
 
 `nhỏ` (phòng sau này): nếu sau này `DiskStats` được thêm `Deserialize`, nên đổi sang `#[serde(skip)]` để JSON cũ thiếu `volume_id` vẫn deserialize được. Hiện tại không ảnh hưởng nghiệm thu. Không ghi nhãn/email nào vào tệp review này.
+
+## 5. Test — đúng yêu cầu; một nhận xét `nhỏ`
+
+- `tests/sysmon_test.rs:185-221`: test cũ `one_volume_under_several_letters_is_counted_once` đã bị thay bằng `merge_disks_uses_volume_identity`, kiểm tra đúng 4 ca của brief bằng `volume_id` giả lập (`src/sysmon.rs:92-95` `with_volume_id`), không còn dựa vào mẹo `exFAT`. Grep toàn `tests/*.rs`: không còn chuỗi `exFAT`, không còn tên test cũ.
+- `tests/sysmon_test.rs:223-232`: test Windows có `#[cfg(windows)]` ở dòng 223; kiểm tra `volume_id("C:\\")` trả `Some` bắt đầu `\\?\Volume{` (dòng 226-228) và `volume_id("not-a-mount")` → `None`, không panic (dòng 231) — đúng brief (dùng "chuỗi rác" được phép). Trên Windows test này được biên dịch và chạy; trên Linux/macOS bị loại bỏ bởi cfg.
+- Import `volume_id` ở `tests/sysmon_test.rs:6` không điều kiện nhưng hợp lệ nhờ 3 nhánh cfg ở `src/sysmon.rs:289/308/314` (đã kiểm ở mục 2).
+- Không có test nào dùng dữ liệu thật lộ nhãn volume; test chỉ dùng mount giả lập và chuỗi `vol-*` tự đặt.
+
+`nhỏ` (đề xuất, không chặn): chưa có test unit khẳng định `serde_json::to_string(&SysStats{...})` không chứa khóa `volume_id` (grep `tests/*.rs` không thấy). Việc này đang được CEO xác nhận bằng chạy thật `agm sys --json` (mục 4), nhưng một test regression nhỏ sẽ khóa chặt thuộc tính riêng tư này về sau.

@@ -275,13 +275,21 @@ fn timeout_child() -> Result<()> {
 #[test]
 fn local_template_can_verify_and_spawn_when_listing_is_unavailable() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    std::fs::write(dir.path().join("auditor.md"), "---\ncommand: opencode --model test\n---\nBạn là kiểm toán.")?;
+    std::fs::write(
+        dir.path().join("auditor.md"),
+        "---\ncommand: opencode --model test\n---\nBạn là kiểm toán.",
+    )?;
     let out = std::process::Command::new(std::env::current_exe()?)
         .args(["--exact", "fallback_child", "--nocapture"])
         .env("AGM_HC_TEMPLATES", dir.path())
         .env("AGM_FALLBACK_CHILD", "1")
         .env("AGM_TEMPLATES_UNAVAILABLE", "1")
         .output()?;
-    assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     Ok(())
 }

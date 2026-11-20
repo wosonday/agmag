@@ -34,7 +34,10 @@ pub fn discover_source(source: Source, root: &Path, since_ms: i64) -> (Vec<PathB
         let entry = match entry_res {
             Ok(e) => e,
             Err(err) => {
-                if !matches!(err.io_error().map(|e| e.kind()), Some(std::io::ErrorKind::NotFound)) {
+                if !matches!(
+                    err.io_error().map(|e| e.kind()),
+                    Some(std::io::ErrorKind::NotFound)
+                ) {
                     dir_errors += 1;
                 }
                 continue;
@@ -44,9 +47,7 @@ pub fn discover_source(source: Source, root: &Path, since_ms: i64) -> (Vec<PathB
         if !entry.file_type().is_file() || path.extension().is_none_or(|ext| ext != "jsonl") {
             continue;
         }
-        if source == Source::Codex
-            && !entry.file_name().to_string_lossy().starts_with("rollout-")
-        {
+        if source == Source::Codex && !entry.file_name().to_string_lossy().starts_with("rollout-") {
             continue;
         }
         let modified = entry
@@ -78,7 +79,12 @@ pub fn discover(roots: &Roots, since_ms: i64) -> Vec<(Source, PathBuf)> {
     files
 }
 
-pub fn ingest_source(store: &Store, source: Source, root: &Path, since_ms: i64) -> Result<IngestStats> {
+pub fn ingest_source(
+    store: &Store,
+    source: Source,
+    root: &Path,
+    since_ms: i64,
+) -> Result<IngestStats> {
     let (paths, dir_errors) = discover_source(source.clone(), root, since_ms);
     let mut total = IngestStats {
         skipped: dir_errors,
@@ -101,8 +107,18 @@ pub fn ingest_source(store: &Store, source: Source, root: &Path, since_ms: i64) 
 
 pub fn ingest_all(store: &Store, roots: &Roots, since_ms: i64) -> Result<IngestStats> {
     let mut total = IngestStats::default();
-    total.add(&ingest_source(store, Source::Codex, &roots.codex, since_ms)?);
-    total.add(&ingest_source(store, Source::Claude, &roots.claude, since_ms)?);
+    total.add(&ingest_source(
+        store,
+        Source::Codex,
+        &roots.codex,
+        since_ms,
+    )?);
+    total.add(&ingest_source(
+        store,
+        Source::Claude,
+        &roots.claude,
+        since_ms,
+    )?);
     Ok(total)
 }
 

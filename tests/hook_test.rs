@@ -28,7 +28,13 @@ fn records_claude_quota() -> anyhow::Result<()> {
         .prepare("SELECT provider, window_minutes, used_percent, resets_at_s FROM quota ORDER BY window_minutes")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<_, _>>()?;
-    assert_eq!(rows, [("claude".into(), 300, 23.5, 1738425600), ("claude".into(), 10080, 41.2, 1738857600)]);
+    assert_eq!(
+        rows,
+        [
+            ("claude".into(), 300, 23.5, 1738425600),
+            ("claude".into(), 10080, 41.2, 1738857600)
+        ]
+    );
     Ok(())
 }
 
@@ -42,12 +48,19 @@ fn sets_ctx_window_for_transcript_and_links_terminal() -> anyhow::Result<()> {
     // Claude có thể gửi đường dẫn với dấu '/' và chữ hoa khác: vẫn phải khớp đúng một phiên.
     let odd = path.to_string_lossy().replace('\\', "/").to_uppercase();
     statusline(&store, &input(&odd), Some("t1s"), 5000)?;
-    let n: i64 = store.conn().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
+    let n: i64 = store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
     assert_eq!(n, 1);
-    let w: Option<i64> = store.conn().query_row("SELECT ctx_window FROM sessions", [], |r| r.get(0))?;
+    let w: Option<i64> = store
+        .conn()
+        .query_row("SELECT ctx_window FROM sessions", [], |r| r.get(0))?;
     assert_eq!(w, Some(1000000));
     let t = store.terminal("t1s")?.unwrap();
-    assert_eq!((t.link_source.as_deref(), t.app.as_deref()), (Some("hook"), Some("claude-code")));
+    assert_eq!(
+        (t.link_source.as_deref(), t.app.as_deref()),
+        (Some("hook"), Some("claude-code"))
+    );
     Ok(())
 }
 
@@ -67,6 +80,9 @@ fn missing_rate_limits_ok_and_prints_compact_line() -> anyhow::Result<()> {
 #[test]
 fn path_key_normalizes_on_windows() {
     if cfg!(windows) {
-        assert_eq!(path_key(std::path::Path::new("C:/Users/A/x.jsonl")), path_key(std::path::Path::new(r"c:\users\a\X.JSONL")));
+        assert_eq!(
+            path_key(std::path::Path::new("C:/Users/A/x.jsonl")),
+            path_key(std::path::Path::new(r"c:\users\a\X.JSONL"))
+        );
     }
 }

@@ -29,6 +29,7 @@
 
 - `agm send` gửi được cho agent đang ở trạng thái `done` (vừa xong lượt, không làm việc). Trước đây `hc send --if idle` luôn từ chối trường hợp này; agent đang `working`/`blocked` vẫn không bị gõ chen.
 - Cửa sổ hạn mức đã reset mà chưa có số liệu mới: không còn hiển thị số cũ, và ngân sách `provider:` không còn báo động theo số cũ (vd 96% đã dùng trước khi reset).
+- `agm spawn`: giữ nguyên từng đối số sau `--` (không gộp), chỉ gộp khi `<template>` là template của hc; trên Windows tự dự phòng khi `hc run <template>` lỗi `cannot start "sh"` bằng cách chạy thẳng `command:` của template và gửi thân template + nhiệm vụ vào terminal; xoay vòng kiểm tra mở được phiên kế nhiệm trước khi kill phiên cũ.
 
 ## [0.2.0] - 2026-11-19
 

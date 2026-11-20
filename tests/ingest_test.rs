@@ -84,7 +84,10 @@ fn rescan_is_noop() -> anyhow::Result<()> {
             ..Default::default()
         }
     );
-    assert_eq!(store.cursor(&agmag::ingest::path_key(&path))?.unwrap(), before);
+    assert_eq!(
+        store.cursor(&agmag::ingest::path_key(&path))?.unwrap(),
+        before
+    );
     assert_eq!(count(&store, "usage"), 1);
     Ok(())
 }
@@ -231,14 +234,24 @@ fn file_transaction_rolls_back_on_store_error() -> anyhow::Result<()> {
 fn reread_from_zero_resets_session_data() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let path = tmp.path().join("mini.jsonl");
-    fs::write(&path, format!("{CODEX}{{oops
-"))?;
+    fs::write(
+        &path,
+        format!(
+            "{CODEX}{{oops
+"
+        ),
+    )?;
     let store = Store::open_in_memory()?;
     ingest_file(&store, Source::Codex, &path)?;
     // Thay nội dung (đầu tệp khác) -> đọc lại từ 0; dữ liệu cũ của phiên phải biến mất.
     let usage_line = CODEX.lines().nth(3).unwrap().replace("resp_1", "resp_new");
-    fs::write(&path, format!("{usage_line}
-"))?;
+    fs::write(
+        &path,
+        format!(
+            "{usage_line}
+"
+        ),
+    )?;
     ingest_file(&store, Source::Codex, &path)?;
     let keys: Vec<String> = store
         .conn()
@@ -247,11 +260,12 @@ fn reread_from_zero_resets_session_data() -> anyhow::Result<()> {
         .collect::<Result<_, _>>()?;
     assert_eq!(keys, ["resp_new"]);
     assert_eq!(count(&store, "turns"), 0);
-    let stats: (i64, i64) = store.conn().query_row(
-        "SELECT unknown_lines, bad_lines FROM sessions",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
+    let stats: (i64, i64) =
+        store
+            .conn()
+            .query_row("SELECT unknown_lines, bad_lines FROM sessions", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
     assert_eq!(stats, (0, 0));
     Ok(())
 }
@@ -270,7 +284,10 @@ fn ingest_all_skips_locked_file() -> anyhow::Result<()> {
     let dir = tmp.path().join("codex/2026/11/18");
     fs::create_dir_all(&dir)?;
     fs::write(dir.join("rollout-a.jsonl"), CODEX)?;
-    fs::write(dir.join("rollout-b.jsonl"), CODEX.replace("resp_1", "resp_b"))?;
+    fs::write(
+        dir.join("rollout-b.jsonl"),
+        CODEX.replace("resp_1", "resp_b"),
+    )?;
     let _lock = fs::OpenOptions::new()
         .read(true)
         .share_mode(0)

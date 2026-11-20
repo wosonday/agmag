@@ -6,19 +6,26 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 
-use agmag::actions::{self, classify_caller, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate, SpawnReq};
+use agmag::actions::{
+    self, Caller, CleanupCandidate, SpawnReq, classify_caller, eligible_cleanups,
+    execute_cleanup_batch,
+};
 use agmag::config::Config;
 use agmag::git::GitCli;
-use agmag::hc::{terminal_row_from, Hc, HcCli};
-use agmag::launch::{check_claude_hook_installed, extract_launch_argv, parse_cmd_tokens, parse_launch_spec};
+use agmag::hc::{Hc, HcCli, terminal_row_from};
+use agmag::launch::{
+    check_claude_hook_installed, extract_launch_argv, parse_cmd_tokens, parse_launch_spec,
+};
 use agmag::store::{BudgetRow, Store};
 use agmag::{correlate, daemon, policy, report, rotation};
 
 pub fn hc_terminal() -> Option<String> {
-    std::env::var("HC_TERMINAL_ID").ok().filter(|s| !s.is_empty())
+    std::env::var("HC_TERMINAL_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Ai đang gọi: người dùng (TTY, terminal gọi không phải agent) hay agent. Hỏi y/N khi cần xác nhận.
@@ -27,16 +34,25 @@ pub fn caller(store: &Store, yes: bool, needs_confirm: Option<&str>) -> Result<C
     let term = hc_terminal();
     let tty = std::io::stdin().is_terminal();
     let first = actions::detect_caller(store, &HcCli::default(), term.as_deref(), tty, yes);
-    let Caller::User { confirmed } = first else { return Ok(first) };
+    let Caller::User { confirmed } = first else {
+        return Ok(first);
+    };
     if confirmed {
         return Ok(first);
     }
-    let Some(question) = needs_confirm else { return Ok(first) };
+    let Some(question) = needs_confirm else {
+        return Ok(first);
+    };
     eprint!("{question} [y/N] ");
     std::io::stderr().flush()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
-    Ok(classify_caller(term.as_deref(), false, tty, matches!(line.trim(), "y" | "Y" | "yes" | "có")))
+    Ok(classify_caller(
+        term.as_deref(),
+        false,
+        tty,
+        matches!(line.trim(), "y" | "Y" | "yes" | "có"),
+    ))
 }
 
 pub fn print_json(v: &impl serde::Serialize) -> Result<()> {
@@ -59,37 +75,52 @@ pub fn daemon_replay(store: &Store, file: &Path, now: i64) -> Result<usize> {
 }
 
 /// Vòng lặp nền: luồng `hc events --json` (tự nối lại) + mỗi `interval` giây quét log, ghép, policy, xoay vòng.
-pub fn daemon_loop(store: &Store, cfg: &Config, interval: u64, mut periodic: impl FnMut(&Store) -> Result<()>) -> Result<()> {
+pub fn daemon_loop(
+    store: &Store,
+    cfg: &Config,
+    interval: u64,
+    mut periodic: impl FnMut(&Store) -> Result<()>,
+) -> Result<()> {
     let (tx, rx) = mpsc::channel::<String>();
     let hc_bin = std::env::var("AGM_HC_BIN").unwrap_or_else(|_| "hc".into());
-    std::thread::spawn(move || loop {
-        match Command::new(&hc_bin).args(["events", "--json"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
-            Ok(mut child) => {
-                if let Some(out) = child.stdout.take() {
-                    for line in BufReader::new(out).lines().map_while(Result::ok) {
-                        if tx.send(line).is_err() {
-                            return;
+    std::thread::spawn(move || {
+        loop {
+            match Command::new(&hc_bin)
+                .args(["events", "--json"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(mut child) => {
+                    if let Some(out) = child.stdout.take() {
+                        for line in BufReader::new(out).lines().map_while(Result::ok) {
+                            if tx.send(line).is_err() {
+                                return;
+                            }
                         }
                     }
+                    let _ = child.wait();
                 }
-                let _ = child.wait();
+                Err(e) => eprintln!("agm daemon: không chạy được `{hc_bin} events`: {e}"),
             }
-            Err(e) => eprintln!("agm daemon: không chạy được `{hc_bin} events`: {e}"),
+            std::thread::sleep(Duration::from_secs(5));
         }
-        std::thread::sleep(Duration::from_secs(5));
     });
     let hc = HcCli::default();
     let git = GitCli;
     eprintln!("agm daemon: watching (every {interval}s). Ctrl+C to stop.");
     let mut last: Option<std::time::Instant> = None;
     loop {
-        let wait = last.map_or(Duration::ZERO, |l| Duration::from_secs(interval).saturating_sub(l.elapsed()));
+        let wait = last.map_or(Duration::ZERO, |l| {
+            Duration::from_secs(interval).saturating_sub(l.elapsed())
+        });
         match rx.recv_timeout(wait) {
             Ok(line) => {
                 if let Ok(v) = serde_json::from_str::<Value>(&line)
-                    && let Err(e) = daemon::apply_event(store, &v, crate::now_ms()) {
-                        eprintln!("agm daemon: sự kiện lỗi: {e:#}");
-                    }
+                    && let Err(e) = daemon::apply_event(store, &v, crate::now_ms())
+                {
+                    eprintln!("agm daemon: sự kiện lỗi: {e:#}");
+                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => bail!("luồng sự kiện hc đã dừng"),
@@ -119,13 +150,30 @@ pub fn daemon_loop(store: &Store, cfg: &Config, interval: u64, mut periodic: imp
 
 // ---------- tin nhắn & hộp thư ----------
 
-pub fn send(store: &Store, to: &str, kind: &str, task: Option<&str>, text: &str, json_out: bool, now: i64) -> Result<()> {
+pub fn send(
+    store: &Store,
+    to: &str,
+    kind: &str,
+    task: Option<&str>,
+    text: &str,
+    json_out: bool,
+    now: i64,
+) -> Result<()> {
     let from = hc_terminal().unwrap_or_else(|| "user".into());
     let m = actions::send(store, &HcCli::default(), &from, to, kind, task, text, now)?;
     if json_out {
         print_json(&m)?;
     } else {
-        println!("Message #{} → {}: {}{}", m.id, m.to, m.status, m.detail.as_deref().map(|d| format!(" ({d})")).unwrap_or_default());
+        println!(
+            "Message #{} → {}: {}{}",
+            m.id,
+            m.to,
+            m.status,
+            m.detail
+                .as_deref()
+                .map(|d| format!(" ({d})"))
+                .unwrap_or_default()
+        );
     }
     if m.status == "failed" {
         bail!("gửi không thành công: {}", m.detail.unwrap_or_default());
@@ -142,8 +190,19 @@ pub fn inbox(store: &Store, all: bool, json_out: bool) -> Result<()> {
         println!("Inbox is empty.");
     }
     for r in rows {
-        let done = if r.resolved_ms.is_some() { " (resolved)" } else { "" };
-        println!("#{} [{}{}] {} — {}{done}", r.id, r.source, r.kind.map(|k| format!("/{k}")).unwrap_or_default(), r.terminal.unwrap_or_else(|| "-".into()), r.text);
+        let done = if r.resolved_ms.is_some() {
+            " (resolved)"
+        } else {
+            ""
+        };
+        println!(
+            "#{} [{}{}] {} — {}{done}",
+            r.id,
+            r.source,
+            r.kind.map(|k| format!("/{k}")).unwrap_or_default(),
+            r.terminal.unwrap_or_else(|| "-".into()),
+            r.text
+        );
     }
     Ok(())
 }
@@ -163,7 +222,10 @@ pub fn spawn(store: &Store, cfg: &Config, req: &SpawnReq, now: i64) -> Result<()
 }
 
 pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Result<()> {
-    let app = store.terminal(target)?.and_then(|t| t.app).unwrap_or_else(|| "?".into());
+    let app = store
+        .terminal(target)?
+        .and_then(|t| t.app)
+        .unwrap_or_else(|| "?".into());
     // Codex/Claude (hoặc chưa rõ app): luôn phải gõ y — `--yes` không đủ, vì agent có thể tự thêm cờ.
     let yes = yes && app == "opencode";
     let c = caller(store, yes, Some(&format!("{verb} {target} ({app})?")))?;
@@ -177,11 +239,15 @@ pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Res
 }
 
 pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
-    let Some(t) = store.terminal(target)? else { bail!("không biết terminal {target}") };
+    let Some(t) = store.terminal(target)? else {
+        bail!("không biết terminal {target}")
+    };
     match t.app.as_deref() {
         Some("opencode") => {
             if rotation::start(store, &t.address, None, true, now)? {
-                println!("Queued {target} for rotation; the daemon will request a handoff when the agent is idle.");
+                println!(
+                    "Queued {target} for rotation; the daemon will request a handoff when the agent is idle."
+                );
             } else {
                 println!("{target} is already rotating.");
             }
@@ -192,10 +258,14 @@ pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
                 bail!("{target} đã bàn giao sang phiên mới rồi; dùng `agm cleanup` để dọn.");
             }
             if !t.managed {
-                bail!("{target} ({app}) là phiên mở tay chưa bật quản lý — chạy `agm manage {target}` trước.");
+                bail!(
+                    "{target} ({app}) là phiên mở tay chưa bật quản lý — chạy `agm manage {target}` trước."
+                );
             }
             if rotation::start(store, &t.address, None, true, now)? {
-                println!("Queued {target} ({app}) for handoff and a successor session (the old session is not killed).");
+                println!(
+                    "Queued {target} ({app}) for handoff and a successor session (the old session is not killed)."
+                );
             } else {
                 println!("{target} is already in a handoff or has handed off.");
             }
@@ -206,7 +276,11 @@ pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
             bail!(
                 "xoay vòng chưa hỗ trợ {}; hãy tự bàn giao rồi `agm kill {target}`{}",
                 other.unwrap_or("app chưa rõ"),
-                if matches!(c, Caller::Agent(_)) { " (chỉ người dùng được kill)" } else { "" }
+                if matches!(c, Caller::Agent(_)) {
+                    " (chỉ người dùng được kill)"
+                } else {
+                    ""
+                }
             );
         }
     }
@@ -219,7 +293,14 @@ fn claude_settings_home() -> Option<std::path::PathBuf> {
     dirs::home_dir()
 }
 
-pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_argv: &[String], now: i64) -> Result<()> {
+pub fn manage(
+    store: &Store,
+    target: &str,
+    off: bool,
+    cmd: Option<&str>,
+    raw_argv: &[String],
+    now: i64,
+) -> Result<()> {
     let Some(mut t) = store.terminal(target)? else {
         bail!("không biết terminal {target} (chạy `agm daemon` hoặc `agm ps` trước)");
     };
@@ -242,7 +323,11 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
             t.cwd = Some(cwd);
         }
     }
-    let Some(app) = t.app.as_deref().filter(|a| matches!(*a, "claude-code" | "codex")) else {
+    let Some(app) = t
+        .app
+        .as_deref()
+        .filter(|a| matches!(*a, "claude-code" | "codex"))
+    else {
         bail!(
             "agm manage chỉ hỗ trợ claude-code và codex ({} là {})",
             t.address,
@@ -253,7 +338,8 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
         bail!("không biết cwd của {}", t.address);
     };
     if app == "claude-code" {
-        let home = claude_settings_home().context("không tìm thấy thư mục home cho .claude/settings.json")?;
+        let home = claude_settings_home()
+            .context("không tìm thấy thư mục home cho .claude/settings.json")?;
         check_claude_hook_installed(&home)?;
     }
     let argv = if !raw_argv.is_empty() {
@@ -265,8 +351,15 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
     {
         found
     } else {
-        let bin = if app == "claude-code" { "claude" } else { "codex" };
-        bail!("không đọc được lệnh chạy {app} trực tiếp từ {} — hãy truyền lệnh tường minh qua `agm manage {target} -- {bin} ...`", t.address);
+        let bin = if app == "claude-code" {
+            "claude"
+        } else {
+            "codex"
+        };
+        bail!(
+            "không đọc được lệnh chạy {app} trực tiếp từ {} — hãy truyền lệnh tường minh qua `agm manage {target} -- {bin} ...`",
+            t.address
+        );
     };
     let spec = parse_launch_spec(app, &argv, cwd)?;
     let question = format!(
@@ -283,7 +376,14 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
     Ok(())
 }
 
-pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_out: bool, now: i64) -> Result<()> {
+pub fn cleanup(
+    store: &Store,
+    targets: &[String],
+    all: bool,
+    _yes: bool,
+    json_out: bool,
+    now: i64,
+) -> Result<()> {
     let candidates = eligible_cleanups(store)?;
     if json_out && targets.is_empty() && !all {
         return print_json(&candidates);
@@ -301,10 +401,16 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
     } else if !targets.is_empty() {
         let mut chosen = Vec::new();
         for t in targets {
-            let Some(item) = candidates.iter().find(|c| c.old_terminal == *t || c.old_name.as_deref() == Some(t.as_str())) else {
+            let Some(item) = candidates
+                .iter()
+                .find(|c| c.old_terminal == *t || c.old_name.as_deref() == Some(t.as_str()))
+            else {
                 bail!("terminal '{t}' không nằm trong danh sách đủ điều kiện dọn dẹp");
             };
-            if !chosen.iter().any(|x: &CleanupCandidate| x.rotation_id == item.rotation_id) {
+            if !chosen
+                .iter()
+                .any(|x: &CleanupCandidate| x.rotation_id == item.rotation_id)
+            {
                 chosen.push(item.clone());
             }
         }
@@ -323,7 +429,10 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
             println!("Cancelled.");
             return Ok(());
         }
-        indices.into_iter().map(|idx| candidates[idx].clone()).collect()
+        indices
+            .into_iter()
+            .map(|idx| candidates[idx].clone())
+            .collect()
     };
 
     if targets.is_empty() && !all {
@@ -332,7 +441,10 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
     } else {
         print_cleanup_candidates(&selected);
     }
-    let prompt = format!("Confirm cleanup of {} handed-off session(s)?", selected.len());
+    let prompt = format!(
+        "Confirm cleanup of {} handed-off session(s)?",
+        selected.len()
+    );
     // Batch cleanup always requires one typed confirmation, including --yes.
     // A cached app classification must never authorize a protected live target.
     let c = caller(store, false, Some(&prompt))?;
@@ -369,7 +481,9 @@ pub fn parse_selection(input: &str, max: usize) -> Result<Vec<usize>> {
     }
     let mut out = Vec::new();
     for part in trimmed.split([',', ' ']).filter(|s| !s.is_empty()) {
-        let idx: usize = part.parse().with_context(|| format!("số mục không hợp lệ: '{part}'"))?;
+        let idx: usize = part
+            .parse()
+            .with_context(|| format!("số mục không hợp lệ: '{part}'"))?;
         if idx == 0 || idx > max {
             bail!("mục #{idx} nằm ngoài phạm vi 1..={max}");
         }
@@ -407,7 +521,9 @@ pub fn budget_set(store: &Store, scope: &str, soft: f64, hard: f64, action: &str
     let unit = match scope.split(':').collect::<Vec<_>>().as_slice() {
         ["task", id] if !id.is_empty() => "tokens",
         ["provider", p, w] if !p.is_empty() && w.parse::<u32>().is_ok() => "percent",
-        _ => bail!("phạm vi '{scope}' không hợp lệ: dùng task:<ID> hoặc provider:<tên>:<phút cửa sổ> (vd provider:codex:10080)"),
+        _ => bail!(
+            "phạm vi '{scope}' không hợp lệ: dùng task:<ID> hoặc provider:<tên>:<phút cửa sổ> (vd provider:codex:10080)"
+        ),
     };
     if !soft.is_finite() || !hard.is_finite() || soft < 0.0 || hard < 0.0 {
         bail!("ngưỡng phải là số hữu hạn ≥ 0");
@@ -418,7 +534,13 @@ pub fn budget_set(store: &Store, scope: &str, soft: f64, hard: f64, action: &str
     if !matches!(action, "notify" | "interrupt" | "kill") {
         bail!("hành động '{action}' không hợp lệ: notify | interrupt | kill");
     }
-    store.set_budget(&BudgetRow { scope: scope.into(), unit: unit.into(), soft, hard, action: action.into() })?;
+    store.set_budget(&BudgetRow {
+        scope: scope.into(),
+        unit: unit.into(),
+        soft,
+        hard,
+        action: action.into(),
+    })?;
     println!("Budget {scope} set: soft {soft}, hard {hard} {unit}, action {action}.");
     Ok(())
 }
@@ -433,7 +555,15 @@ pub fn budget_ls(store: &Store, json_out: bool, now_ms: i64) -> Result<()> {
         return print_json(&rows);
     }
     for r in rows {
-        println!("{} — {} / soft {} / hard {} {} ({})", r["scope"], r["value"], r["soft"], r["hard"], r["unit"].as_str().unwrap_or(""), r["action"].as_str().unwrap_or(""));
+        println!(
+            "{} — {} / soft {} / hard {} {} ({})",
+            r["scope"],
+            r["value"],
+            r["soft"],
+            r["hard"],
+            r["unit"].as_str().unwrap_or(""),
+            r["action"].as_str().unwrap_or("")
+        );
     }
     Ok(())
 }
@@ -463,9 +593,13 @@ pub fn hook_statusline(home: &Path, now: i64) -> String {
 }
 
 pub fn hook_install(agm_exe: &Path) -> Result<()> {
-    let path = dirs::home_dir().context("không tìm thấy home")?.join(".claude").join("settings.json");
+    let path = dirs::home_dir()
+        .context("không tìm thấy home")?
+        .join(".claude")
+        .join("settings.json");
     let mut v: Value = match std::fs::read_to_string(&path) {
-        Ok(t) => serde_json::from_str(&t).with_context(|| format!("{} không phải JSON hợp lệ", path.display()))?,
+        Ok(t) => serde_json::from_str(&t)
+            .with_context(|| format!("{} không phải JSON hợp lệ", path.display()))?,
         // Chỉ "chưa có tệp" mới bắt đầu từ rỗng; lỗi khác (bị khóa, không có quyền) → dừng, không ghi đè cấu hình.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
         Err(e) => return Err(e).with_context(|| format!("đọc {}", path.display())),
@@ -474,9 +608,13 @@ pub fn hook_install(agm_exe: &Path) -> Result<()> {
         bail!("{} không phải một đối tượng JSON", path.display());
     }
     if !v["statusLine"].is_null() {
-        bail!("{} đã có statusLine; agmag không ghi đè. Gọi `agm hook statusline` từ script hiện có của bạn.", path.display());
+        bail!(
+            "{} đã có statusLine; agmag không ghi đè. Gọi `agm hook statusline` từ script hiện có của bạn.",
+            path.display()
+        );
     }
-    v["statusLine"] = json!({"type": "command", "command": format!("\"{}\" hook statusline", agm_exe.display())});
+    v["statusLine"] =
+        json!({"type": "command", "command": format!("\"{}\" hook statusline", agm_exe.display())});
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }

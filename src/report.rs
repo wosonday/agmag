@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::{bail, Result};
-use rusqlite::{params, Connection};
+use anyhow::{Result, bail};
+use rusqlite::{Connection, params};
 use serde::Serialize;
 
-use crate::config::{context_pct, cost_usd, Billing, Config};
+use crate::config::{Billing, Config, context_pct, cost_usd};
 use crate::model::{Role, Source, TurnSummary, Usage};
 use crate::store::Store;
 
@@ -108,13 +108,21 @@ pub struct QuotaRow {
 
 /// % đã dùng còn hiệu lực: cửa sổ đã reset mà chưa có số mới thì số cũ không còn đúng → 0.
 pub fn effective_used_percent(used_percent: f64, resets_at_s: i64, now_s: i64) -> f64 {
-    if resets_at_s <= now_s { 0.0 } else { used_percent }
+    if resets_at_s <= now_s {
+        0.0
+    } else {
+        used_percent
+    }
 }
 
 /// % còn lại (0–100) từ % đã dùng; NaN giữ nguyên để hiển thị là chưa rõ.
 pub fn left_percent(used_percent: f64, resets_at_s: i64, now_s: i64) -> f64 {
     let used = effective_used_percent(used_percent, resets_at_s, now_s);
-    if used.is_nan() { f64::NAN } else { (100.0 - used).clamp(0.0, 100.0) }
+    if used.is_nan() {
+        f64::NAN
+    } else {
+        (100.0 - used).clamp(0.0, 100.0)
+    }
 }
 
 const USAGE_SUMS: &str = "COALESCE(SUM(u.input_uncached),0), COALESCE(SUM(u.cache_read),0), \
@@ -174,11 +182,27 @@ pub fn sessions(store: &Store, cfg: &Config, since_ms: i64) -> Result<Vec<Sessio
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (source, session_id, path, cwd, model, last_ms, ctx_used, ctx_window, unknown, bad, turns, usages, usage) =
-            row?;
-        let window = ctx_window
-            .map(|w| w as u64)
-            .or_else(|| model.as_deref().and_then(|m| cfg.model(m)).and_then(|m| m.context_window));
+        let (
+            source,
+            session_id,
+            path,
+            cwd,
+            model,
+            last_ms,
+            ctx_used,
+            ctx_window,
+            unknown,
+            bad,
+            turns,
+            usages,
+            usage,
+        ) = row?;
+        let window = ctx_window.map(|w| w as u64).or_else(|| {
+            model
+                .as_deref()
+                .and_then(|m| cfg.model(m))
+                .and_then(|m| m.context_window)
+        });
         let warning = if bad > 0 {
             Some(format!("{bad} unreadable lines"))
         } else if turns > 0 && usages == 0 {
@@ -249,7 +273,13 @@ pub fn local_month_key(ts_ms: i64, offset_at: &mut dyn FnMut(i64) -> i64) -> Str
     format!("{y:04}-{m:02}")
 }
 
-fn local_midnight_ms(y: i64, m: i64, d: i64, hint_off_s: i64, offset_at: &mut dyn FnMut(i64) -> i64) -> i64 {
+fn local_midnight_ms(
+    y: i64,
+    m: i64,
+    d: i64,
+    hint_off_s: i64,
+    offset_at: &mut dyn FnMut(i64) -> i64,
+) -> i64 {
     let mid_local_s = days_from_civil(y, m, d) * 86_400;
     let approx_utc_s = mid_local_s - hint_off_s;
     let off = offset_at(approx_utc_s);
@@ -266,7 +296,11 @@ pub fn format_offset_label(offset_s: i64) -> String {
 }
 
 /// Tính ranh giới 24h / hôm nay / tháng này / `months` tháng gần nhất theo hàm offset có thể thay khi test.
-pub fn compute_local_bounds(now_ms: i64, months: u32, offset_at: &mut dyn FnMut(i64) -> i64) -> LocalBounds {
+pub fn compute_local_bounds(
+    now_ms: i64,
+    months: u32,
+    offset_at: &mut dyn FnMut(i64) -> i64,
+) -> LocalBounds {
     let months = months.max(1) as i64;
     let now_s = now_ms.div_euclid(1000);
     let off_now = offset_at(now_s);
@@ -316,7 +350,12 @@ pub fn sqlite_offset_at(conn: &Connection) -> impl FnMut(i64) -> i64 + '_ {
     }
 }
 
-pub fn window_since_ms(window: UsageWindow, now_ms: i64, months: u32, offset_at: &mut dyn FnMut(i64) -> i64) -> i64 {
+pub fn window_since_ms(
+    window: UsageWindow,
+    now_ms: i64,
+    months: u32,
+    offset_at: &mut dyn FnMut(i64) -> i64,
+) -> i64 {
     let b = compute_local_bounds(now_ms, months, offset_at);
     match window {
         UsageWindow::Last24h => b.last_24h_start_ms,
@@ -336,10 +375,22 @@ struct CostAcc {
 
 impl CostAcc {
     fn new() -> Self {
-        CostAcc { usage: Usage::default(), billing: None, cost: Some(0.0), value: None, unpriced: 0 }
+        CostAcc {
+            usage: Usage::default(),
+            billing: None,
+            cost: Some(0.0),
+            value: None,
+            unpriced: 0,
+        }
     }
 
-    fn add(&mut self, usage: &Usage, billing: Option<Billing>, row_cost: Option<f64>, row_value: Option<f64>) {
+    fn add(
+        &mut self,
+        usage: &Usage,
+        billing: Option<Billing>,
+        row_cost: Option<f64>,
+        row_value: Option<f64>,
+    ) {
         self.usage.add(usage);
         self.billing = Some(match self.billing {
             None => billing,
@@ -369,11 +420,21 @@ impl CostAcc {
 }
 
 /// (actually billed USD, list-price value USD) of one usage record.
-fn price_row(cfg: &Config, model: Option<&str>, usage: &Usage) -> (Option<Billing>, Option<f64>, Option<f64>) {
+fn price_row(
+    cfg: &Config,
+    model: Option<&str>,
+    usage: &Usage,
+) -> (Option<Billing>, Option<f64>, Option<f64>) {
     let billing = model.and_then(|m| cfg.billing_for_model(m));
-    let value = model.and_then(|m| cfg.price_for(m)).map(|p| cost_usd(usage, &p));
+    let value = model
+        .and_then(|m| cfg.price_for(m))
+        .map(|p| cost_usd(usage, &p));
     // Real cost only for API-billed models; a subscription is not billed per token.
-    let cost = if billing == Some(Billing::Api) { value } else { None };
+    let cost = if billing == Some(Billing::Api) {
+        value
+    } else {
+        None
+    };
     (billing, cost, value)
 }
 
@@ -389,7 +450,14 @@ pub fn cost_totals(rows: &[CostRow]) -> CostRow {
         }
         unpriced += r.unpriced_tokens;
     }
-    CostRow { key: "SUM".into(), usage, billing: None, cost_usd: None, value_usd: value, unpriced_tokens: unpriced }
+    CostRow {
+        key: "SUM".into(),
+        usage,
+        billing: None,
+        cost_usd: None,
+        value_usd: value,
+        unpriced_tokens: unpriced,
+    }
 }
 
 /// USD cell text: `$1.23`; `≥ $1.23` when some tokens have no price (the value is a lower bound); `?` when none do.
@@ -441,9 +509,15 @@ pub fn cost_with_offset(
             GroupBy::Cwd => cwd.unwrap_or_else(|| "?".into()),
         };
         let (billing, row_cost, row_value) = price_row(cfg, model.as_deref(), &usage);
-        groups.entry(key).or_insert_with(CostAcc::new).add(&usage, billing, row_cost, row_value);
+        groups
+            .entry(key)
+            .or_insert_with(CostAcc::new)
+            .add(&usage, billing, row_cost, row_value);
     }
-    Ok(groups.into_iter().map(|(key, acc)| acc.into_row(key)).collect())
+    Ok(groups
+        .into_iter()
+        .map(|(key, acc)| acc.into_row(key))
+        .collect())
 }
 
 /// Tổng hợp 24h, hôm nay, tháng này và 4 tháng gần nhất (đủ cả bucket 0).
@@ -465,7 +539,11 @@ pub fn usage_summary_with_offset(
          FROM usage u WHERE u.ts_ms >= ?1 AND u.ts_ms <= ?2",
     )?;
     let rows = stmt.query_map(params![min_since, now_ms], |r| {
-        Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?, usage_at(r, 2)?))
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, i64>(1)?,
+            usage_at(r, 2)?,
+        ))
     })?;
 
     let mut b24 = UsageBucket::default();
@@ -478,24 +556,33 @@ pub fn usage_summary_with_offset(
         .collect();
 
     let mut usd_unknown = [false; 3]; // 24h, hôm nay, tháng này
-    let add_bucket = |b: &mut UsageBucket, u: &Usage, row_usd: Option<f64>, row_value: Option<f64>| {
-        b.usage.add(u);
-        if let Some(c) = row_usd {
-            b.api_usd = Some(b.api_usd.unwrap_or(0.0) + c);
-        }
-        match row_value {
-            Some(v) => b.value_usd += v,
-            None => b.unpriced_tokens += u.total(),
-        }
-    };
+    let add_bucket =
+        |b: &mut UsageBucket, u: &Usage, row_usd: Option<f64>, row_value: Option<f64>| {
+            b.usage.add(u);
+            if let Some(c) = row_usd {
+                b.api_usd = Some(b.api_usd.unwrap_or(0.0) + c);
+            }
+            match row_value {
+                Some(v) => b.value_usd += v,
+                None => b.unpriced_tokens += u.total(),
+            }
+        };
 
     for row in rows {
         let (model, ts_ms, usage) = row?;
         let (billing, row_cost, row_value) = price_row(cfg, model.as_deref(), &usage);
         // Trả theo API mà chưa khai giá: tổng USD của ô không còn biết được (không số liệu giả).
         let unpriced_api = billing == Some(Billing::Api) && row_cost.is_none();
-        let starts = [bounds.last_24h_start_ms, bounds.today_start_ms, bounds.month_start_ms];
-        for ((start, bucket), unknown) in starts.into_iter().zip([&mut b24, &mut bday, &mut bmon]).zip(usd_unknown.iter_mut()) {
+        let starts = [
+            bounds.last_24h_start_ms,
+            bounds.today_start_ms,
+            bounds.month_start_ms,
+        ];
+        for ((start, bucket), unknown) in starts
+            .into_iter()
+            .zip([&mut b24, &mut bday, &mut bmon])
+            .zip(usd_unknown.iter_mut())
+        {
             if ts_ms >= start {
                 add_bucket(bucket, &usage, row_cost, row_value);
                 *unknown |= unpriced_api;
@@ -509,7 +596,10 @@ pub fn usage_summary_with_offset(
         }
     }
 
-    for (bucket, unknown) in [&mut b24, &mut bday, &mut bmon].into_iter().zip(usd_unknown) {
+    for (bucket, unknown) in [&mut b24, &mut bday, &mut bmon]
+        .into_iter()
+        .zip(usd_unknown)
+    {
         if unknown {
             bucket.api_usd = None;
         }
@@ -527,7 +617,8 @@ pub fn usage_summary_with_offset(
         })
         .collect();
 
-    let (covered_since_ms, incomplete_coverage) = coverage_status(store, bounds.four_months_start_ms)?;
+    let (covered_since_ms, incomplete_coverage) =
+        coverage_status(store, bounds.four_months_start_ms)?;
     Ok(UsageSummary {
         now_ms,
         offset_label: bounds.offset_label,
@@ -565,10 +656,16 @@ pub fn render_bar(value: u64, max: u64, width: usize, ascii: bool) -> String {
     let filled = if max == 0 || value == 0 {
         0
     } else {
-        ((value as f64 / max as f64) * width as f64).round().clamp(1.0, width as f64) as usize
+        ((value as f64 / max as f64) * width as f64)
+            .round()
+            .clamp(1.0, width as f64) as usize
     };
     let (on, off) = if ascii { ('#', '.') } else { ('█', '░') };
-    format!("{}{}", on.to_string().repeat(filled), off.to_string().repeat(width.saturating_sub(filled)))
+    format!(
+        "{}{}",
+        on.to_string().repeat(filled),
+        off.to_string().repeat(width.saturating_sub(filled))
+    )
 }
 
 /// Ký tự thanh dọc 1 ô cho khối TUI gọn.
@@ -616,14 +713,24 @@ pub fn resolve_session(store: &Store, prefix: &str) -> Result<(i64, String)> {
          ORDER BY session_id",
     )?;
     let found = stmt
-        .query_map(params![prefix], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
+        .query_map(params![prefix], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     match found.as_slice() {
         [] => bail!("không tìm thấy phiên có tiền tố '{prefix}'"),
         [(id, _, path)] => Ok((*id, path.clone())),
         many => {
             let ids: Vec<&str> = many.iter().map(|(_, sid, _)| sid.as_str()).collect();
-            bail!("tiền tố '{prefix}' khớp {} phiên: {}", ids.len(), ids.join(", "))
+            bail!(
+                "tiền tố '{prefix}' khớp {} phiên: {}",
+                ids.len(),
+                ids.join(", ")
+            )
         }
     }
 }

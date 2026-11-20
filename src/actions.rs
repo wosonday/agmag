@@ -2,10 +2,10 @@
 //! Quy tắc của người dùng (2026-11-18): Codex và Claude chỉ bị kill/ngắt khi **người dùng** ra lệnh;
 //! agent (vd Codex quản lý) chỉ được kill/ngắt thợ không phải Codex/Claude (thực tế là OpenCode).
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::config::Config;
-use crate::hc::{terminal_row_from, Hc, RunSpec};
+use crate::hc::{Hc, RunSpec, terminal_row_from};
 use crate::launch::LaunchSpec;
 use crate::store::{MessageRow, Store};
 
@@ -24,12 +24,18 @@ pub const KINDS_EN: [(&str, &str); 7] = [
 
 /// English name of a stored code for display; unknown codes are returned unchanged.
 pub fn kind_to_english(stored: &str) -> &str {
-    KINDS_EN.iter().find(|(_, vi)| *vi == stored).map_or(stored, |(en, _)| en)
+    KINDS_EN
+        .iter()
+        .find(|(_, vi)| *vi == stored)
+        .map_or(stored, |(en, _)| en)
 }
 
 /// Stored code for an English type (any letter case). Whole word only: `REPORTING` is not `REPORT`.
 pub fn kind_from_english(word: &str) -> Option<&'static str> {
-    KINDS_EN.iter().find(|(en, _)| en.eq_ignore_ascii_case(word)).map(|(_, vi)| *vi)
+    KINDS_EN
+        .iter()
+        .find(|(en, _)| en.eq_ignore_ascii_case(word))
+        .map(|(_, vi)| *vi)
 }
 const PROTECTED_APPS: [&str; 2] = ["codex", "claude-code"];
 
@@ -42,7 +48,12 @@ pub enum Caller {
 }
 
 /// `hc_terminal`: `HC_TERMINAL_ID` của tiến trình gọi; `terminal_is_agent`: terminal đó đã tự báo 7501.
-pub fn classify_caller(hc_terminal: Option<&str>, terminal_is_agent: bool, tty: bool, confirmed: bool) -> Caller {
+pub fn classify_caller(
+    hc_terminal: Option<&str>,
+    terminal_is_agent: bool,
+    tty: bool,
+    confirmed: bool,
+) -> Caller {
     if tty && !terminal_is_agent {
         Caller::User { confirmed }
     } else {
@@ -57,20 +68,32 @@ const AGENT_KILLABLE_APPS: [&str; 1] = ["opencode"];
 
 /// App hiện tại của terminal: ưu tiên `hc get` (mới nhất), rồi CSDL. None nếu không biết.
 fn current_app(store: &Store, hc: &dyn Hc, terminal: &str) -> Option<String> {
-    let fresh = hc.get(terminal).ok().map(|v| terminal_row_from(&v)).and_then(|r| r.app);
+    let fresh = hc
+        .get(terminal)
+        .ok()
+        .map(|v| terminal_row_from(&v))
+        .and_then(|r| r.app);
     fresh.or_else(|| store.terminal(terminal).ok().flatten().and_then(|t| t.app))
 }
 
 /// Xác định ai đang gọi — không chắc thì coi là agent (fail-closed):
 /// có `HC_TERMINAL_ID` mà `hc get` lỗi, hoặc terminal gọi đang chạy một app agent → agent.
-pub fn detect_caller(store: &Store, hc: &dyn Hc, hc_terminal: Option<&str>, tty: bool, confirmed: bool) -> Caller {
+pub fn detect_caller(
+    store: &Store,
+    hc: &dyn Hc,
+    hc_terminal: Option<&str>,
+    tty: bool,
+    confirmed: bool,
+) -> Caller {
     let is_agent = match hc_terminal {
         None => false,
         Some(t) => match hc.get(t) {
             Err(_) => true,
             Ok(v) => {
                 let row = terminal_row_from(&v);
-                let app = row.app.or_else(|| store.terminal(t).ok().flatten().and_then(|r| r.app));
+                let app = row
+                    .app
+                    .or_else(|| store.terminal(t).ok().flatten().and_then(|r| r.app));
                 row.reported || app.as_deref().is_some_and(|a| AGENT_APPS.contains(&a))
             }
         },
@@ -93,7 +116,13 @@ fn caller_name(c: &Caller) -> String {
     }
 }
 
-pub fn format_message(from: &str, kind: &str, task: Option<&str>, text: &str, to_user: bool) -> String {
+pub fn format_message(
+    from: &str,
+    kind: &str,
+    task: Option<&str>,
+    text: &str,
+    to_user: bool,
+) -> String {
     let id = task.map(|t| format!(" [ID {t}]")).unwrap_or_default();
     if to_user {
         format!("[{kind}]{id} {text}")
@@ -104,9 +133,21 @@ pub fn format_message(from: &str, kind: &str, task: Option<&str>, text: &str, to
 
 #[allow(clippy::too_many_arguments)]
 /// Gửi một tin theo mẫu §3.2. Đích `user` → hộp thư. Tin luôn được ghi lại, kể cả khi gửi thất bại.
-pub fn send(store: &Store, hc: &dyn Hc, from: &str, to: &str, kind: &str, task: Option<&str>, text: &str, now: i64) -> Result<MessageRow> {
+pub fn send(
+    store: &Store,
+    hc: &dyn Hc,
+    from: &str,
+    to: &str,
+    kind: &str,
+    task: Option<&str>,
+    text: &str,
+    now: i64,
+) -> Result<MessageRow> {
     if !KINDS.contains(&kind) {
-        bail!("loại tin '{kind}' không hợp lệ; dùng một trong: {}", KINDS.join(", "));
+        bail!(
+            "loại tin '{kind}' không hợp lệ; dùng một trong: {}",
+            KINDS.join(", ")
+        );
     }
     let to_user = to == "user";
     let body = format_message(from, kind, task, text, to_user);
@@ -129,10 +170,9 @@ pub fn send(store: &Store, hc: &dyn Hc, from: &str, to: &str, kind: &str, task: 
         // `hc send --if` chỉ nhận đúng `idle`/`working`; agent vừa xong lượt (`done`) không còn làm việc nên
         // gõ vào là an toàn, nhưng `--if idle` lại từ chối. Đọc trạng thái mới: `done` → gửi không kèm chốt;
         // mọi trạng thái khác (working, blocked, idle) hoặc đọc lỗi → giữ chốt `--if idle` như cũ.
-        let done = hc
-            .get(to)
-            .ok()
-            .is_some_and(|v| v["state"].as_str() == Some("live") && v["status"]["state"].as_str() == Some("done"));
+        let done = hc.get(to).ok().is_some_and(|v| {
+            v["state"].as_str() == Some("live") && v["status"]["state"].as_str() == Some("done")
+        });
         match hc.send(to, &body, !done, false) {
             Ok(v) => {
                 m.status = "sent".into();
@@ -150,15 +190,22 @@ pub fn send(store: &Store, hc: &dyn Hc, from: &str, to: &str, kind: &str, task: 
 
 /// Trả lời một mục hộp thư bằng cách gõ vào terminal liên quan. Mục `blocked` dùng `force` (trả lời hộp thoại).
 pub fn reply(store: &Store, hc: &dyn Hc, inbox_id: i64, text: &str, now: i64) -> Result<()> {
-    let Some(item) = store.inbox_item(inbox_id)? else { bail!("không có mục hộp thư #{inbox_id}") };
+    let Some(item) = store.inbox_item(inbox_id)? else {
+        bail!("không có mục hộp thư #{inbox_id}")
+    };
     // Chỉ trả lời được câu hỏi/chặn của agent hoặc tin agent gửi cho người dùng; các mục khác chỉ để đóng.
     if !matches!(item.source.as_str(), "blocked" | "message") {
-        bail!("mục #{inbox_id} ({}) không phải câu hỏi của agent — dùng `agm done {inbox_id}` để đóng", item.source);
+        bail!(
+            "mục #{inbox_id} ({}) không phải câu hỏi của agent — dùng `agm done {inbox_id}` để đóng",
+            item.source
+        );
     }
     if item.resolved_ms.is_some() {
         bail!("mục #{inbox_id} đã được xử lý");
     }
-    let Some(term) = item.terminal.as_deref() else { bail!("mục #{inbox_id} không gắn với terminal nào để trả lời") };
+    let Some(term) = item.terminal.as_deref() else {
+        bail!("mục #{inbox_id} không gắn với terminal nào để trả lời")
+    };
     let res = hc.send(term, text, false, item.source == "blocked");
     store.log_action("user", "reply", term, text, res.is_ok(), now)?;
     res?;
@@ -174,18 +221,28 @@ pub struct SpawnReq {
     pub role: String,
     pub name: Option<String>,
     pub cwd: Option<String>,
-    pub text: Option<String>,
+    pub text: Vec<String>,
 }
 
 fn valid_name(s: &str) -> bool {
-    (1..=32).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+    (1..=32).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 /// Mọi điều kiện để `spawn` thành công, kiểm trước (không gọi hc). `replacing`: terminal sắp được thay
 /// (xoay vòng) — không tính vào max_workers. Trả tên terminal sẽ dùng.
-pub fn spawn_precheck(store: &Store, cfg: &Config, req: &SpawnReq, replacing: Option<&str>) -> Result<String> {
+pub fn spawn_precheck(
+    store: &Store,
+    cfg: &Config,
+    req: &SpawnReq,
+    replacing: Option<&str>,
+) -> Result<String> {
     if !valid_name(&req.task) {
-        bail!("mã việc '{}' không hợp lệ: chỉ a-z 0-9 - _ (tối đa 32)", req.task);
+        bail!(
+            "mã việc '{}' không hợp lệ: chỉ a-z 0-9 - _ (tối đa 32)",
+            req.task
+        );
     }
     if req.template.trim().is_empty() {
         bail!("thiếu template");
@@ -194,10 +251,15 @@ pub fn spawn_precheck(store: &Store, cfg: &Config, req: &SpawnReq, replacing: Op
         let workers = store
             .terminals(true)?
             .iter()
-            .filter(|t| t.role.as_deref() == Some("worker") && Some(t.address.as_str()) != replacing)
+            .filter(|t| {
+                t.role.as_deref() == Some("worker") && Some(t.address.as_str()) != replacing
+            })
             .count();
         if workers as u32 >= cfg.policy.max_workers {
-            bail!("đã có {workers} thợ đang chạy (max_workers = {}); chờ một thợ xong hoặc tăng [policy].max_workers", cfg.policy.max_workers);
+            bail!(
+                "đã có {workers} thợ đang chạy (max_workers = {}); chờ một thợ xong hoặc tăng [policy].max_workers",
+                cfg.policy.max_workers
+            );
         }
     }
     if let Some(reason) = crate::policy::spawn_blocked_by_budget(store, &req.task)? {
@@ -207,12 +269,18 @@ pub fn spawn_precheck(store: &Store, cfg: &Config, req: &SpawnReq, replacing: Op
         Some(n) => n.clone(),
         None => {
             let prefix = format!("w-{}-", req.task);
-            let used = store.terminals(false)?.iter().filter(|t| t.name.as_deref().is_some_and(|n| n.starts_with(&prefix))).count();
+            let used = store
+                .terminals(false)?
+                .iter()
+                .filter(|t| t.name.as_deref().is_some_and(|n| n.starts_with(&prefix)))
+                .count();
             format!("{prefix}{}", used + 1)
         }
     };
     if !valid_name(&name) {
-        bail!("tên terminal '{name}' không hợp lệ (1–32 ký tự a-z 0-9 - _); dùng mã việc ngắn hơn hoặc --name");
+        bail!(
+            "tên terminal '{name}' không hợp lệ (1–32 ký tự a-z 0-9 - _); dùng mã việc ngắn hơn hoặc --name"
+        );
     }
     Ok(name)
 }
@@ -239,16 +307,30 @@ pub fn spawn_successor_precheck(
         .into_iter()
         .filter_map(|t| t.name)
         .collect();
-    let app_tag = if spec.app == "claude-code" { "claude" } else { "codex" };
+    let app_tag = if spec.app == "claude-code" {
+        "claude"
+    } else {
+        "codex"
+    };
     let base_raw = old_name
         .filter(|n| !n.is_empty())
         .map(|n| n.split("-r").next().unwrap_or(n))
         .unwrap_or(old_addr);
     let sanitized: String = base_raw
         .bytes()
-        .map(|b| if b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' { b as char } else { '-' })
+        .map(|b| {
+            if b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' {
+                b as char
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let prefix = if sanitized.is_empty() { format!("rot-{app_tag}") } else { sanitized };
+    let prefix = if sanitized.is_empty() {
+        format!("rot-{app_tag}")
+    } else {
+        sanitized
+    };
     for n in 1..=99u32 {
         let suffix = format!("-r{n}");
         let max_prefix = 32usize.saturating_sub(suffix.len());
@@ -268,50 +350,204 @@ pub fn spawn_successor_precheck(
 /// Sinh agent qua `hc run --bg --outlive-parent` sau khi kiểm hạn mức. Trả địa chỉ terminal mới.
 pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64) -> Result<String> {
     let name = spawn_precheck(store, cfg, req, None)?;
+    let listed = hc
+        .templates()
+        .map(|ts| ts.iter().any(|t| t["name"].as_str() == Some(&req.template)))
+        .unwrap_or(false);
+    let on_disk = crate::hc::load_template(&req.template).is_ok();
+    let is_template = listed || on_disk;
     let mut argv = vec![req.template.clone()];
-    argv.extend(req.text.clone());
+    if is_template {
+        if !req.text.is_empty() {
+            argv.push(req.text.join(" "));
+        }
+    } else {
+        argv.extend(req.text.iter().cloned());
+    }
     let spec = RunSpec {
         argv,
         name: Some(name.clone()),
         cwd: req.cwd.clone(),
-        labels: [("agm.task".to_string(), req.task.clone()), ("agm.role".to_string(), req.role.clone())].into(),
+        labels: [
+            ("agm.task".to_string(), req.task.clone()),
+            ("agm.role".to_string(), req.role.clone()),
+        ]
+        .into(),
     };
-    let res = hc.run(&spec);
-    store.log_action("agm", "spawn", &name, &format!("{} task={} role={}", req.template, req.task, req.role), res.is_ok(), now)?;
+    let mut brief = None;
+    let res = match hc.run(&spec) {
+        Err(e) if cfg!(windows) && is_template && crate::hc::is_missing_sh(&e) => {
+            let template = crate::hc::load_template(&req.template)?;
+            let direct = RunSpec {
+                argv: template.argv,
+                ..spec.clone()
+            };
+            brief = Some((
+                format!("{}\n\n{}", template.body, req.text.join(" ")),
+                crate::hc::app_from_argv(&direct.argv),
+            ));
+            hc.run(&direct)
+        }
+        other => other,
+    };
+    store.log_action(
+        "agm",
+        "spawn",
+        &name,
+        &format!("{} task={} role={}", req.template, req.task, req.role),
+        res.is_ok(),
+        now,
+    )?;
     let v = res?;
     let mut row = terminal_row_from(&v);
     if row.address.is_empty() {
         bail!("hc run không trả địa chỉ terminal: {v}");
     }
-    row.template.get_or_insert(req.template.clone());
+    row.template = Some(req.template.clone());
     row.task.get_or_insert(req.task.clone());
     row.role.get_or_insert(req.role.clone());
     if row.created_ms == 0 {
         row.created_ms = now;
     }
     store.upsert_terminal(&row)?;
+    if let Some((brief, app)) = brief {
+        send_spawn_brief(store, hc, &row.address, &brief, app.as_deref(), now)?;
+    }
     Ok(row.address)
+}
+
+/// Verify a successor's brief transport before rotation is allowed to kill anything.
+/// Unknown programs fail closed; OpenCode accepts an explicit --prompt argument.
+pub fn prepare_rotation_spawn(hc: &dyn Hc, req: &mut SpawnReq) -> Result<()> {
+    let listed = hc
+        .templates()
+        .map(|ts| ts.iter().any(|t| t["name"].as_str() == Some(&req.template)))
+        .unwrap_or(false);
+    if listed {
+        return Ok(());
+    }
+    // Đường dự phòng trên Windows: template có trên đĩa và parse được command:.
+    if crate::hc::load_template(&req.template).is_ok() {
+        return Ok(());
+    }
+    if crate::hc::app_from_argv(std::slice::from_ref(&req.template)).as_deref() == Some("opencode")
+    {
+        req.text = vec!["--prompt".into(), req.text.join(" ")];
+        return Ok(());
+    }
+    bail!(
+        "không xác minh được template hoặc cách nhận brief của '{}'",
+        req.template
+    )
+}
+
+fn send_spawn_brief(
+    store: &Store,
+    hc: &dyn Hc,
+    address: &str,
+    brief: &str,
+    app: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut detail = "agent chưa sẵn sàng".to_string();
+    loop {
+        match hc.get(address) {
+            Ok(v)
+                if v["state"].as_str() == Some("live")
+                    && app.is_some_and(|a| v["status"]["app"].as_str() == Some(a))
+                    && matches!(v["status"]["state"].as_str(), Some("idle" | "done")) =>
+            {
+                match hc.send(
+                    address,
+                    brief,
+                    v["status"]["state"].as_str() != Some("done"),
+                    false,
+                ) {
+                    Ok(_) => {
+                        store.log_action(
+                            "agm",
+                            "spawn_brief",
+                            address,
+                            "đã gửi brief template",
+                            true,
+                            now,
+                        )?;
+                        return Ok(());
+                    }
+                    Err(e) => detail = format!("{e:#}"),
+                }
+            }
+            Ok(v) if v["state"].as_str() == Some("finished") => {
+                detail = "terminal đã kết thúc trước khi nhận brief".into();
+                break;
+            }
+            Err(e) => detail = format!("{e:#}"),
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    store.open_inbox(
+        Some(address),
+        "spawn",
+        Some("brief_failed"),
+        &format!("Chưa gửi được brief template: {detail}\n\n{brief}"),
+        now,
+    )?;
+    store.log_action("agm", "spawn_brief", address, &detail, false, now)?;
+    Ok(())
 }
 
 /// Kiểm quyền kill/ngắt theo quy tắc của người dùng; từ chối thì ghi nhật ký và chuyển đề nghị vào hộp thư.
 /// Agent/tự động: **danh sách trắng** — chỉ app OpenCode đã xác định; không rõ app → từ chối.
-fn authorize(store: &Store, hc: &dyn Hc, caller: &Caller, target: &str, verb: &str, now: i64) -> Result<()> {
+fn authorize(
+    store: &Store,
+    hc: &dyn Hc,
+    caller: &Caller,
+    target: &str,
+    verb: &str,
+    now: i64,
+) -> Result<()> {
     let app = current_app(store, hc, target);
     let shown = app.clone().unwrap_or_else(|| "không rõ app".into());
     let who = caller_name(caller);
     let refusal = match caller {
         Caller::User { confirmed: false } => Some("cần xác nhận (trả lời y)".to_string()),
         Caller::User { confirmed: true } => None,
-        Caller::Agent(_) if app.as_deref().is_some_and(|a| AGENT_KILLABLE_APPS.contains(&a)) => None,
+        Caller::Agent(_)
+            if app
+                .as_deref()
+                .is_some_and(|a| AGENT_KILLABLE_APPS.contains(&a)) =>
+        {
+            None
+        }
         Caller::Agent(_) if app.as_deref().is_some_and(|a| PROTECTED_APPS.contains(&a)) => {
             Some(format!("chỉ người dùng được {verb} phiên {shown}"))
         }
-        Caller::Agent(_) => Some(format!("chỉ người dùng được {verb} {target} ({shown}); agent chỉ dừng được thợ OpenCode")),
+        Caller::Agent(_) => Some(format!(
+            "chỉ người dùng được {verb} {target} ({shown}); agent chỉ dừng được thợ OpenCode"
+        )),
     };
     if let Some(reason) = refusal {
-        store.log_action(&who, verb, target, &format!("từ chối: {reason}"), false, now)?;
+        store.log_action(
+            &who,
+            verb,
+            target,
+            &format!("từ chối: {reason}"),
+            false,
+            now,
+        )?;
         if matches!(caller, Caller::Agent(_)) {
-            store.open_inbox(Some(target), "request", Some(verb), &format!("{who} đề nghị {verb} {target} ({shown})"), now)?;
+            store.open_inbox(
+                Some(target),
+                "request",
+                Some(verb),
+                &format!("{who} đề nghị {verb} {target} ({shown})"),
+                now,
+            )?;
         }
         bail!("{reason}");
     }
@@ -319,9 +555,18 @@ fn authorize(store: &Store, hc: &dyn Hc, caller: &Caller, target: &str, verb: &s
 }
 
 /// Bật `managed=1` + lưu `LaunchSpec` sau khi kiểm tra nghiêm ngặt người gọi (chỉ User đã xác nhận `y`).
-pub fn set_managed_launch(store: &Store, caller: &Caller, target: &str, spec: &LaunchSpec, now: i64) -> Result<()> {
+pub fn set_managed_launch(
+    store: &Store,
+    caller: &Caller,
+    target: &str,
+    spec: &LaunchSpec,
+    now: i64,
+) -> Result<()> {
     let who = caller_name(caller);
-    let detail = format!("exe={}, args={:?}, cwd={}", spec.executable, spec.argv, spec.cwd);
+    let detail = format!(
+        "exe={}, args={:?}, cwd={}",
+        spec.executable, spec.argv, spec.cwd
+    );
     match caller {
         Caller::User { confirmed: true } => {
             let json = spec.to_json()?;
@@ -334,8 +579,16 @@ pub fn set_managed_launch(store: &Store, caller: &Caller, target: &str, spec: &L
             bail!("chưa xác nhận bật quản lý cho {target}");
         }
         Caller::Agent(_) => {
-            let reason = format!("chỉ người dùng ở terminal mới được bật quản lý `agm manage` cho {target}");
-            store.log_action(&who, "manage", target, &format!("từ chối: {reason}"), false, now)?;
+            let reason =
+                format!("chỉ người dùng ở terminal mới được bật quản lý `agm manage` cho {target}");
+            store.log_action(
+                &who,
+                "manage",
+                target,
+                &format!("từ chối: {reason}"),
+                false,
+                now,
+            )?;
             store.open_inbox(
                 Some(target),
                 "request",
@@ -355,10 +608,23 @@ pub fn kill(store: &Store, hc: &dyn Hc, caller: &Caller, target: &str, now: i64)
     res
 }
 
-pub fn interrupt(store: &Store, hc: &dyn Hc, caller: &Caller, target: &str, now: i64) -> Result<()> {
+pub fn interrupt(
+    store: &Store,
+    hc: &dyn Hc,
+    caller: &Caller,
+    target: &str,
+    now: i64,
+) -> Result<()> {
     authorize(store, hc, caller, target, "interrupt", now)?;
     let res = hc.interrupt(target);
-    store.log_action(&caller_name(caller), "interrupt", target, "", res.is_ok(), now)?;
+    store.log_action(
+        &caller_name(caller),
+        "interrupt",
+        target,
+        "",
+        res.is_ok(),
+        now,
+    )?;
     res
 }
 
@@ -432,7 +698,10 @@ pub fn eligible_cleanups(store: &Store) -> Result<Vec<CleanupCandidate>> {
 }
 
 /// Require explicit live/finished state and the same known app, creation identity and cwd.
-fn fresh_cleanup_terminal(hc: &dyn Hc, expected: &crate::store::TerminalRow) -> Result<crate::store::TerminalRow> {
+fn fresh_cleanup_terminal(
+    hc: &dyn Hc,
+    expected: &crate::store::TerminalRow,
+) -> Result<crate::store::TerminalRow> {
     let value = hc.get(&expected.address)?;
     let fresh = terminal_row_from(&value);
     if !matches!(value["state"].as_str(), Some("live" | "finished"))
@@ -442,10 +711,15 @@ fn fresh_cleanup_terminal(hc: &dyn Hc, expected: &crate::store::TerminalRow) -> 
         || expected.created_ms <= 0
         || fresh.created_ms != expected.created_ms
         || expected.cwd.as_deref().is_some_and(|cwd| {
-            fresh.cwd.as_deref().is_none_or(|current| crate::correlate::norm_cwd(current) != crate::correlate::norm_cwd(cwd))
+            fresh.cwd.as_deref().is_none_or(|current| {
+                crate::correlate::norm_cwd(current) != crate::correlate::norm_cwd(cwd)
+            })
         })
     {
-        bail!("không xác minh được danh tính hiện tại của {}", expected.address);
+        bail!(
+            "không xác minh được danh tính hiện tại của {}",
+            expected.address
+        );
     }
     Ok(fresh)
 }
@@ -475,45 +749,79 @@ pub fn execute_cleanup_batch(
             "SELECT EXISTS(SELECT 1 FROM rotations
              WHERE id = ?1 AND old_terminal = ?2 AND new_terminal IS ?3
                AND app IS ?4 AND state = 'done')",
-            rusqlite::params![item.rotation_id, item.old_terminal, item.new_terminal, item.old_app],
+            rusqlite::params![
+                item.rotation_id,
+                item.old_terminal,
+                item.new_terminal,
+                item.old_app
+            ],
             |row| row.get(0),
         )?;
         if !unchanged || item.new_terminal.as_deref() == Some(&item.old_terminal) {
-            report.skipped.push(format!("{}: quan hệ bàn giao đã thay đổi", item.old_terminal));
+            report.skipped.push(format!(
+                "{}: quan hệ bàn giao đã thay đổi",
+                item.old_terminal
+            ));
             continue;
         }
         let Some(old_row) = store.terminal(&item.old_terminal)? else {
-            report.skipped.push(format!("{}: không còn thấy terminal", item.old_terminal));
+            report
+                .skipped
+                .push(format!("{}: không còn thấy terminal", item.old_terminal));
             continue;
         };
         if old_row.handoff_state != "handed_off" || old_row.state == "removed" {
-            report.skipped.push(format!("{}: không còn ở trạng thái chờ dọn", item.old_terminal));
+            report.skipped.push(format!(
+                "{}: không còn ở trạng thái chờ dọn",
+                item.old_terminal
+            ));
             continue;
         }
         if old_row.created_ms != item.old_created_ms || old_row.session != item.old_session {
-            report.skipped.push(format!("{}: danh tính nguồn đã đổi từ lúc chọn", item.old_terminal));
+            report.skipped.push(format!(
+                "{}: danh tính nguồn đã đổi từ lúc chọn",
+                item.old_terminal
+            ));
             continue;
         }
         if old_row.state == "live" {
-            let successor = match item.new_terminal.as_deref().map(|a| store.terminal(a)).transpose()?.flatten() {
-                Some(nt) if nt.state == "live"
-                    && nt.session.is_some()
-                    && nt.app == item.old_app
-                    && Some(nt.created_ms) == item.new_created_ms
-                    && nt.session == item.new_session => nt,
+            let successor = match item
+                .new_terminal
+                .as_deref()
+                .map(|a| store.terminal(a))
+                .transpose()?
+                .flatten()
+            {
+                Some(nt)
+                    if nt.state == "live"
+                        && nt.session.is_some()
+                        && nt.app == item.old_app
+                        && Some(nt.created_ms) == item.new_created_ms
+                        && nt.session == item.new_session =>
+                {
+                    nt
+                }
                 _ => {
-                    report.skipped.push(format!("{}: phiên kế nhiệm không còn live hoặc chưa ghép", item.old_terminal));
+                    report.skipped.push(format!(
+                        "{}: phiên kế nhiệm không còn live hoặc chưa ghép",
+                        item.old_terminal
+                    ));
                     continue;
                 }
             };
             if old_row.app != item.old_app {
-                report.skipped.push(format!("{}: app nguồn đã thay đổi", item.old_terminal));
+                report
+                    .skipped
+                    .push(format!("{}: app nguồn đã thay đổi", item.old_terminal));
                 continue;
             }
             match fresh_cleanup_terminal(hc, &successor) {
                 Ok(fresh) if fresh.state == "live" => {}
                 _ => {
-                    report.skipped.push(format!("{}: không xác minh được phiên kế nhiệm còn live", item.old_terminal));
+                    report.skipped.push(format!(
+                        "{}: không xác minh được phiên kế nhiệm còn live",
+                        item.old_terminal
+                    ));
                     continue;
                 }
             }
@@ -525,8 +833,11 @@ pub fn execute_cleanup_batch(
                 }
             };
             if fresh.state == "finished" {
-                let result = store.finish_terminal(&item.old_terminal, fresh.exit_code, now)
-                    .and_then(|()| record_cleanup(store, &item.old_terminal, "old freshly finished", now));
+                let result = store
+                    .finish_terminal(&item.old_terminal, fresh.exit_code, now)
+                    .and_then(|()| {
+                        record_cleanup(store, &item.old_terminal, "old freshly finished", now)
+                    });
                 match result {
                     Ok(()) => report.done += 1,
                     Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
@@ -536,16 +847,37 @@ pub fn execute_cleanup_batch(
             // Caller was explicitly confirmed above; kill immediately after identity checks,
             // without a second lookup that could silently fall back to stale database state.
             let result = hc.kill(&item.old_terminal);
-            if let Err(e) = store.log_action("user", "kill", &item.old_terminal, "cleanup", result.is_ok(), now) {
-                report.errors.push(format!("{}: lỗi ghi nhật ký kill: {e:#}", item.old_terminal));
+            if let Err(e) = store.log_action(
+                "user",
+                "kill",
+                &item.old_terminal,
+                "cleanup",
+                result.is_ok(),
+                now,
+            ) {
+                report.errors.push(format!(
+                    "{}: lỗi ghi nhật ký kill: {e:#}",
+                    item.old_terminal
+                ));
             }
             match result {
                 Ok(()) => {
-                    let tracked = store.finish_terminal(&item.old_terminal, None, now)
-                        .and_then(|()| record_cleanup(store, &item.old_terminal, "old killed after handoff", now));
+                    let tracked = store
+                        .finish_terminal(&item.old_terminal, None, now)
+                        .and_then(|()| {
+                            record_cleanup(
+                                store,
+                                &item.old_terminal,
+                                "old killed after handoff",
+                                now,
+                            )
+                        });
                     match tracked {
                         Ok(()) => report.done += 1,
-                        Err(e) => report.errors.push(format!("{}: đã kill nhưng lỗi ghi nhận: {e:#}", item.old_terminal)),
+                        Err(e) => report.errors.push(format!(
+                            "{}: đã kill nhưng lỗi ghi nhận: {e:#}",
+                            item.old_terminal
+                        )),
                     }
                 }
                 Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
@@ -557,7 +889,10 @@ pub fn execute_cleanup_batch(
                 Err(e) => report.errors.push(format!("{}: {e:#}", item.old_terminal)),
             }
         } else {
-            report.skipped.push(format!("{}: trạng thái nguồn không xác định", item.old_terminal));
+            report.skipped.push(format!(
+                "{}: trạng thái nguồn không xác định",
+                item.old_terminal
+            ));
         }
     }
     Ok(report)

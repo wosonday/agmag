@@ -18,6 +18,27 @@
 - Kiểm argv command, name/cwd/labels giữ nguyên, brief thân + task và template lưu CSDL.
 - RED: `cargo test --offline --test spawn_fallback_test` E0432, chưa có HcFailure.
 - Code: lỗi hc giữ kind/message (kể cả exit khác 0), fallback chỉ Windows + template + spawn_failed/sh, parser front matter bảo thủ, gửi khi idle/done trong 20s; không gửi được mở inbox kèm brief.
+- GREEN: `cargo test --offline --test spawn_fallback_test` đạt 9, lỗi 0.
+
+## 4. TDD C — xác minh trước kill
+- Thêm `actions::prepare_rotation_spawn` kiểm template qua hc hoặc đường dự phòng; chương trình OpenCode nhận brief qua `--prompt`; còn lại báo không xác minh.
+- `rotation::verify_and_respawn` gọi precheck + prepare trước kill; không kill nếu thất bại.
+- GREEN: `cargo test --offline --test rotation_test` đạt 20, lỗi 0.
+
+## 5. Tài liệu
+- `.agents/decisions/hc-template-sh-windows.md` đã viết.
+- `HERDR-CORE-BOT.md` §1.4 sửa đường dẫn template Windows.
+- `README.md`, `README_vi.md`, `CHANGELOG.md` cập nhật mục spawn.
+
+## 6. Kiểm tra
+- `cargo test --offline`: toàn bộ đạt, 0 lỗi.
+- `cargo clippy --all-targets -- -D warnings`: sạch.
+- `cargo fmt --check`: sạch.
+
+## 7. Chạy thật
+1. `cargo run --offline -- spawn --task probe --role probe --name argv-t python -- -c "import sys;print(sys.argv)" --prompt "a b"` → terminal `t5h`, `hc read t5h` in `['-c', '--prompt', 'a b']`.
+2. `cargo run --offline -- spawn --task probe --role probe --name tpl-t auditor -- "chỉ trả lời OK rồi dừng"` → terminal `t5k`, OpenCode mở và thấy brief `chỉ trả lời OK rồi dừng` đã gõ.
+- Dọn: `hc kill t5h`, `hc kill t5k` (cả hai đã finished).
 - GREEN: fallback test đạt 2, lỗi 0.
 
 ## 4. TDD C — rotation preflight

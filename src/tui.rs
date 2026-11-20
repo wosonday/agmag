@@ -10,9 +10,12 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use agmag::actions::{self, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate};
+use agmag::actions::{self, Caller, CleanupCandidate, eligible_cleanups, execute_cleanup_batch};
 use agmag::config::Config;
-use agmag::dashboard::{bounded_styled_line, one_line, parse_command, parse_view, render_view, snapshot, Section, TuiCmd};
+use agmag::dashboard::{
+    Section, TuiCmd, bounded_styled_line, one_line, parse_command, parse_view, render_view,
+    snapshot,
+};
 use agmag::hc::HcCli;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
@@ -32,14 +35,17 @@ const CLEAR_ALL: &[u8] = b"\x1b[2J\x1b[3J\x1b[H";
 const VIEW_SETTING: &str = "tui_view";
 
 fn env_usize(name: &str) -> Option<usize> {
-    std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0)
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|&n| n > 0)
 }
 
 /// Visible size of the console window (columns, rows), if stdout is a console.
 #[cfg(windows)]
 fn console_size() -> Option<(usize, usize)> {
     use windows_sys::Win32::System::Console::{
-        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_OUTPUT_HANDLE,
+        CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle, STD_OUTPUT_HANDLE,
     };
     // SAFETY: plain Win32 calls on the process's own stdout handle; `info` is a POD out-parameter.
     unsafe {
@@ -59,7 +65,10 @@ fn console_size() -> Option<(usize, usize)> {
     // SAFETY: TIOCGWINSZ only writes into the zeroed `winsize` we pass.
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) != 0 || ws.ws_col == 0 || ws.ws_row == 0 {
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) != 0
+            || ws.ws_col == 0
+            || ws.ws_row == 0
+        {
             return None;
         }
         Some((usize::from(ws.ws_col), usize::from(ws.ws_row)))
@@ -74,7 +83,10 @@ fn console_size() -> Option<(usize, usize)> {
 /// Pane width: `COLUMNS` overrides the detected width; 110 when unknown. Height is not used: the whole dashboard
 /// is printed and the user scrolls.
 fn pane_width() -> usize {
-    env_usize("COLUMNS").or(console_size().map(|r| r.0)).unwrap_or(110).clamp(60, 200)
+    env_usize("COLUMNS")
+        .or(console_size().map(|r| r.0))
+        .unwrap_or(110)
+        .clamp(60, 200)
 }
 
 /// Whether to repaint: always after user input (the echoed line must be wiped), otherwise only when the frame
@@ -100,18 +112,33 @@ fn confirmation_note(action: &str) -> String {
     format!("type y + Enter to confirm {action} (anything else cancels)")
 }
 
-fn render_frame(text: &str, w: usize, cleanup_list: Option<&[CleanupCandidate]>, note: Option<(NoteKind, &str)>) -> String {
+fn render_frame(
+    text: &str,
+    w: usize,
+    cleanup_list: Option<&[CleanupCandidate]>,
+    note: Option<(NoteKind, &str)>,
+) -> String {
     let max_w = w.saturating_sub(1);
     let mut body = String::with_capacity(text.len() + 512);
     body.push_str(text);
     if let Some(list) = cleanup_list {
-        let hdr = one_line("── MANUAL CLEANUP (enter 'cleanup 1,2' or 'cleanup all'; Enter to refresh) ──", max_w);
+        let hdr = one_line(
+            "── MANUAL CLEANUP (enter 'cleanup 1,2' or 'cleanup all'; Enter to refresh) ──",
+            max_w,
+        );
         let _ = writeln!(body, "\x1b[1;93m{hdr}\x1b[0m");
         for (i, c) in list.iter().enumerate() {
             let st = if c.old_live { "live" } else { "exited" };
             let old = one_line(&c.old_terminal, 24);
-            let succ = one_line(c.new_terminal.as_deref().unwrap_or("-"), max_w.saturating_sub(old.chars().count() + 18));
-            let _ = writeln!(body, "  \x1b[1;93m#{}\x1b[0m {old} ({st}) \x1b[90m→\x1b[0m \x1b[96m{succ}\x1b[0m", i + 1);
+            let succ = one_line(
+                c.new_terminal.as_deref().unwrap_or("-"),
+                max_w.saturating_sub(old.chars().count() + 18),
+            );
+            let _ = writeln!(
+                body,
+                "  \x1b[1;93m#{}\x1b[0m {old} ({st}) \x1b[90m→\x1b[0m \x1b[96m{succ}\x1b[0m",
+                i + 1
+            );
         }
     }
     if let Some((kind, msg)) = note {
@@ -157,15 +184,11 @@ pub fn run(
     let hc = HcCli::default();
     // Identify caller once, fail-closed. Agents (or piped stdin/stdout) cannot kill/interrupt via the TUI.
     let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let who = actions::detect_caller(
-        store,
-        &hc,
-        crate::ops::hc_terminal().as_deref(),
-        tty,
-        false,
-    );
+    let who = actions::detect_caller(store, &hc, crate::ops::hc_terminal().as_deref(), tty, false);
     if !matches!(who, Caller::User { .. }) {
-        anyhow::bail!("agm tui is only available to a human at an interactive terminal (TTY); agents should use standard agm commands");
+        anyhow::bail!(
+            "agm tui is only available to a human at an interactive terminal (TTY); agents should use standard agm commands"
+        );
     }
 
     // Backfill the configured recent calendar months on a background thread (separate Store since Connection is !Sync).
@@ -174,7 +197,10 @@ pub fn run(
         let mut off = sqlite_offset_at(store.conn());
         compute_local_bounds(now0, cfg.policy.stats_months, &mut off)
     };
-    if matches!(coverage_status(store, bounds0.four_months_start_ms), Ok((_, true))) {
+    if matches!(
+        coverage_status(store, bounds0.four_months_start_ms),
+        Ok((_, true))
+    ) {
         let path_owned = db_path.to_path_buf();
         let since = bounds0.four_months_start_ms;
         std::thread::spawn(move || {
@@ -200,7 +226,13 @@ pub fn run(
         let w = pane_width();
         let text = match snapshot(store, cfg, now) {
             Ok(s) => render_view(&s, w, &view, None),
-            Err(e) => format!("\x1b[1;91m{}\x1b[0m\n", one_line(&format!("failed to read database: {e:#}"), w.saturating_sub(1))),
+            Err(e) => format!(
+                "\x1b[1;91m{}\x1b[0m\n",
+                one_line(
+                    &format!("failed to read database: {e:#}"),
+                    w.saturating_sub(1)
+                )
+            ),
         };
         let frame = render_frame(
             &text,
@@ -243,7 +275,12 @@ pub fn run(
                         };
                         (
                             kind,
-                            format!("cleaned {}, skipped {}, errors {}", rep.done, rep.skipped.len(), rep.errors.len()),
+                            format!(
+                                "cleaned {}, skipped {}, errors {}",
+                                rep.done,
+                                rep.skipped.len(),
+                                rep.errors.len()
+                            ),
                         )
                     }
                     Err(e) => (NoteKind::Err, format!("cleanup error: {e:#}")),
@@ -263,8 +300,11 @@ pub fn run(
                     agent => agent.clone(),
                 };
                 let res = match &cmd {
-                    TuiCmd::Kill(t) => actions::kill(store, &hc, &user, t, now).map(|()| format!("killed {t}")),
-                    TuiCmd::Interrupt(t) => actions::interrupt(store, &hc, &user, t, now).map(|()| format!("interrupted {t}")),
+                    TuiCmd::Kill(t) => {
+                        actions::kill(store, &hc, &user, t, now).map(|()| format!("killed {t}"))
+                    }
+                    TuiCmd::Interrupt(t) => actions::interrupt(store, &hc, &user, t, now)
+                        .map(|()| format!("interrupted {t}")),
                     _ => Ok(String::new()),
                 };
                 note = Some(match res {
@@ -287,14 +327,24 @@ pub fn run(
                         None => eligible_cleanups(store).unwrap_or_default(),
                     };
                     if list.is_empty() {
-                        note = Some((NoteKind::Warn, "no handed-off sessions ready for cleanup".into()));
+                        note = Some((
+                            NoteKind::Warn,
+                            "no handed-off sessions ready for cleanup".into(),
+                        ));
                     } else {
                         match crate::ops::parse_selection(&sel_expr, list.len()) {
                             Ok(indices) if !indices.is_empty() => {
-                                let chosen: Vec<CleanupCandidate> = indices.into_iter().map(|i| list[i].clone()).collect();
+                                let chosen: Vec<CleanupCandidate> =
+                                    indices.into_iter().map(|i| list[i].clone()).collect();
                                 let items: Vec<String> = chosen
                                     .iter()
-                                    .map(|c| format!("{}→{}", c.old_terminal, c.new_terminal.as_deref().unwrap_or("-")))
+                                    .map(|c| {
+                                        format!(
+                                            "{}→{}",
+                                            c.old_terminal,
+                                            c.new_terminal.as_deref().unwrap_or("-")
+                                        )
+                                    })
                                     .collect();
                                 note = Some((
                                     NoteKind::Warn,
@@ -317,7 +367,10 @@ pub fn run(
                     match eligible_cleanups(store) {
                         Ok(list) if list.is_empty() => {
                             cleanup_list = None;
-                            note = Some((NoteKind::Warn, "no handed-off sessions ready for cleanup".into()));
+                            note = Some((
+                                NoteKind::Warn,
+                                "no handed-off sessions ready for cleanup".into(),
+                            ));
                         }
                         Ok(list) => cleanup_list = Some(list),
                         Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
@@ -340,10 +393,15 @@ pub fn run(
                 });
             }
             Ok(TuiCmd::Send(to, kind, text)) => {
-                note = Some(match actions::send(store, &hc, "user", &to, &kind, None, &text, now) {
-                    Ok(m) => (NoteKind::Ok, format!("msg #{} → {}: {}", m.id, m.to, m.status)),
-                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                });
+                note = Some(
+                    match actions::send(store, &hc, "user", &to, &kind, None, &text, now) {
+                        Ok(m) => (
+                            NoteKind::Ok,
+                            format!("msg #{} → {}: {}", m.id, m.to, m.status),
+                        ),
+                        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                    },
+                );
             }
             Ok(TuiCmd::Done(id)) => {
                 note = Some(match actions::dismiss(store, id, now) {
@@ -353,22 +411,34 @@ pub fn run(
             }
             Ok(TuiCmd::Policy(on)) => {
                 // Never swallow errors: the user must know whether policy actually toggled.
-                note = Some(match store.set_setting("policy", if on { "on" } else { "off" }) {
-                    Ok(()) => (if on { NoteKind::Ok } else { NoteKind::Warn }, format!("policy {}", if on { "ON" } else { "OFF" })),
-                    Err(e) => (NoteKind::Err, format!("ERROR — policy NOT changed: {e:#}")),
-                });
+                note = Some(
+                    match store.set_setting("policy", if on { "on" } else { "off" }) {
+                        Ok(()) => (
+                            if on { NoteKind::Ok } else { NoteKind::Warn },
+                            format!("policy {}", if on { "ON" } else { "OFF" }),
+                        ),
+                        Err(e) => (NoteKind::Err, format!("ERROR — policy NOT changed: {e:#}")),
+                    },
+                );
             }
             Ok(TuiCmd::View(None)) => {
                 note = Some((
                     NoteKind::Ok,
-                    format!("view: {} (choose up to 3 of {}; `view default`)", view_names(&view), Section::names()),
+                    format!(
+                        "view: {} (choose up to 3 of {}; `view default`)",
+                        view_names(&view),
+                        Section::names()
+                    ),
                 ));
             }
             Ok(TuiCmd::View(Some(v))) => {
                 view = v;
                 note = Some(match store.set_setting(VIEW_SETTING, &view_names(&view)) {
                     Ok(()) => (NoteKind::Ok, format!("view: {}", view_names(&view))),
-                    Err(e) => (NoteKind::Warn, format!("view: {} (not saved: {e:#})", view_names(&view))),
+                    Err(e) => (
+                        NoteKind::Warn,
+                        format!("view: {} (not saved: {e:#})", view_names(&view)),
+                    ),
                 });
             }
             Err(e) => note = Some((NoteKind::Err, e)),
@@ -378,21 +448,32 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{confirmation_note, needs_redraw, render_frame, NoteKind, CLEAR_ALL};
+    use super::{CLEAR_ALL, NoteKind, confirmation_note, needs_redraw, render_frame};
 
     #[test]
     fn repaint_only_on_change_or_after_input() {
         assert!(needs_redraw("a", None, false), "first frame");
-        assert!(!needs_redraw("a", Some("a"), false), "unchanged frame must not yank a scrolled-up user");
+        assert!(
+            !needs_redraw("a", Some("a"), false),
+            "unchanged frame must not yank a scrolled-up user"
+        );
         assert!(needs_redraw("b", Some("a"), false), "changed frame");
-        assert!(needs_redraw("a", Some("a"), true), "user input always repaints (wipes the echoed line)");
+        assert!(
+            needs_redraw("a", Some("a"), true),
+            "user input always repaints (wipes the echoed line)"
+        );
     }
 
     #[test]
     fn clear_wipes_screen_and_scrollback_without_alternate_screen() {
         let clear = std::str::from_utf8(CLEAR_ALL).unwrap();
-        assert!(clear.contains("\x1b[2J") && clear.contains("\x1b[3J") && clear.ends_with("\x1b[H"));
-        assert!(!clear.contains("?1049"), "normal screen keeps mouse scrolling");
+        assert!(
+            clear.contains("\x1b[2J") && clear.contains("\x1b[3J") && clear.ends_with("\x1b[H")
+        );
+        assert!(
+            !clear.contains("?1049"),
+            "normal screen keeps mouse scrolling"
+        );
     }
     use unicode_width::UnicodeWidthStr;
 
@@ -408,7 +489,9 @@ mod tests {
         while let Some(c) = chars.next() {
             if c == '\x1b' && chars.next() == Some('[') {
                 for c in chars.by_ref() {
-                    if ('@'..='~').contains(&c) { break; }
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
                 }
             } else {
                 plain.push(c);

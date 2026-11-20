@@ -297,7 +297,20 @@ fn dedupe_is_scoped_to_session_and_no_future_tables_exist() -> anyhow::Result<()
         .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(
         tables,
-        ["actions", "budgets", "cursors", "inbox", "messages", "quota", "rotations", "sessions", "settings", "terminals", "turns", "usage"]
+        [
+            "actions",
+            "budgets",
+            "cursors",
+            "inbox",
+            "messages",
+            "quota",
+            "rotations",
+            "sessions",
+            "settings",
+            "terminals",
+            "turns",
+            "usage"
+        ]
     );
     Ok(())
 }

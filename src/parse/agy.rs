@@ -36,7 +36,9 @@ impl LogParser for AgyParser {
         let mut events = Vec::new();
         match kind {
             "USER_INPUT" => {
-                let ts_ms = parsed_ts.or(self.last_ts).ok_or(ParseError::MissingTimestamp)?;
+                let ts_ms = parsed_ts
+                    .or(self.last_ts)
+                    .ok_or(ParseError::MissingTimestamp)?;
                 if let Some(raw) = value["content"].as_str() {
                     let text = extract_user_request(raw);
                     let summary = summarize(text);
@@ -51,7 +53,9 @@ impl LogParser for AgyParser {
                 }
             }
             "PLANNER_RESPONSE" => {
-                let ts_ms = parsed_ts.or(self.last_ts).ok_or(ParseError::MissingTimestamp)?;
+                let ts_ms = parsed_ts
+                    .or(self.last_ts)
+                    .ok_or(ParseError::MissingTimestamp)?;
                 if let Some(model) = value["model"].as_str().filter(|m| !m.is_empty())
                     && self.model.as_deref() != Some(model)
                 {
@@ -105,7 +109,12 @@ impl LogParser for AgyParser {
                     }));
                 }
             }
-            "GENERIC" | "SYSTEM" | "SYSTEM_MESSAGE" | "ERROR" | "ERROR_MESSAGE" | "CHECKPOINT"
+            "GENERIC"
+            | "SYSTEM"
+            | "SYSTEM_MESSAGE"
+            | "ERROR"
+            | "ERROR_MESSAGE"
+            | "CHECKPOINT"
             | "USER_SETTINGS_CHANGE" => {}
             _ => return Ok(LineOutcome::Unknown(kind.to_owned())),
         }

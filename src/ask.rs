@@ -3,21 +3,40 @@
 
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::model::{summarize, Role, SessionMeta, Source, TurnSummary, Usage, UsageRecord};
+use crate::model::{Role, SessionMeta, Source, TurnSummary, Usage, UsageRecord, summarize};
 use crate::store::Store;
 
 /// Ghi kết quả `agy --output-format json` vào CSDL; trả câu trả lời.
-pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, now: i64) -> Result<String> {
+pub fn record(
+    store: &Store,
+    out: &Value,
+    question: &str,
+    model: Option<&str>,
+    now: i64,
+) -> Result<String> {
     let ok = out["status"] == "SUCCESS";
     let response = out["response"].as_str().unwrap_or_default().to_string();
-    let conv = out["conversation_id"].as_str().map(String::from).unwrap_or_else(|| format!("ask-{now}"));
+    let conv = out["conversation_id"]
+        .as_str()
+        .map(String::from)
+        .unwrap_or_else(|| format!("ask-{now}"));
     let sid = store.session_id_for_path(Source::Agy, &format!("agy://{conv}"))?;
-    store.set_meta(sid, &SessionMeta { session_id: conv.clone(), cwd: None, cli_version: None, started_ms: Some(now) })?;
+    store.set_meta(
+        sid,
+        &SessionMeta {
+            session_id: conv.clone(),
+            cwd: None,
+            cli_version: None,
+            started_ms: Some(now),
+        },
+    )?;
     // Model: theo tham số hoặc đầu ra agy; không biết thì để trống (không bịa tên).
-    let model = model.map(String::from).or_else(|| out["model"].as_str().map(String::from));
+    let model = model
+        .map(String::from)
+        .or_else(|| out["model"].as_str().map(String::from));
     if let Some(m) = &model {
         store.set_model(sid, m)?;
     }
@@ -27,7 +46,15 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
             bail!("agy trả trạng thái {}: {}", out["status"], response);
         }
         // Không có số liệu token → không ghi bản ghi 0.
-        store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::User, summary: summarize(question), byte_offset: now as u64 * 2 })?;
+        store.insert_turn(
+            sid,
+            &TurnSummary {
+                ts_ms: now,
+                role: Role::User,
+                summary: summarize(question),
+                byte_offset: now as u64 * 2,
+            },
+        )?;
         return Ok(response);
     }
     let n = |k: &str| u[k].as_u64().unwrap_or(0);
@@ -55,12 +82,28 @@ pub fn record(store: &Store, out: &Value, question: &str, model: Option<&str>, n
     )?;
     store.dedupe_agy_ask_session(sid, &conv)?;
     tx.commit()?;
-    store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::User, summary: summarize(question), byte_offset: now as u64 * 2 })?;
+    store.insert_turn(
+        sid,
+        &TurnSummary {
+            ts_ms: now,
+            role: Role::User,
+            summary: summarize(question),
+            byte_offset: now as u64 * 2,
+        },
+    )?;
     // Token đã tiêu được ghi kể cả khi agy lỗi/hết giờ; sau đó mới báo lỗi.
     if !ok {
         bail!("agy trả trạng thái {}: {}", out["status"], response);
     }
-    store.insert_turn(sid, &TurnSummary { ts_ms: now, role: Role::Assistant, summary: summarize(&response), byte_offset: now as u64 * 2 + 1 })?;
+    store.insert_turn(
+        sid,
+        &TurnSummary {
+            ts_ms: now,
+            role: Role::Assistant,
+            summary: summarize(&response),
+            byte_offset: now as u64 * 2 + 1,
+        },
+    )?;
     Ok(response)
 }
 
@@ -88,7 +131,10 @@ pub fn run_agy(question: &str, model: Option<&str>, timeout_s: u64) -> Result<Va
             "agy ({}) không trả JSON: {} {}",
             out.status,
             text.chars().take(300).collect::<String>(),
-            String::from_utf8_lossy(&out.stderr).chars().take(300).collect::<String>()
+            String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(300)
+                .collect::<String>()
         )
     })
 }

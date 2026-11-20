@@ -125,7 +125,7 @@ Thêm vào `.gitignore` của dự án:
 
 ### 1.4. Template cho agent (dùng `agm` để giao tiếp và báo cáo)
 
-Template là **một tệp `.md`** trong `~/.config/herdr-core/templates/` (trước khi dùng, kiểm lại bằng `hc templates`). Phần thân là chỉ dẫn mở đầu cho agent; `agm spawn` truyền nhiệm vụ vào cuối thân qua `hc run`.
+Template là **một tệp `.md`** trong thư mục template của hc: trên Windows `%APPDATA%\herdr-core\templates\`, nơi khác `~/.config/herdr-core/templates/` (ghi đè bằng biến `AGM_HC_TEMPLATES`). Kiểm lại bằng `hc templates`. Phần thân là chỉ dẫn mở đầu cho agent; `agm spawn` truyền nhiệm vụ vào cuối thân qua `hc run`. Trên Windows, `hc run <template>` có thể lỗi `cannot start "sh"` (hc chạy `command:` qua `sh -c`); `agm` tự dự phòng bằng cách đọc template và chạy thẳng `command:` (xem `.agents/decisions/hc-template-sh-windows.md`).
 
 > **Quy tắc chung đưa vào `AGENTS.md` và `CLAUDE.md` của mọi dự án:**
 > - Liên lạc giữa agent: `agm send <tên-terminal> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<nội dung ngắn>"`

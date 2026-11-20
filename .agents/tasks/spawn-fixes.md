@@ -57,3 +57,15 @@ Không sửa hay ghi vào thư mục template thật của người dùng; test 
 
 Xong: `agm send t4v --type "BÁO CÁO" --task spawn-fixes "Xong: <SHA cuối>, xem .agents/log/spawn-fixes.md"`.
 Bị chặn / cần quyết định: `agm send user --type HỎI --task spawn-fixes "<câu hỏi ngắn>"`.
+
+## Vòng sửa 1 (sau review `b54f041`, CEO đã xác minh #1)
+
+Nguồn: `.agents/reviews/spawn-fixes-review.md`.
+
+1. **Bắt buộc (#1).** `prepare_rotation_spawn` (`src/actions.rs` ~421): template có trong `hc templates --json` hiện trả `Ok` ngay. Trên Windows `hc run <template>` lỗi `sh` và đường dự phòng phụ thuộc `load_template()`, nên phải yêu cầu thêm `load_template(&req.template).is_ok()` khi `cfg!(windows)` (giữ nguyên hành vi Linux/macOS). Viết test: template được liệt kê nhưng tệp trên đĩa thiếu `command:` hoặc có ký tự shell → preflight lỗi, rotation **không kill** (test chạy qua `AGM_HC_TEMPLATES`; phần chỉ đúng trên Windows đặt `#[cfg(windows)]`, phần còn lại test được ở mọi nền).
+2. **Nhỏ (#2).** Thêm test rotation cho nhánh OpenCode trần (`template = "opencode"` → argv kế nhiệm `["opencode", "--prompt", <resume>]`). Nếu trùng tên với một template `opencode.md` thì template thắng — ghi rõ bằng test.
+3. **Nhỏ (#4).** Cập nhật `.agents/log/spawn-fixes.md`: bỏ dòng "BỊ CHẶN / chưa commit / chưa chạy gates" đã lỗi thời; thêm mục vòng sửa 1.
+4. Không đổi #3 (`is_missing_sh` chặt hơn là chủ ý: chỉ dự phòng khi chắc chắn là lỗi thiếu `sh`).
+
+Nghiệm thu: `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings`, `cargo fmt --check` sạch. **Chỉ định dạng các tệp bạn sửa** — cả cây đã được fmt.
+Báo cáo: `agm send user --type "BÁO CÁO" --task spawn-fixes "Vòng sửa 1 xong: <SHA>"`.

@@ -14,7 +14,7 @@
 - [x] (2) Đúng số liệu: % CPU baseline, RAM/swap, `merge_disks`, tốc độ đọc/ghi, `attribute` theo cây tiến trình, `agent_of`
 - [x] (3) Chi phí/treo: refresh TUI, sleep chặn luồng, lệnh ngoài không hạn chót
 - [x] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
-- [ ] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
+- [x] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
 - [ ] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
 - [ ] (7) Docs: README.md, README_vi.md, CHANGELOG `[Unreleased]`
 - [ ] (8) `cargo test --offline` + `cargo clippy --offline --all-targets -- -D warnings`
@@ -67,6 +67,13 @@
 
 **Phát hiện 4.1 — mức: nhỏ.** `src/tui.rs:89` `.clamp(60, 200)` khiến `agm sys` (dùng `pane_width()` ở `src/main.rs:999`) **không bao giờ render dưới 60 cột** dù hàm render `render_sys_report` hỗ trợ width nhỏ hơn (test `tests/sysmon_test.rs:350` tự render ở 40). Trên terminal <60 cột (vd `COLUMNS=40`), các dòng 59 cell bị tràn sang dòng mới. Không ảnh hưởng 60/110 theo yêu cầu, nên nhỏ.
 - Cách tái hiện: `COLUMNS=40 target/debug/agm.exe sys` (cần TTY để lấy human output) → vẫn render ở width 60; so sánh `render_sys_report(&stats, 40)` trực tiếp cho dòng ≤39.
+
+### (5) Không đụng CSDL — ĐẠT (0 phát hiện)
+
+- **Không migration / không tệp schema mới.** `git diff --name-only main HEAD` (13 tệp, cộng thêm tệp review này) không có tệp migration, `store.rs`, `schema*`, hay tệp CSDL nào. `src/lib.rs` chỉ thêm `pub mod sysmon;` (1 dòng) — không đụng module store.
+- **`agm sys` chạy trước khi mở CSDL.** `src/main.rs:264-280`: nhánh `Cmd::Sys` nằm trước `run(cli)` (`:281`) — nơi `agm_home()`/config/`Store::open` bắt đầu (`:290-294`). Comment `:264` ghi rõ "No database needed". `read_once()`/`SysSampler` (`src/sysmon.rs:290-434`) chỉ gọi sysinfo, không có `store`/`conn`/`INSERT`/`execute` nào (đã `git grep`).
+- **Số liệu chỉ nằm trong bộ nhớ.** `Snapshot.system: Option<SysStats>` (`src/dashboard.rs:79`) được gán ở `src/tui.rs:232` rồi đọc để render (`:574-575`, `:1537`); `snapshot()` (`:82+`) và `render_view()` (`:1124+`) chỉ `query_row` đọc dữ liệu cũ. `git diff main HEAD -- '*.rs' | Select-String '^\+.*(set_setting|INSERT INTO|UPDATE |execute\(|store\.)'` → **không có dòng nào**. Hai `store.set_setting` trong `src/tui.rs:421,442` là mã cũ (`policy`, `view`) không nằm trong diff.
+- **Thử nghiệm:** đặt `AGM_HOME` trỏ tới một **tệp thường** (CSDL không thể mở) rồi chạy `agm.exe sys --json` → vẫn in JSON đầy đủ, `EXIT=0`. Khớp nhật ký `.agents/log/sysmon.md`: "No history in the database (no migration)" và "agm sys (handled before the database opens)".
 
 _(các mục còn lại sẽ điền dần)_
 

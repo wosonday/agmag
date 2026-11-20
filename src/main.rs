@@ -344,9 +344,14 @@ fn run(cli: Cli) -> Result<()> {
                 cfg.policy.agy_quota_poll_min,
                 std::sync::Arc::new(agmag::agy_quota::fetch_usage),
             );
+            let mut codex_quota = agmag::codex_quota::CodexQuotaPoller::new(
+                cfg.policy.codex_quota_poll_min,
+                std::sync::Arc::new(agmag::codex_quota::fetch_usage),
+            );
             ops::daemon_loop(&store, &cfg, interval, |s| {
                 scan(s, now_ms() - SCAN_DAYS * DAY_MS)?;
-                agy_quota.tick(s, now_ms())
+                agy_quota.tick(s, now_ms())?;
+                codex_quota.tick(s, now_ms())
             })
         }
         Cmd::Ps { all } => {
@@ -511,8 +516,15 @@ fn run(cli: Cli) -> Result<()> {
                     Ok(_) => {}
                     Err(e) => eprintln!("agm: could not read agy quota: {e:#}"),
                 }
+                match agmag::codex_quota::fetch_usage()
+                    .and_then(|out| agmag::codex_quota::record_usage(&store, &out, now))
+                {
+                    Ok(_) => {}
+                    Err(e) => eprintln!("agm: could not read codex quota: {e:#}"),
+                }
             }
-            let rows = report::quota(&store, now / 1000)?;
+            let cfg_loaded = cfg()?;
+            let rows = report::quota_with_config(&store, &cfg_loaded, now / 1000)?;
             emit(json, &rows, || print_quota(&rows, now / 1000))
         }
         Cmd::Log {

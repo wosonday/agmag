@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::actions::{KINDS, KINDS_EN, kind_to_english};
 use crate::config::Config;
 use crate::policy::{budget_value, enabled, session_context_pct};
-use crate::report::{QuotaRow, UsageBucket, UsageSummary, quota, spark_bar, usage_summary};
+use crate::report::{QuotaRow, UsageBucket, UsageSummary, spark_bar, usage_summary};
 use crate::store::{InboxRow, MessageRow, Store};
 
 const RESET: &str = "\x1b[0m";
@@ -154,7 +154,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     let mut budgets = Vec::new();
     for b in store.budgets()? {
         budgets.push(BudgetView {
-            value: budget_value(store, &b, now_ms)?,
+            value: budget_value(store, cfg, &b, now_ms)?,
             scope: b.scope,
             unit: b.unit,
             soft: b.soft,
@@ -164,7 +164,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     Ok(Snapshot {
         now_s: now_ms / 1000,
         policy_on: enabled(store)?,
-        quota: quota(store, now_ms / 1000)?,
+        quota: crate::report::quota_with_config(store, cfg, now_ms / 1000)?,
         usage_summary: usage_summary(store, cfg, now_ms)?,
         terminals,
         live_rotation_pairs,
@@ -180,6 +180,20 @@ fn paint(style: &str, text: &str) -> String {
 
 fn pad_cells(text: &str, width: usize) -> String {
     format!("{text}{}", " ".repeat(width.saturating_sub(text.width())))
+}
+
+fn format_age_s(s: i64) -> String {
+    let s = s.max(0);
+    let days = s / 86400;
+    let hours = (s % 86400) / 3600;
+    let mins = (s % 3600) / 60;
+    if days > 0 {
+        format!("{days}d{hours:02}h")
+    } else if hours > 0 {
+        format!("{hours}h{mins:02}m")
+    } else {
+        format!("{mins}m")
+    }
 }
 
 fn pct_color(pct: f64) -> &'static str {
@@ -823,7 +837,16 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
                 };
                 // 10 cột: đủ cho `agy-gemini` / `agy-argon` mà không bị cắt.
                 let prov = one_line(&q.provider, 10);
-                if q.left_percent.is_finite() {
+                if q.stale {
+                    let age = format_age_s(q.observed_age_s);
+                    out += &format!(
+                        "  {} {}  {} {}  {reset}\n",
+                        paint(WHITE, &pad_cells(&prov, 10)),
+                        paint(CYAN, &format!("{:>3}", win)),
+                        paint(GRAY, "··········"),
+                        paint(GRAY, &format!("stale · seen {age} ago")),
+                    );
+                } else if q.left_percent.is_finite() {
                     // Màu vẫn theo mức đã dùng (còn ít → đỏ); thanh và con số theo phần còn lại.
                     let col = pct_color(100.0 - q.left_percent);
                     let pct_str = paint(col, &format!("{:>3.0}% left", q.left_percent));

@@ -579,3 +579,118 @@ fn cost_totals_and_value_labels() {
     assert_eq!(value_label(None, 50), "?");
     assert_eq!(cost_totals(&[]).value_usd, None);
 }
+
+/// Ghi một dòng usage vào phiên của `source` tại `ts_ms` với model `model`.
+fn usage_after(
+    store: &Store,
+    source: Source,
+    path: &str,
+    ts_ms: i64,
+    model: &str,
+) -> anyhow::Result<()> {
+    let sid = store.session_id_for_path(source, path)?;
+    store.upsert_usage(
+        sid,
+        &UsageRecord {
+            dedupe_key: format!("k-{ts_ms}"),
+            ts_ms,
+            model: Some(model.into()),
+            usage: usage(10),
+        },
+    )?;
+    Ok(())
+}
+
+/// Một dòng quota là stale khi (a) cũ hơn `quota_stale_min` (60 phút) hoặc
+/// (b) sau `observed_ms` đã có usage mới thuộc cùng gói (Codex/Claude).
+#[test]
+fn quota_stale_by_age_and_newer_package_usage() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let cfg = Config::builtin();
+    let now_ms = 1_800_000_000_000_i64; // mốc cố định, không phụ thuộc đồng hồ thật
+    let threshold_ms = 60 * 60_000;
+
+    // (a) Dữ liệu cũ hơn ngưỡng → stale; còn dưới ngưỡng → không stale vì tuổi.
+    assert!(
+        report::quota_is_stale(&store, &cfg, "codex", now_ms - threshold_ms - 1_000, now_ms),
+        "dữ liệu 61 phút phải stale"
+    );
+    assert!(
+        !report::quota_is_stale(&store, &cfg, "codex", now_ms - threshold_ms + 1_000, now_ms),
+        "dữ liệu 59 phút chưa stale vì tuổi"
+    );
+
+    // (b) Dữ liệu mới nhưng sau đó có usage OpenCode `openai/*` → stale.
+    let observed = now_ms - 5 * 60_000;
+    usage_after(
+        &store,
+        Source::OpenCode,
+        "opencode://fresh-codex",
+        observed + 60_000,
+        "openai/gpt-6.1-sol",
+    )?;
+    assert!(
+        report::quota_is_stale(&store, &cfg, "codex", observed, now_ms),
+        "usage OpenCode openai/* sau observed_ms phải làm stale"
+    );
+
+    // Dữ liệu mới, không usage nào sau observed_ms → không stale.
+    assert!(
+        !report::quota_is_stale(&store, &cfg, "claude", observed, now_ms),
+        "dữ liệu mới, không usage sau đó thì không stale"
+    );
+
+    // Ánh xạ claude ⇐ OpenCode model `anthropic/*`.
+    usage_after(
+        &store,
+        Source::OpenCode,
+        "opencode://fresh-claude",
+        observed + 60_000,
+        "anthropic/claude-opus-5-5",
+    )?;
+    assert!(
+        report::quota_is_stale(&store, &cfg, "claude", observed, now_ms),
+        "usage OpenCode anthropic/* sau observed_ms phải làm stale"
+    );
+
+    // Provider không có ánh xạ (agy) → chỉ theo tuổi, dù có usage mới.
+    usage_after(
+        &store,
+        Source::OpenCode,
+        "opencode://fresh-agy",
+        observed + 60_000,
+        "openai/gpt-6.1-sol",
+    )?;
+    assert!(
+        !report::quota_is_stale(&store, &cfg, "agy", observed, now_ms),
+        "provider không có ánh xạ chỉ stale theo tuổi"
+    );
+    Ok(())
+}
+
+/// `quota_with_config` truyền `stale` và `observed_age_s` ra từng dòng hiển thị.
+#[test]
+fn quota_rows_carry_stale_and_age() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let cfg = Config::builtin();
+    let now_s = 1_800_000_000_i64;
+    store.insert_quota(&QuotaSnapshot {
+        provider: "codex".into(),
+        ts_ms: (now_s - 2 * 3600) * 1000, // 2 giờ trước → vượt ngưỡng 60 phút
+        windows: vec![QuotaWindow {
+            window_minutes: 10080,
+            used_percent: 16.0,
+            resets_at_s: now_s + 86_400,
+        }],
+    })?;
+    let rows = report::quota_with_config(&store, &cfg, now_s)?;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].stale, "dữ liệu 2 giờ phải stale");
+    assert_eq!(rows[0].observed_age_s, 2 * 3600);
+
+    let fresh_s = (now_s - 2 * 3600) + 30 * 60; // 30 phút sau khi ghi → dưới ngưỡng
+    let rows = report::quota_with_config(&store, &cfg, fresh_s)?;
+    assert!(!rows[0].stale);
+    assert_eq!(rows[0].observed_age_s, 30 * 60);
+    Ok(())
+}

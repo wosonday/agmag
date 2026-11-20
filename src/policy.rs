@@ -29,32 +29,46 @@ pub fn task_tokens(store: &Store, task: &str) -> Result<u64> {
 
 /// % ĐÃ DÙNG của gói (đơn vị của ngân sách `provider:`). Cửa sổ đã reset mà chưa có số mới → 0,
 /// để số cũ (vd 96%) không tiếp tục kích hoạt ngưỡng sau khi hạn mức đã đầy lại.
-fn provider_percent(
+pub fn provider_percent(
     store: &Store,
+    cfg: &Config,
     provider: &str,
     window: u32,
     now_ms: i64,
 ) -> Result<Option<f64>> {
-    let row: Option<(f64, i64)> = store
+    let row: Option<(f64, i64, i64)> = store
         .conn()
         .query_row(
-            "SELECT used_percent, resets_at_s FROM quota WHERE provider = ?1 AND window_minutes = ?2 ORDER BY ts_ms DESC LIMIT 1",
+            "SELECT used_percent, resets_at_s, ts_ms FROM quota WHERE provider = ?1 AND window_minutes = ?2 ORDER BY ts_ms DESC LIMIT 1",
             params![provider, window],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?;
-    Ok(row.map(|(used, resets_at_s)| {
-        crate::report::effective_used_percent(used, resets_at_s, now_ms / 1000)
-    }))
+    let Some((used, resets_at_s, observed_ms)) = row else {
+        return Ok(None);
+    };
+    if crate::report::quota_is_stale(store, cfg, provider, observed_ms, now_ms) {
+        return Ok(None);
+    }
+    Ok(Some(crate::report::effective_used_percent(
+        used,
+        resets_at_s,
+        now_ms / 1000,
+    )))
 }
 
 /// Giá trị hiện tại của một ngân sách; None nếu chưa có số liệu.
-pub fn budget_value(store: &Store, b: &BudgetRow, now_ms: i64) -> Result<Option<f64>> {
+pub fn budget_value(
+    store: &Store,
+    cfg: &Config,
+    b: &BudgetRow,
+    now_ms: i64,
+) -> Result<Option<f64>> {
     let parts: Vec<&str> = b.scope.split(':').collect();
     match parts.as_slice() {
         ["task", task] => Ok(Some(task_tokens(store, task)? as f64)),
         ["provider", p, w] => match w.parse() {
-            Ok(w) => provider_percent(store, p, w, now_ms),
+            Ok(w) => provider_percent(store, cfg, p, w, now_ms),
             Err(_) => Ok(None),
         },
         _ => Ok(None),
@@ -66,7 +80,7 @@ pub fn spawn_blocked_by_budget(store: &Store, task: &str) -> Result<Option<Strin
     let scope = format!("task:{task}");
     for b in store.budgets()?.into_iter().filter(|b| b.scope == scope) {
         // Ngân sách `task:` đếm token, không phụ thuộc thời điểm reset → now_ms không dùng.
-        if let Some(v) = budget_value(store, &b, 0)?
+        if let Some(v) = budget_value(store, &Config::builtin(), &b, 0)?
             && v >= b.hard
         {
             return Ok(Some(format!(
@@ -144,7 +158,7 @@ fn level_rank(level: &str) -> u8 {
 
 fn budgets_tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()> {
     for b in store.budgets()? {
-        let Some(v) = budget_value(store, &b, now)? else {
+        let Some(v) = budget_value(store, cfg, &b, now)? else {
             continue;
         };
         let task = b.scope.strip_prefix("task:");

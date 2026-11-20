@@ -104,6 +104,10 @@ pub struct QuotaRow {
     pub resets_at_s: i64,
     pub observed_ms: i64,
     pub reset_passed: bool,
+    /// Dữ liệu đã cũ (theo `[policy].quota_stale_min` hoặc có usage mới cùng gói sau `observed_ms`).
+    pub stale: bool,
+    /// Tuổi dữ liệu (giây) kể từ `observed_ms`.
+    pub observed_age_s: i64,
 }
 
 /// % đã dùng còn hiệu lực: cửa sổ đã reset mà chưa có số mới thì số cũ không còn đúng → 0.
@@ -683,6 +687,16 @@ pub fn spark_bar(value: u64, max: u64, ascii: bool) -> char {
 
 /// Bản ghi hạn mức mới nhất cho từng (nhà cung cấp, cửa sổ).
 pub fn quota(store: &Store, now_s: i64) -> Result<Vec<QuotaRow>> {
+    quota_with_config(store, &crate::config::Config::builtin(), now_s)
+}
+
+/// Như [`quota`], nhưng dùng `cfg` để xác định ngưỡng cũ và ánh xạ gói ↔ usage.
+pub fn quota_with_config(
+    store: &Store,
+    cfg: &crate::config::Config,
+    now_s: i64,
+) -> Result<Vec<QuotaRow>> {
+    let now_ms = now_s * 1000;
     let mut stmt = store.conn().prepare(
         "SELECT q.provider, q.window_minutes, q.used_percent, q.resets_at_s, q.ts_ms FROM quota q
          WHERE q.ts_ms = (SELECT MAX(q2.ts_ms) FROM quota q2
@@ -692,17 +706,87 @@ pub fn quota(store: &Store, now_s: i64) -> Result<Vec<QuotaRow>> {
     let rows = stmt.query_map([], |r| {
         let resets_at_s: i64 = r.get(3)?;
         let used_percent: f64 = r.get(2)?;
+        let observed_ms: i64 = r.get(4)?;
+        let provider: String = r.get(0)?;
         Ok(QuotaRow {
-            provider: r.get(0)?,
+            provider: provider.clone(),
             window_minutes: r.get(1)?,
             used_percent,
             left_percent: left_percent(used_percent, resets_at_s, now_s),
             resets_at_s,
-            observed_ms: r.get(4)?,
+            observed_ms,
             reset_passed: resets_at_s <= now_s,
+            stale: quota_is_stale(store, cfg, &provider, observed_ms, now_ms),
+            observed_age_s: (now_s - observed_ms / 1000).max(0),
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Một dòng quota là stale khi dữ liệu cũ hơn ngưỡng `quota_stale_min` (phút) HOẶC sau
+/// `observed_ms` đã có usage mới thuộc cùng gói.
+pub fn quota_is_stale(
+    store: &Store,
+    cfg: &crate::config::Config,
+    provider: &str,
+    observed_ms: i64,
+    now_ms: i64,
+) -> bool {
+    let threshold_ms = cfg.policy.quota_stale_min.max(1) as i64 * 60_000;
+    if now_ms - observed_ms > threshold_ms {
+        return true;
+    }
+    // Điều kiện (b): usage mới sau observed_ms thuộc cùng gói.
+    package_has_usage_after(store, cfg, provider, observed_ms)
+}
+
+fn package_has_usage_after(
+    store: &Store,
+    cfg: &crate::config::Config,
+    provider: &str,
+    observed_ms: i64,
+) -> bool {
+    // Chỉ codex và claude có ánh xạ gói ↔ usage. Khác → false.
+    let is_codex = provider == "codex";
+    let is_claude = provider == "claude";
+    if !is_codex && !is_claude {
+        return false;
+    }
+    let mut stmt = match store.conn().prepare(
+        "SELECT s.source, u.model, u.ts_ms FROM usage u JOIN sessions s ON s.id = u.session WHERE u.ts_ms > ?1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let rows = stmt.query_map([observed_ms], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+    });
+    let Ok(rows) = rows else { return false };
+    for row in rows.flatten() {
+        let (source, model) = row;
+        let model = model.unwrap_or_default();
+        let belongs = if is_codex {
+            source == "codex"
+                || (source == "opencode"
+                    && (model.starts_with("openai/")
+                        || cfg
+                            .model(&model)
+                            .map(|m| m.provider == "codex")
+                            .unwrap_or(false)))
+        } else {
+            source == "claude"
+                || (source == "opencode"
+                    && (model.starts_with("anthropic/")
+                        || cfg
+                            .model(&model)
+                            .map(|m| m.provider == "claude")
+                            .unwrap_or(false)))
+        };
+        if belongs {
+            return true;
+        }
+    }
+    false
 }
 
 /// Tìm đúng một phiên theo tiền tố `session_id`; trả (id hàng, đường dẫn log).

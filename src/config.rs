@@ -125,6 +125,12 @@ pub struct Policy {
     pub stats_months: u32,
     /// Phút giữa hai lần daemon đọc hạn mức agy (`agy --print /usage`); 0 = tắt.
     pub agy_quota_poll_min: u64,
+    /// Phút coi dữ liệu hạn mức gói là cũ (quota stale); 0 → mặc định 60.
+    #[serde(default = "default_quota_stale_min")]
+    pub quota_stale_min: u64,
+    /// Phút giữa hai lần daemon đọc hạn mức Codex (`codex app-server`); 0 = tắt.
+    #[serde(default = "default_codex_quota_poll_min")]
+    pub codex_quota_poll_min: u64,
 }
 
 impl Default for Policy {
@@ -138,8 +144,18 @@ impl Default for Policy {
             link_timeout_min: 5,
             stats_months: 4,
             agy_quota_poll_min: 15,
+            quota_stale_min: 60,
+            codex_quota_poll_min: 15,
         }
     }
+}
+
+fn default_quota_stale_min() -> u64 {
+    60
+}
+
+fn default_codex_quota_poll_min() -> u64 {
+    15
 }
 
 impl Config {

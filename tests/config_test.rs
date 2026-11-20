@@ -189,6 +189,26 @@ fn policy_defaults() {
     assert_eq!(p.manager, None);
 }
 
+/// `[policy].quota_stale_min` (ngưỡng dữ liệu hạn mức cũ) và `[policy].codex_quota_poll_min`
+/// phải đọc được từ config và có giá trị mặc định khi thiếu.
+#[test]
+fn quota_stale_policy_parses() {
+    let cfg: Config = toml::from_str(
+        r#"
+[policy]
+quota_stale_min = 90
+codex_quota_poll_min = 5
+"#,
+    )
+    .unwrap();
+    assert_eq!(cfg.policy.quota_stale_min, 90);
+    assert_eq!(cfg.policy.codex_quota_poll_min, 5);
+
+    let d = Config::builtin().policy;
+    assert_eq!(d.quota_stale_min, 60, "default stale threshold (60 phút)");
+    assert_eq!(d.codex_quota_poll_min, 15, "default codex poll (15 phút)");
+}
+
 #[test]
 fn gpt_sol_has_window() {
     assert_eq!(

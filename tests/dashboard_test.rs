@@ -400,6 +400,54 @@ fn command_bar_lists_full_names_and_all_english_types() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Dòng quota stale hiện `stale · seen … ago` màu xám, không tràn khung ở cả 60 lẫn 110 cột.
+#[test]
+fn render_stale_quota_line_fits_60_and_110() -> anyhow::Result<()> {
+    let store = seeded()?;
+    let mut snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    snap.quota.push(QuotaRow {
+        provider: "codex".into(),
+        window_minutes: 300,
+        used_percent: 22.0,
+        left_percent: 78.0,
+        resets_at_s: 900_000,
+        observed_ms: 1,
+        reset_passed: false,
+        stale: true,
+        observed_age_s: 90_000, // 1d01h
+    });
+    for w in [60usize, 110usize] {
+        let plain = strip_ansi(&render(&snap, w));
+        let line = plain
+            .lines()
+            .find(|l| l.contains("stale"))
+            .unwrap_or_else(|| panic!("width {w}: missing stale line:\n{plain}"));
+        assert!(
+            line.contains("stale · seen 1d01h ago"),
+            "width {w}: wrong stale text: {line}"
+        );
+        assert!(
+            !line.contains("% left"),
+            "stale row must not show a fresh percent: {line}"
+        );
+        // Màu xám, không phải màu xanh của số tươi.
+        let raw = render(&snap, w);
+        let raw_line = raw.lines().find(|l| l.contains("stale · seen")).unwrap();
+        assert!(
+            raw_line.contains("\x1b[90m"),
+            "width {w}: stale text must be gray: {raw_line:?}"
+        );
+        for l in plain.lines() {
+            assert!(
+                l.chars().count() < w,
+                "width {w}: line overflow ({} chars): {l}",
+                l.chars().count()
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
     let store = seeded()?;
@@ -426,6 +474,8 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
         resets_at_s: 2_000,
         observed_ms: 1,
         reset_passed: true,
+        stale: false,
+        observed_age_s: 0,
     });
     snap.budgets.push(agmag::dashboard::BudgetView {
         scope: "task:over".into(),

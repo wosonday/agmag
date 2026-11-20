@@ -87,6 +87,10 @@ fn cli_quota_json() {
         left == 78.0 || (left == 100.0 && row["reset_passed"] == true),
         "left_percent = {left}"
     );
+    // Fixture quan sát 2026-11-18, đồng hồ thật ≥ 2026-11-20 → dữ liệu cũ phải được đánh dấu.
+    assert_eq!(row["stale"], true, "quota fixture 2 ngày tuổi phải stale");
+    let age = row["observed_age_s"].as_i64().expect("observed_age_s");
+    assert!(age > 3_600, "observed_age_s = {age}");
 }
 
 #[test]

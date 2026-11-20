@@ -177,12 +177,12 @@ fn provider_budget_ignores_quota_whose_window_has_reset() -> Result<()> {
     );
     let b = store.budgets()?.into_iter().next().unwrap();
     assert_eq!(
-        policy::budget_value(&store, &b, 5_000)?,
+        policy::budget_value(&store, &Config::builtin(), &b, 5_000)?,
         Some(96.0),
         "before the reset the logged value counts"
     );
     assert_eq!(
-        policy::budget_value(&store, &b, 10_000)?,
+        policy::budget_value(&store, &Config::builtin(), &b, 10_000)?,
         Some(0.0),
         "after the reset the old 96% must not count"
     );
@@ -190,6 +190,77 @@ fn provider_budget_ignores_quota_whose_window_has_reset() -> Result<()> {
     assert!(
         store.inbox(true)?.is_empty(),
         "no budget alarm from a stale, already-reset window"
+    );
+    Ok(())
+}
+
+/// Dữ liệu stale xử lý như KHÔNG có dữ liệu: `provider_percent` trả `None` (nhánh unknown
+/// hiện có) — không tự chặn và không tự nới ngân sách. Dữ liệu tươi giữ nguyên giá trị.
+#[test]
+fn provider_percent_unknown_on_stale_quota() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let now_ms = 1_800_000_000_000_i64;
+    // (a) Quota cũ hơn ngưỡng 60 phút → unknown.
+    store.insert_quota(&QuotaSnapshot {
+        provider: "codex".into(),
+        ts_ms: now_ms - 61 * 60_000,
+        windows: vec![QuotaWindow {
+            window_minutes: 10080,
+            used_percent: 84.0,
+            resets_at_s: now_ms / 1000 + 86_400,
+        }],
+    })?;
+    assert_eq!(
+        policy::provider_percent(&store, &Config::builtin(), "codex", 10080, now_ms)?,
+        None,
+        "quota stale phải ra unknown, không phải con số"
+    );
+
+    // (b) Quota mới nhưng có usage OpenCode `openai/*` sau observed_ms → unknown.
+    let observed_ms = now_ms - 5 * 60_000;
+    store.insert_quota(&QuotaSnapshot {
+        provider: "codex".into(),
+        ts_ms: observed_ms,
+        windows: vec![QuotaWindow {
+            window_minutes: 10080,
+            used_percent: 84.0,
+            resets_at_s: now_ms / 1000 + 86_400,
+        }],
+    })?;
+    let sid = store.session_id_for_path(Source::OpenCode, "opencode://newer")?;
+    store.upsert_usage(
+        sid,
+        &UsageRecord {
+            dedupe_key: "k".into(),
+            ts_ms: observed_ms + 60_000,
+            model: Some("openai/gpt-6.1-sol".into()),
+            usage: Usage {
+                output: 10,
+                ..Default::default()
+            },
+        },
+    )?;
+    assert_eq!(
+        policy::provider_percent(&store, &Config::builtin(), "codex", 10080, now_ms)?,
+        None,
+        "usage mới cùng gói sau observed_ms phải ra unknown"
+    );
+
+    // Hồi quy: quota tươi (không usage mới) vẫn trả đúng giá trị đã dùng.
+    let fresh_ms = now_ms - 60_000;
+    store.insert_quota(&QuotaSnapshot {
+        provider: "claude".into(),
+        ts_ms: fresh_ms,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 37.0,
+            resets_at_s: now_ms / 1000 + 3_600,
+        }],
+    })?;
+    assert_eq!(
+        policy::provider_percent(&store, &Config::builtin(), "claude", 300, now_ms)?,
+        Some(37.0),
+        "dữ liệu tươi không đổi so với trước"
     );
     Ok(())
 }

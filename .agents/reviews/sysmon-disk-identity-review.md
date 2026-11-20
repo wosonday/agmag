@@ -42,3 +42,25 @@
   - `windows-sys` chỉ được `use` bên trong thân hàm có `#[cfg(windows)]` (`src/sysmon.rs:291`) và chỉ khai báo trong `[target.'cfg(windows)'.dependencies]` (`Cargo.toml:21-22`) → Linux/macOS không biên dịch/link crate này. Không dùng `libc` ở đây nên không phát sinh lỗi cfg.
 
 `nhỏ`: không có.
+
+## 3. `merge_disks` — đúng cả 4 ca, không có lỗi
+
+Logic nằm ở `src/sysmon.rs:271-285`:
+
+- `src/sysmon.rs:272`: sắp xếp input theo `mount` tăng dần → thứ tự xử lý cố định.
+- `src/sysmon.rs:275-277`: điều kiện gộp đúng brief — `x.mount == d.mount || (x.volume_id.is_some() && x.volume_id == d.volume_id)`. Không còn so sánh `file_system` / `total_bytes` / `available_bytes`.
+- `src/sysmon.rs:278-282`: ba nhánh rõ ràng — mount khác + cùng volume → append vào `also_mounted_at`; **cùng mount** → `Some(_) => {}` (bỏ bản trùng, không tạo dòng thừa, không tự đưa mount vào `also_mounted_at`); không tìm thấy → push dòng mới.
+
+| Ca theo brief | Kết quả code | Tái hiện |
+|---|---|---|
+| Cùng fs/size/free, `volume_id` khác nhau → 2 dòng | 2 dòng `G:\`, `H:\`, `also_mounted_at` rỗng | `tests/sysmon_test.rs:188-194` |
+| Khác mount, cùng `volume_id` → 1 dòng, sắp theo mount | `mount = G:\`, `also_mounted_at = [H:\]` dù input `H` trước `G` | `tests/sysmon_test.rs:197-203` |
+| Cả hai `None`, số liệu trùng → không gộp | 2 dòng (nhờ điều kiện `x.volume_id.is_some()` ở `src/sysmon.rs:276`) | `tests/sysmon_test.rs:206-210` |
+| Cùng mount liệt kê 2 lần → 1 dòng; danh sách rỗng → rỗng | 1 dòng `C:\`, `also_mounted_at` rỗng; `Vec::new()` → rỗng | `tests/sysmon_test.rs:213-220` |
+
+- `None` không bao giờ gộp với `None`: chỉ vế `x.mount == d.mount` mới có thể gộp khi cả hai `None`, đúng quy định.
+- Thứ tự `also_mounted_at`: do input đã sort ở `src/sysmon.rs:272` và append theo thứ tự duyệt ở `src/sysmon.rs:279`, kết quả luôn theo mount tăng dần → ổn định.
+- Doc comment `src/sysmon.rs:268-270` đã sửa, không còn câu "two real disks never match to the byte".
+- Độc lập với phần hiển thị: `src/dashboard.rs` / header TUI không đổi trong diff, chỉ nhận `Vec<DiskStats>` đã gộp từ `src/sysmon.rs:456`.
+
+`nhỏ`: không có.

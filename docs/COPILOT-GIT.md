@@ -1,50 +1,50 @@
-# Hướng dẫn dùng GitHub Copilot CLI (`copilot`) — Bot quản lý phiên bản Git
+# GitHub Copilot CLI (`copilot`) Guide — Git Version Manager
 
-GitHub Copilot CLI (`copilot-git`) là **agent duy nhất** được phép tích hợp (merge), xử lý lịch sử (`git revert`), và dọn worktree/nhánh đã tích hợp trên nhánh chung (`main`). Dùng tài khoản GitHub Copilot riêng, không ăn vào hạn mức Claude hay ChatGPT/Codex.
+GitHub Copilot CLI (`copilot-git`) is the **only agent** permitted to integrate (merge), manage history (`git revert`), and clean up merged worktrees/branches on the shared branch (`main`). It runs on your GitHub Copilot account and does not consume Claude or ChatGPT/Codex quotas.
 
-## 1. Khởi chạy & phạm vi hoạt động
+## 1. Startup & Scope
 
-- Chỉ chạy **đúng 1 phiên `copilot-git`** tại **checkout chính** (trên nhánh `main`), để hàng đợi tích hợp luôn **tuần tự** — mỗi lần merge chỉ chứa đúng một nhánh/tính năng.
-- Cách mở phiên:
+- Run **exactly 1 `copilot-git` session** in the **main checkout** (on `main`) so integrations are strictly **sequential**—one branch/feature per merge.
+- Launch command:
   ```powershell
   copilot
-  # Yêu cầu mở đầu: Đọc AGENTS.md (và BOT-CEO.md / GIT_BOT.md nếu có). Bạn là copilot-git, chỉ xử lý hàng đợi theo đúng SHA đã duyệt.
+  # Opening prompt: Read AGENTS.md (and BOT-CEO.md / GIT_BOT.md if present). You are copilot-git; process the queue strictly by verified SHA.
   ```
-- **Đã kiểm chứng (2026-11-18):** Copilot CLI 1.0.113 đạt 3/3 ca kiểm thử Git trên fixture độc lập (dừng khi checkout bẩn, từ chối SHA sai, merge đúng SHA — xem `COPILOT_GIT_SMOKE.md` trong `MATHY-AI`).
+- **Verified (2026-11-18):** Copilot CLI 1.0.113 passed 3/3 Git smoke tests on an isolated fixture (halted on dirty checkout, rejected mismatched SHA, merged exact SHA—see `COPILOT_GIT_SMOKE.md` in `MATHY-AI`).
 
 ---
 
-## 2. Điều kiện nhận bàn giao (trước khi merge)
+## 2. Handoff Prerequisites (Before Merging)
 
-Tùy mô hình dự án, `copilot-git` nhận việc từ:
-- **Dự án đa lane (`BOT-CEO.md`):** đọc các mục có **`status: ready`** trong `BRANCHES.md` (lấy dưới khóa thư mục `.agents/.runtime/locks/branches`, nằm trong `.gitignore` để không làm bẩn `git status` trên checkout chính), kiểm tra `depends_on` đã `merged`/`deployed` chưa.
-- **Dự án 1 luồng (`AGENTS-TUTORIAL.md`):** nhận gói bàn giao từ `codex-mgr` / Kiến trúc sư (tên nhánh, `head` SHA đầy đủ, lệnh kiểm chứng + kết quả thật, báo cáo Audit + Review + xác nhận docs của Hydrogen Medium).
+Depending on project mode, `copilot-git` receives work from:
+- **Multi-lane (`BOT-CEO.md`):** read entries with **`status: ready`** in `BRANCHES.md` (under lock `.agents/.runtime/locks/branches`, inside `.gitignore` so the main checkout stays clean), checking that all `depends_on` branches are `merged`/`deployed`.
+- **Single-lane (`AGENTS-TUTORIAL.md`):** receive a handoff packet from `codex-mgr` / Architect (branch name, full `head` SHA, test commands + real counts, Audit + Review reports, and Hydrogen Medium docs confirmation).
 
-**Từ chối merge ngay và trả về `needs-rebase` / `failed` nếu:**
-1. Checkout chính đang bẩn (`git status --short` có thay đổi chưa dọn).
-2. `head` SHA của nhánh không khớp với SHA đã duyệt ở bước Review/Docs (có commit chen ngang sau khi chốt `ready`).
-3. Thiếu kết quả Audit/Review, hoặc thiếu commit cập nhật docs (nếu đầu việc có thay đổi ảnh hưởng tài liệu).
-4. Nhánh phụ thuộc trong `depends_on` chưa vào `main`.
-
----
-
-## 3. Quy trình 6 bước khi tích hợp một nhánh
-
-1. **Đặt trạng thái `merging`** trong `BRANCHES.md` (giữ khóa `mkdir`) để các BOT-CEO khác biết.
-2. **Xác minh đúng SHA và merge tuần tự** vào nhánh chung (`main`) tại checkout chính.
-   - Nếu gặp xung đột merge, xung đột nghiệp vụ, hoặc có > 1 migration head: **dừng ngay, không tự sửa code để vượt cổng**; ghi lý do vào `BRANCHES.md` (`status: needs-rebase`) và báo cho BOT-CEO của lane qua `agm send <lane> --type LỖI --task <ID> "..."`.
-3. **Chạy lại cổng kiểm tra (Audit)** sau merge trên checkout chính (test, build, lint). Nếu lỗi: ghi log, chuyển trạng thái `failed` (hoặc `git revert` nếu đã đẩy lên bước kế tiếp) và trả về quản lý/BOT-CEO.
-4. **Kích hoạt làm mới GitNexus:** sau khi merge thành công, gọi **`gitnexus-sync`** (chạy `gitnexus analyze --index-only` ở checkout chính) hoặc hook `post-merge` để các BOT-CEO khác đọc được đồ thị mã mới nhất mà không bị `staleness: behind`.
-5. **Cập nhật trạng thái cuối & dọn dẹp:**
-   - Đổi trạng thái trong `BRANCHES.md` thành `merged` (hoặc `deployed` nếu dự án có bước deploy và đã được phép).
-   - Chỉ xóa worktree và nhánh đã tích hợp (`cleanup-wt.sh`) sau khi kiểm tra worktree sạch và `agm ps` không còn phiên nào đang chạy trong thư mục đó.
-6. **Báo hoàn tất** qua `agm send` để chuyển sang nhánh `ready` kế tiếp trong hàng đợi.
+**Immediately reject and return `needs-rebase` / `failed` if:**
+1. The main checkout is dirty (`git status --short` has uncommitted files).
+2. The branch's `head` SHA does not match the approved SHA from Review/Docs (extra commits added after `ready`).
+3. Audit/Review results or required doc updates are missing.
+4. Any branch in `depends_on` has not been merged into `main`.
 
 ---
 
-## 4. Hành động cần người dùng phê duyệt trực tiếp
+## 3. Six-Step Integration Workflow
 
-`copilot-git` **không tự ý** thực hiện các thao tác sau khi chưa có lệnh cho phép của người dùng:
-- `git push` lên remote, tạo `tag`, phát hành bản mới (`release`).
-- Deploy lên môi trường thật (khi `MATHY_DEPLOY` hoặc cờ tương đương đang tắt).
-- Thao tác viết lại / hủy lịch sử trên nhánh chung (`git reset --hard`, force-push). Khi cần hoàn tác trên nhánh chung, dùng **`git revert`** và ghi mục đính chính.
+1. **Mark `merging`** in `BRANCHES.md` (holding the `mkdir` lock) so all BOT-CEOs see it is in progress.
+2. **Verify exact SHA and merge sequentially** into `main` at the main checkout.
+   - On merge conflicts, business logic conflicts, or >1 migration head: **stop immediately—never edit feature code to force a pass**; set `status: needs-rebase` in `BRANCHES.md` and notify the lane's BOT-CEO via `agm send <lane> --type LỖI --task <ID> "..."`.
+3. **Re-run post-merge Audit/CI gates** on `main` (ESLint `--max-warnings 0`, typecheck, tests, build). If any check fails: log the failure, set `failed` (or `git revert` if already pushed further), and return to the manager/BOT-CEO.
+4. **Trigger GitNexus refresh:** after a clean merge, invoke **`gitnexus-sync`** (`gitnexus analyze --index-only` in the main checkout) or rely on the `post-merge` hook so BOT-CEOs never query a stale graph (`staleness: behind`).
+5. **Update final status & clean up:**
+   - Update `BRANCHES.md` to `merged` (or `deployed` if deployment is enabled and authorized).
+   - Remove the worktree and merged branch (`cleanup-wt.sh`) only after verifying the worktree is clean and `agm ps` shows no live session inside that directory.
+6. **Report completion** via `agm send` and move to the next `ready` entry in the queue.
+
+---
+
+## 4. Actions Requiring Explicit User Approval
+
+`copilot-git` must **never** perform these actions without explicit user authorization:
+- `git push` to remote, `git tag`, or cutting a `release`.
+- Deploying to production/live environments (when `MATHY_DEPLOY` or equivalent flag is off).
+- Rewriting or destroying history on `main` (`git reset --hard`, force-push). To roll back on `main`, use **`git revert`** and append a correction note.

@@ -1,40 +1,41 @@
-# Hướng dẫn dùng Codex — Kỹ sư chuyên sâu & Quản lý 1 luồng
+# Codex Guide — Senior Engineering & Single-Lane Management
 
-> **Cảnh báo hạn mức quan trọng (đã xác minh trong `agmag`):** OpenCode gọi `openai/gpt-6.1-sol` **tiêu CHUNG hạn mức gói ChatGPT (5h / 7d) với Codex CLI** (hạn mức tính theo provider OpenAI, không tách theo công cụ). Vì vậy **không** dùng `gpt-6.1-sol` làm Reviewer mặc định hay viết báo cáo hành chính.
+> **Critical Quota Warning (verified in `agmag`):** OpenCode running `openai/gpt-6.1-sol` **shares the exact same ChatGPT (5h / 7d) subscription quota as Codex CLI** (quota is tracked per OpenAI provider, not per CLI). Therefore, **do not** use `gpt-6.1-sol` as the default Reviewer or for administrative report writing.
 
-## 1. Khi nào dùng Codex (và khi nào KHÔNG dùng)
+## 1. When to Use Codex (and When NOT To)
 
-| Dùng Codex (`openai/gpt-6.1-sol`) | Không dùng Codex (chuyển sang công cụ khác) |
+| Use Codex (`openai/gpt-6.1-sol`) | Do Not Use Codex (offload elsewhere) |
 |---|---|
-| **Engineering khó:** logic phức tạp, sửa đa tệp, migration DB, tối ưu hiệu năng | **Việc cơ khí 1–2 tệp có test sẵn:** giao `worker-fast` (`:free` / local) |
-| **Gỡ lỗi sau 2 lần thất bại** ở `worker-fast` / `worker-mid` | **Audit & sàng lọc quy ước:** giao `auditor` (`:free`) |
-| **Review chéo ca logic phức tạp** (second opinion) khi `agm quota` còn rộng | **Reviewer mặc định:** giao OpenCode non-OpenAI (OpenRouter/Ollama Cloud) hoặc `agy` (`Argon/Hydrogen High`) |
-| **Quản lý điều phối ở dự án 1 luồng** (khi **không** dùng `BOT-CEO.md`) | **Điều phối trung gian trong chế độ `BOT-CEO.md`:** BOT-CEO gọi thẳng `agm spawn`, bỏ `codex-mgr` |
-| — | **Viết báo cáo cuối `.agents/reports/<ID>.md`:** giao Hydrogen Medium hoặc model `:free` |
+| **Hard engineering:** complex logic, multi-file refactors, DB migrations, performance tuning | **Mechanical 1–2 file tasks with tests:** `worker-fast` prefers `opencode-go/deepseek-v4.1-flash` within allocation |
+| **Debugging after 2 failed attempts** by `worker-fast` / `worker-mid` | **Audit & lint/CI gating:** scripts/CI; approved free/local LLM only when needed |
+| **Complex logic cross-reviews** (second opinion) when `agm quota` has headroom | **Routine Reviewer:** qualified `opencode-go/deepseek-v4-pro`; different family when Pro authored code, with approved `agy` fallback |
+| **Orchestration in single-lane projects** (when **not** using `BOT-CEO.md`) | **Middleman orchestration under `BOT-CEO.md`:** BOT-CEO calls `agm spawn` directly; omit `codex-mgr` |
+| — | **Final reports `.agents/reports/<ID>.md`:** use `gemini-3.8-flash-medium` / `hydrogen-low` |
 
-## 2. Hai cách chạy Codex
+## 2. Two Ways to Run Codex
 
-1. **Chạy trong OpenCode v2 theo đầu việc (khuyên dùng cho thợ bậc Mạnh):**
+1. **Via OpenCode v2 per task (recommended for strong workers):**
    ```powershell
    opencode run --model openai/gpt-6.1-sol ...
    ```
-   Hoặc gắn vào template `worker-strong.md` khi cần nâng bậc cho một worktree cụ thể (`agm spawn worker-strong --task <ID> --role worker --cwd <worktree>`).
-2. **Chạy Codex CLI tương tác (`codex-mgr` ở dự án 1 luồng hoặc thợ bậc Mạnh):**
-   - Mở trong `herdr-core` (tên `codex-mgr` hoặc `w-<ID>-<n>`).
-   - Nếu là phiên mở tay chạy lâu (như `codex-mgr`), bật `agm manage codex-mgr` để `agm` tự nhắc bàn giao sang `.agents/handoff/` khi ngữ cảnh đạt `ctx_rotate = 70%` (không kill phiên cũ).
-   - Nạp tối đa 1–3 skill khi khởi tạo (`writing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`).
+   Or attach to `worker-strong.md` when escalating a specific worktree (`agm spawn worker-strong --task <ID> --role worker --cwd <worktree>`).
+2. **Interactive Codex CLI (`codex-mgr` in single-lane projects, or strong worker):**
+   - Launch in `herdr-core` (named `codex-mgr` or `w-<ID>-<n>`).
+   - For long-lived manual sessions (like `codex-mgr`), enable `agm manage codex-mgr` so `agm` prompts handoff to `.agents/handoff/` at `ctx_rotate = 70%` without killing the old session.
+   - Load 1–3 skills on startup (`writing-plans`, `dispatching-parallel-agents`, `using-git-worktrees`).
 
-## 3. Kiểm soát hạn mức ChatGPT 5h / 7d
+## 3. Controlling ChatGPT 5h / 7d Quota
 
-- Trước khi mở phiên Codex nặng, kiểm tra:
+- Check quota before starting heavy Codex sessions:
   ```powershell
   agm quota
   ```
-- **Ngưỡng điều phối đề xuất:** nếu cửa sổ 7 ngày (`codex 7d`) chỉ **còn < 20–30%** (đã dùng > 70–80%), tạm ngưng giao `gpt-6.1-sol` cho các task thường — đẩy `worker-strong` sang model mạnh trên **OpenRouter / Ollama Cloud** và chỉ giữ Codex cho ca bế tắc thật sự.
-- Lưu ý trong `agm`: hạn mức OpenCode dùng `openai/gpt-6.1-sol` không hiện riêng trong log OpenCode mà phản ánh ở lần ghi `rate_limits` tiếp theo của Codex.
+- **Recommended threshold:** if `codex 7d` has under **20–30% left** (`agm quota` shows the remaining share), reserve Codex for genuine blockers. For `worker-strong`, use a capable Go model within allocation or another approved source; never fall back to unapproved pay-as-you-go APIs.
+- Fast/mid may share Flash Go; changing templates is not a capability upgrade. Pro Go needs its own coding trial for suitable strong work; use a different Reviewer family when Pro authored code. [Background NVIDIA](NVIDIA-BACKGROUND.md) supplies synthesis/proposals, not workers or review gates.
+- Note in `agm`: quota consumed by OpenCode via `openai/gpt-6.1-sol` does not appear in OpenCode's own DB; it surfaces on the next `rate_limits` entry written by Codex.
 
-## 4. Kỷ luật worktree & git
+## 4. Worktree & Git Discipline
 
-- Khi đóng vai thợ engineering trong worktree: chỉ sửa đúng danh sách tệp trong `.agents/tasks/<ID>.md`, ghi mục vào `.agents/log/<ID>.md`, commit bắt đầu bằng `<ID>:`, không chạm `BRANCHES.md`, không merge/push.
-- Khi đóng vai quản lý (dự án 1 luồng): không tự sửa code của thợ; nhận tin qua `agm inbox --json`, đổi model thợ khi fail 2 lần, kiểm `git status` / `git diff --stat` rồi bàn giao nhánh + SHA cuối cho `copilot-git`.
-- Giống Claude, phiên Codex tương tác **không bị `agm` tự động kill** — chỉ người dùng (TTY + gõ `y`) mới dừng được.
+- When acting as an engineering worker in a worktree: edit only files listed in `.agents/tasks/<ID>.md`, log steps in `.agents/log/<ID>.md`, prefix commits with `<ID>:`, never touch `BRANCHES.md`, and never merge/push.
+- When acting as manager (single-lane): do not edit worker code directly; check `agm inbox --json`, escalate worker models after 2 failures, verify `git status` / `git diff --stat`, and hand off branch + final SHA to `copilot-git`.
+- Like Claude, interactive Codex sessions are **never auto-killed by `agm`**—only the user (TTY + `y`) can stop them.

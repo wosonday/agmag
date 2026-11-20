@@ -4,3 +4,5 @@
 .superpowers/
 
 target-install/
+__pycache__/
+.pytest_cache/

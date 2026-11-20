@@ -8,7 +8,7 @@ Phạm vi: (1) dùng **`agm` (`agmag` v0.2.0)** đứng trên `hc` (`herdr-core`
 
 > **Mức tin cậy:**
 > - **Đã xác minh từ mã nguồn & nghiên cứu của `agmag` (`v0.2.0`, 2026-11-18/19):** kiến trúc lệnh `agm` (`daemon`, `tui`, `spawn`, `send`, `inbox`, `reply`, `done`, `ask`, `manage`, `rotate`, `cleanup`, `budget`, `policy`, `hook`, `ps`, `ls`, `cost`, `quota`, `log`, `scan`, `link`), sự kiện `hc events --json` (gồm `created`, `restarted`, `status`, `turn`, `title`, `labels`, `size`, `foreground`, `finished`, `lost`, `removed`), biến môi trường `HC_TERMINAL_ID`, và việc terminal của HERDR app có hiện trong `hc`.
-> - Các chỗ đánh dấu **[KIỂM]** là điểm cần thử lại trên máy thực tế khi cấu hình dự án mới (ví dụ: việc `hc send` vào phiên `agy` tương tác, khởi động lại máy với Task Scheduler / `systemd`).
+> - Các chỗ đánh dấu **[KIỂM]** là điểm cần thử lại trên máy thực tế khi cấu hình dự án mới (ví dụ: tên model slug chính xác của `Opus High` trong `agy models`, việc `hc send` vào phiên `agy` tương tác, khởi động lại máy với Task Scheduler / `systemd`).
 
 ---
 
@@ -23,6 +23,12 @@ Thay vì viết script bash tự bắt `hc events --json`, tự đếm `jq` và 
 | **`hc` (`herdr-core`)** | Chạy nền terminal, đọc màn hình, gõ phím, phát luồng sự kiện `hc events --json`, đặt `HC_TERMINAL_ID` | `hc run`, `hc read`, `hc attach`, `hc ls`, `hc events`, `hc server start\|status` |
 | **`agm` (`agmag` v0.2.0)** | Theo dõi `hc events`, đo token/hạn mức gói (Claude/Codex/OpenCode/`agy`), hộp thư người dùng, gửi tin có ghi sổ, giới hạn `max_workers` và ngân sách, xoay vòng thợ OpenCode & bàn giao phiên Claude/Codex, bảo vệ không tự kill Claude/Codex | `agm daemon`, `agm tui`, `agm spawn`, `agm send`, `agm inbox`, `agm reply`, `agm done`, `agm ask`, `agm manage`, `agm rotate`, `agm cleanup`, `agm budget`, `agm policy`, `agm hook` |
 | **Wrapper worktree (tùy chọn)** | Tạo `git worktree`, kiểm tra `tier:` / `skills:` trong `.agents/tasks/<ID>.md`, chạy `gitnexus analyze`, rồi gọi `agm spawn`; tự nhặt `.agents/inbox/*.md` | `dispatch.sh` (hoặc PowerShell tương đương), `cleanup-wt.sh` |
+
+**Phân biệt ngân sách:** Claude CEO phân bổ kinh phí; [Go Console](https://opencode.ai/console/go) là nguồn kiểm hạn mức Go. `agm` đo token và thực thi các ngưỡng đã cấu hình, không thay CEO duyệt nguồn tính phí hoặc tự chặn theo hạn mức Go. `agm 0.2.0` trên môi trường kiểm ngày 2026-11-20 chưa có Go trong `agm quota`.
+
+**Đo OpenCode theo nguồn tính phí:** `agm` lưu model OpenCode dạng `providerID/id` (vd `opencode-go/deepseek-v4-pro`, `nvidia-kimi/moonshotai/kimi-k3.1-pro`, `openai/gpt-6.1-sol`), nên `agm cost --by model` tách được Go, NVIDIA, Zen free và OpenAI chạy qua OpenCode; model mới không cần khai báo trước. Billing lấy theo model đã khai trong `providers.toml`, nếu không thì theo tiền tố provider (`[providers."opencode-go"] billing = "subscription"`); provider chưa khai (như NVIDIA) để là chưa rõ. Cột **USD** của `agm cost`/`agm tui` = token × giá API niêm yết của từng model (`assets/prices.toml`, ghi đè bằng `[models."<id>".price]`), tính cả gói tháng như *giá trị nếu dùng qua API* — **không phải hóa đơn**; tiền thực trả của model tính theo API nằm ở cột `billed (API)` của `agm cost --summary`. `≥ $x` nghĩa là còn token chưa biết giá.
+
+**Routing v3.6:** `opencode-go/deepseek-v4.1-flash` cho fast/mid/explore tương tác; `opencode-go/deepseek-v4-pro` cho review/strong phù hợp sau qualification. NVIDIA nền chỉ đọc, không chặn merge; không tự thêm scheduler vào `agm`. Xem [hướng dẫn NVIDIA](docs/NVIDIA-BACKGROUND.md).
 
 **Lưu ý cài đặt `agm`:** từ repo `agmag`, cài bằng `cargo install --path .` (để có `agm` / `agm.exe` trong `~/.cargo/bin`). Dữ liệu mặc định nằm tại `~/.agmag/` (`agm.db`, `providers.toml`; đổi bằng `AGM_HOME`).
 
@@ -40,7 +46,7 @@ hc read agm-daemon          # xem log hoạt động của daemon
 Để quan sát trực quan trong một pane của HERDR:
 
 ```powershell
-agm tui                     # xem hạn mức gói, terminal, % ngữ cảnh, ngân sách, hộp thư
+agm tui                     # hạn mức gói (% còn lại), terminal (model/effort/where/last msg), hộp thư; `view` chọn tối đa 3 bảng
 ```
 
 Các sự kiện tự động lúc này được xử lý qua hai lớp gọn nhẹ:
@@ -78,21 +84,22 @@ provider = "claude"
 
 [policy]
 max_workers = 3                 # số thợ (agm.role=worker) tối đa cùng lúc; không vượt giới hạn gói model cloud
-manager = "codex-mgr"           # tên terminal nhận cảnh báo ngân sách từ agm; bỏ trống = chỉ vào agm inbox
+manager = "ceo-platform"        # ví dụ: CEO đầu mối; codex-mgr nếu điều phối 1 luồng; bỏ trống = chỉ vào inbox
 ctx_warn = 50                   # % ngữ cảnh: cảnh báo vào hộp thư
 ctx_rotate = 70                 # % ngữ cảnh: bắt đầu xoay vòng
 handoff_timeout_min = 10
 link_timeout_min = 5
 stats_months = 4
-agy_quota_poll_min = 15         # đọc hạn mức agy (agy-gemini / agy-3p / agy-argon); 0 = tắt
 ```
 
-Thiết lập ngân sách (tùy chọn, `agm daemon` kiểm mỗi chu kỳ):
+Thiết lập ngưỡng kỹ thuật (ví dụ, chỉ áp dụng theo mức đã duyệt; `agm daemon` kiểm mỗi chu kỳ):
 
 ```powershell
-agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill   # vượt cứng -> dừng thợ OpenCode của việc đó
-agm budget set provider:codex:10080 --soft 80 --hard 95                   # ngưỡng theo % ĐÃ DÙNG: đã dùng ≥ 80% (còn ≤ 20%) thì cảnh báo
+agm budget set task:login-7 --soft 2000000 --hard 5000000                 # đơn vị token; không phải tiền hoặc % Go
+agm budget set provider:codex:10080 --soft 80 --hard 95                   # cảnh báo % hạn mức tuần
 ```
+
+`agm spawn` kiểm `max_workers` cho vai `worker` và trần `task:<ID>` theo token đã ghi nhận. `provider:` chỉ có giá trị khi `agm` có số liệu cho đúng nguồn/cửa sổ; không khai báo `provider:opencode-go:...` rồi coi đó là cổng chặn Go. `[policy].manager` chỉ là một đích nhận cảnh báo, không phải bộ phân bổ nhiều lane. Xem [quy tắc kinh phí của CEO](AGENTS-TUTORIAL.md#311-điều-phối-kinh-phí-ai).
 
 Còn `.agents/bot.env` trong từng dự án chỉ giữ phần Git/worktree cho wrapper:
 
@@ -101,7 +108,7 @@ Còn `.agents/bot.env` trong từng dự án chỉ giữ phần Git/worktree cho
 PROJECT_DIR=/duong/dan/den/du-an
 BASE_BRANCH=main
 WT_DIR=.wt                  # worktree nằm trong dự án (hoặc ../<TEN-DU-AN>.wt)
-MANAGER=codex-mgr           # đồng bộ với [policy].manager trong providers.toml (hoặc ceo-<lane>)
+MANAGER=ceo-platform        # terminal điều phối việc của lane này (codex-mgr nếu dự án 1 luồng)
 RUNTIME_DIR=.agents/.runtime
 RUNTIME_TTL_DAYS=7          # dọn tệp tạm cũ hơn số ngày này
 GITNEXUS_SYNC=none          # none | main | worktree  (phần 3)
@@ -128,7 +135,7 @@ Template là **một tệp `.md`** trong `~/.config/herdr-core/templates/` (trư
 
 **1) `worker-fast.md` / `worker-mid.md` / `worker-strong.md` (thợ cơ khí, OpenCode):**
 
-*(Ba template cùng phần thân, chỉ khác `command` để trỏ tới agent/model bậc Nhanh / Vừa / Mạnh — trong đó **`worker-fast.md` ưu tiên model miễn phí** như `opencode/deepseek-v4.1-flash-free`, OpenRouter `:free`, hoặc Ollama cục bộ `num_ctx ≥ 64k`; dự phòng 2–3 slug `:free` để đổi khi gặp `429`. **[KIỂM]** cờ chọn agent/model chính xác theo `opencode --help` của OpenCode v2 đang cài; lưu ý v2 không có `--dir`, `agm spawn --cwd` đã tự đặt thư mục làm việc là worktree.)*
+*(Ba template dùng cùng phần thân: **`worker-fast/mid`** ưu tiên `opencode-go/deepseek-v4.1-flash`; **`worker-strong`** ưu tiên `opencode-go/deepseek-v4-pro` cho việc đã qualification, Codex ca khó theo CEO. Fast → mid cùng Flash không là nâng năng lực. `command: opencode` chỉ mở TUI, **không khóa model**; phải chọn/kiểm model thực trước giao việc. Với `opencode run`, truyền `--model` tường minh, kiểm quyền/mức cấp và cách nhận brief/báo cáo trước khi bật. `agm spawn --cwd` đã đặt worktree.)*
 
 ```markdown
 ---
@@ -162,13 +169,13 @@ Chạy các lệnh kiểm trong `.agents/tasks/<ID>.md`, chạy `git status`, `g
 Ghi kết quả vào `.agents/log/<ID>.md` (một mục) và commit, rồi báo ĐẠT HẾT hoặc CHƯA ĐẠT cho quản lý bằng `agm send <MANAGER> --type BÁO CÁO --task <ID> "..."`.
 ```
 
-**2b) `reviewer.md` (Reviewer mặc định qua OpenCode non-OpenAI — tách khỏi hạn mức Claude Code & Codex):**
+**2b) `reviewer.md` (Reviewer mặc định qua OpenCode Go — tách khỏi hạn mức Claude Code & Codex):**
 
-*(Ưu tiên dùng model mạnh trên **OpenRouter / Ollama Cloud** — không dùng `openai/gpt-6.1-sol` mặc định để tránh ăn chung hạn mức 5h/7d của Codex CLI — khai báo trong `.opencode/agent/reviewer.md` với quyền chỉ đọc mã nguồn và chỉ ghi `.agents/reviews/`. Hoặc dùng `agy` `gemini-4-argon-high` / `gemini-4-hydrogen-high` qua `agm ask` / gói diff. Nhắc gọi GitNexus MCP chủ động vì OpenCode không có hook tự nhắc.)*
+*(Ưu tiên **`opencode-go/deepseek-v4-pro`** sau qualification trong phần CEO cấp; Pro đã viết code thì đổi model khác họ đủ năng lực đã duyệt, như `agy` Argon/Hydrogen High còn hạn mức. Phiên mới độc lập, không đọc suy luận của thợ. Không dùng Codex mặc định. Khai báo `.opencode/agents/reviewer.md` chỉ đọc mã và chỉ ghi `.agents/reviews/`; kiểm model trước gửi brief, dùng GitNexus MCP nếu có.)*
 
 ```markdown
 ---
-description: Reviewer mặc định qua OpenCode non-OpenAI (bảo toàn hạn mức Claude & Codex).
+description: Reviewer mặc định qua OpenCode Go, chạy sau Audit và độc lập với worker.
 command: opencode
 ready: quiet
 ---
@@ -201,12 +208,12 @@ Bạn là Reviewer. Không sửa mã nguồn sản phẩm.
 
 - Dùng để **gánh tải trực tiếp cho Claude Code** ở hai việc tốn suy luận sâu nhất: **(a)** bàn thiết kế / chia `.agents/tasks/<ID>.md` cùng người dùng hoặc BOT-CEO, và **(b)** phân xử review cho các nhánh khó / rủi ro cao (bỏ Pre-review trên nhánh thường để tránh đốt 2 lần model lớn).
 - **Luôn mở dưới dạng phiên tương tác trong repo** (hoặc nối tiếp bằng `agy --conversation <id>`) để tận dụng **`cache_read_tokens`** và để `agy` tự đọc đúng tệp/dòng trong repo — **không** dùng `agm ask` one-shot cho Opus High (vì `agm ask` chạy ở thư mục tạm ngoài repo với `cache_read_tokens = 0` và bắt nhồi cả diff vào dòng lệnh).
-- *(Đã kiểm `agy models` ngày 2026-11-20: Opus High là `claude-opus-5-5-high`.)*
+- *(**[KIỂM]** lấy tên `<opus-high-slug>` chính xác từ lệnh `agy models` trên máy.)*
 - Mở bằng `hc run --name sparring sparring-opus` hoặc `agm spawn sparring-opus --task <ID> --role sparring --cwd <worktree>`:
   ```markdown
   ---
   description: Đồng Kiến trúc sư & Reviewer cấp cao dùng Opus High qua agy (giữ phiên để ăn prompt cache).
-  command: agy --model claude-opus-5-5-high --mode plan --sandbox
+  command: agy --model <opus-high-slug> --mode plan --sandbox
   ---
   Bạn là Đồng Kiến trúc sư & Reviewer cấp cao (chỉ đọc, không sửa mã nguồn).
   - Khi bàn thiết kế / chia việc: đọc mã qua GitNexus / tệp liên quan để phản biện phương án, chỉ ra rủi ro và đề xuất chia nhỏ `.agents/tasks/<ID>.md`.
@@ -252,6 +259,7 @@ Bạn là Cố vấn kỹ thuật chuyên trách Harnessing (Gemini Argon).
 
 **7) `gitnexus-sync.md` (Cập nhật chỉ mục GitNexus — OpenCode model miễn phí):**
 
+- Ưu tiên script/hook chạy `gitnexus analyze --index-only`; chỉ dùng template này nếu cần agent kiểm hoặc báo cáo.
 - Sinh khi cần làm mới chỉ mục đồ thị sau khi `copilot-git` merge vào nhánh chung, khi `staleness` báo `behind`/`diverged`, hoặc khi worktree đổi cấu trúc:
   `agm spawn gitnexus-sync --task <ID> --role index --cwd "$PROJECT_DIR" -- "Cập nhật chỉ mục sau merge"`
 
@@ -273,7 +281,11 @@ Làm theo đúng thứ tự:
 
 ### 1.5. Script giao việc: `.agents/bot/dispatch.sh` (dùng `agm spawn`)
 
+**NVIDIA không đi qua script worker dưới đây.** Giao phiên chỉ đọc có quyền tối thiểu, theo [NVIDIA-BACKGROUND.md](docs/NVIDIA-BACKGROUND.md). Task ID/model, phạm vi đọc, mức cấp, deadline và SHA/snapshot là thông tin brief, không là tham số `agm` mới. CEO điều phối thủ công tối đa 1 task NVIDIA trên cả nhóm alias; `max_workers` không bảo đảm trần cho mọi vai nền. Đầu ra trả điều phối, không tự ghi log/docs/code. Không chờ NVIDIA trước merge.
+
 So với phiên bản cũ, `dispatch.sh` không còn phải dùng `jq` để đếm `hc ls` hay kiểm tra giới hạn thợ bằng tay — **`agm spawn` tự kiểm tra `max_workers`, ngân sách `task:<ID>`, gắn nhãn `agm.task`/`agm.role`, tên `w-<ID>-<số>`, `--bg --outlive-parent` và lưu vào `agm.db`**. Nếu `agm spawn` từ chối (ví dụ đã chạm `max_workers`), script tự dọn worktree vừa tạo để không để lại worktree mồ côi.
+
+**Trước `dispatch.sh`:** CEO xác nhận nguồn/model và mức đã cấp. Ví dụ dưới đây không kiểm điều đó hoặc hạn mức Go; không dùng làm cổng tự động cho model tính phí. Với việc dùng Go hoặc nguồn tính phí, giữ bước phê duyệt thủ công trước khi giao hoặc sinh lại phiên, trừ khi đã có cơ chế được kiểm chứng chỉ mở model đã phê duyệt trong phần được cấp.
 
 ```bash
 #!/usr/bin/env bash
@@ -331,7 +343,9 @@ fi
 ### 1.6. Theo dõi & nhặt hộp thư đầu việc (`.agents/inbox/`)
 
 - **Theo dõi terminal, câu hỏi `blocked`, ngân sách, xoay vòng:** đã có **`agm daemon`** chạy nền (§1.2) — **không cần `watch.sh` đọc `hc events --json` nữa**.
-- Nếu bạn vẫn muốn tự động nhặt các tệp `.agents/inbox/*.md` thả vào thư mục dự án, chỉ xóa tệp trong `.agents/inbox/` **sau khi `dispatch.sh` chạy thành công** (để khi `max_workers` đầy, đầu việc vẫn nằm lại trong `.agents/inbox/` chờ chu kỳ sau):
+- Ví dụ dưới đây **không tự xét quyền chi phí**. Chỉ bật cho hàng đợi riêng đã duyệt trước và đã kiểm các template đều khóa ở model miễn phí/cục bộ; không đưa việc Go hoặc tính phí vào hàng đợi mẫu này. Chỉ xóa mục **sau khi `dispatch.sh` chạy thành công**; việc bị chặn vì hạn mức hoặc quyền chi phí chờ CEO, không thử lặp bằng watcher:
+
+  Với mặc định fast/mid mới dùng Go, **không bật watcher mẫu nguyên trạng**. Không đưa NVIDIA vào watcher hoặc tự tạo lại task timeout; deadline task khác timeout một HTTP request (`settings.timeout`). OpenCode có retry transport sẵn; không chồng vòng retry ngoài. `429` thì dừng giao thêm và kiểm `Retry-After`/reset, không xoay alias.
 
 ```bash
 #!/usr/bin/env bash
@@ -373,7 +387,7 @@ Core dừng khi máy khởi động lại, nên cần tự bật lại `hc serve
 
 Nhờ xác minh ngày 2026-11-18 (`p0-research.md`): các terminal mở trong **HERDR app** đều hiện trong `hc` (`herdr.space`, `herdr.tab`, `where`), nên **`agm` quản lý, đo token và gửi tin được thống nhất trong một hệ thống**:
 
-- Từ máy tính hoặc điện thoại (Moshi + SSH): chạy `agm tui` để xem bảng tổng hợp & trả lời hộp thư (`r <#> <text>`), hoặc `agm inbox` / `agm reply <#> "..."` / `agm ps` / `hc read <t> --lines 100` / `hc attach <t>`.
+- Từ máy tính hoặc điện thoại (Moshi + SSH): chạy `agm tui` để xem bảng tổng hợp & trả lời hộp thư (`reply <#> <text>`), hoặc `agm inbox` / `agm reply <#> "..."` / `agm ps` / `hc read <t> --lines 100` / `hc attach <t>`.
 
 ---
 
@@ -404,7 +418,7 @@ Trước khi một phiên bị xoay vòng hoặc kết thúc, mọi quyết đ�
 Có **hai loại dọn dẹp tách biệt** (không thay thế lẫn nhau):
 
 1. **Dọn terminal cũ đã bàn giao trong `agm` / `hc`:**
-   - Dùng `agm cleanup` (hoặc nhấn `c` trong `agm tui`). Chỉ **người dùng** chạy được và luôn hỏi xác nhận `y/N`. Lệnh này kết thúc/gỡ các terminal cũ đang ở trạng thái `[ĐÃ BÀN GIAO]` sau khi phiên kế nhiệm đã chạy ổn, nhưng **luôn giữ** lịch sử token/rotations trong `agm.db` và tệp `.agents/handoff/`.
+   - Dùng `agm cleanup` (hoặc gõ `cleanup` trong `agm tui`). Chỉ **người dùng** chạy được và luôn hỏi xác nhận `y/N`. Lệnh này kết thúc/gỡ các terminal cũ đang ở trạng thái `[HANDED OFF]` sau khi phiên kế nhiệm đã chạy ổn, nhưng **luôn giữ** lịch sử token/rotations trong `agm.db` và tệp `.agents/handoff/`.
    - Với các terminal đã kết thúc còn nằm trong `hc ls --all` không thuộc vòng xoay, có thể gỡ bằng `hc rm <t>` (không dùng cho terminal đang `working` hoặc `blocked`).
 2. **Dọn git worktree, nhánh đã tích hợp và `.agents/.runtime/` (do GitHub Copilot phụ trách):**
    - Copilot chỉ xóa worktree/nhánh sau khi xác nhận nhánh đã tích hợp vào `BASE_BRANCH`, sạch sẽ và không còn phiên `agm ps` đang chạy trong thư mục đó:
@@ -462,7 +476,7 @@ Gợi ý: chỉ sửa trong một tệp/module → `none` hoặc `main`; đổi 
 |---|---|---|
 | `main` hoặc `worktree` | Sau khi Copilot tích hợp nhánh vào nhánh chung (`merged`/`deployed`) | Gọi `agm spawn gitnexus-sync --task <ID> --role index --cwd "$PROJECT_DIR"` (chạy `gitnexus analyze --index-only`) hoặc hook `post-merge` |
 | `main` hoặc `worktree` | Khi `gitnexus status` / `staleness.status` báo `behind` hoặc `diverged` | Gọi `gitnexus-sync` làm mới trước khi BOT-CEO/Reviewer đọc `query`/`impact` |
-| `worktree` | Khi tạo worktree (chỉ khi `GITNEXUS_SYNC=worktree`) | `gitnexus analyze --index-only` trong `.wt/<ID>` (`dispatch.sh`) |
+| `worktree` | Khi tạo worktree (nếu `GITNEXUS_SYNC=worktree`, không dùng shared store) | `gitnexus analyze --index-only` trong `.wt/<ID>` (`dispatch.sh`) |
 | `worktree` | Khi thợ đổi cấu trúc (thêm/xóa/đổi tên tệp, đổi chữ ký) rồi cần `impact` lại | Gọi `gitnexus-sync` với `--cwd "$PROJECT_DIR/.wt/<ID>"` |
 | `worktree` | Khi gỡ worktree | `gitnexus clean` trong worktree đó (`cleanup-wt.sh`) |
 
@@ -483,11 +497,14 @@ Làm theo thứ tự, ghi kết quả vào `.agents/decisions/bot-setup.md`:
 
 1. `agm --version` (`agm 0.2.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`, `gitnexus-sync`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
 2. `agm hook install` (nếu dùng Claude Code) và mở `hc run --bg --no-parent --name agm-daemon agm daemon`; mở `agm tui` kiểm tra thấy các phiên đang chạy, hạn mức gói và không báo lỗi cấu hình `providers.toml`.
-3. Chạy thử `agm ask --model gemini-4-argon-medium "Trả lời OK"` và kiểm tra token hiện trong `agm cost --window today --by source`; kiểm `agy models` vẫn còn `claude-opus-5-5-high` (Opus High).
+3. Chạy thử `agm ask --model gemini-4-argon-medium "Trả lời OK"` và kiểm tra token hiện trong `agm cost --window today --by source`; kiểm tra tên slug của **Opus High** qua `agy models`.
 4. Kiểm thử tương tác qua `hc`: mở một phiên thử **Hydrogen Medium** (`docs-hydrogen`) và **Gemini Argon** (`argon-advisor`) trong worktree thử nghiệm, kiểm tra `agm send` đẩy lệnh vào đúng prompt và commit đúng phạm vi.
 5. Thử vòng thợ hoàn chỉnh với ID viết thường `test-1`: `dispatch.sh test-1` tạo worktree `.wt/test-1`, `agm spawn` sinh `w-test-1-1` (và `TEST-2` bị từ chối vì chữ hoa); thợ chạy `agm send user --type HỎI --task test-1 "test"` và bạn trả lời qua `agm reply`; thử ép `agm rotate` trên `w-test-1-1` xem cơ chế bàn giao `.agents/log/test-1.md` + commit hoạt động đúng.
 6. GitHub Copilot tích hợp nhánh thử (sau Review + Hydrogen docs) rồi gọi `gitnexus-sync` (`agm spawn gitnexus-sync --task test-1 --role index`) kiểm tra `gitnexus analyze --index-only` không làm bẩn `AGENTS.md`/`CLAUDE.md`; sau đó dọn worktree/nhánh (`cleanup-wt.sh`) và thử `agm cleanup` dọn terminal đã bàn giao (nếu có).
 7. Khởi động lại máy (hoặc khởi động lại `hc server`): kiểm tra Task Scheduler / `systemd` có bật lại `hc` và `agm daemon`, đồng thời `agm ps` ghi nhận lại trạng thái các terminal.
+8. Trước khi cho Go chạy nền, kiểm đăng nhập và model trên đúng môi trường worker, làm một lượt thử đã được CEO duyệt và đối chiếu Go Console. Diễn tập ba ca: đủ hạn mức → chạy đúng `opencode-go/...`; Go hết/không rõ hạn mức → nguồn dự phòng đã duyệt đủ năng lực hoặc `blocked`; model ngoài gói chưa duyệt → không spawn, hỏi người dùng. Xác minh watcher/rotation không mở model ngoài phần đã duyệt. Không bật Extra Usage để thử.
+9. Qualification riêng Flash worker và Pro Reviewer/worker; nếu Pro viết code phải chọn Reviewer khác họ. Với NVIDIA, thử từng vai chỉ đọc tuần tự sau kiểm cloud/phí/quota; diễn tập deadline, task cũ chưa kết thúc, `429` và đầu ra lệch SHA. Không coi kiểm tài liệu là nghiệm thu runtime.
+10. Tại gốc bộ tài liệu này, chạy `python -B scripts/lint_harness.py` và `python -B -m unittest discover -s tests -v`; xem [HARNESS-LINT.md](docs/HARNESS-LINT.md). Kiểm lỗi phải trả exit code khác 0, không báo xanh khi bỏ qua file thiếu/hỏng.
 
 ## Nguồn tham khảo
 

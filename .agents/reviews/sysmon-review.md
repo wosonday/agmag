@@ -13,7 +13,7 @@
 - [x] (1) Phụ thuộc mới `sysinfo 0.40.4`: feature, số crate kéo thêm, trùng phiên bản lớn, build offline; đọc số liệu không cần crate (ghi nhận)
 - [x] (2) Đúng số liệu: % CPU baseline, RAM/swap, `merge_disks`, tốc độ đọc/ghi, `attribute` theo cây tiến trình, `agent_of`
 - [x] (3) Chi phí/treo: refresh TUI, sleep chặn luồng, lệnh ngoài không hạn chót
-- [ ] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
+- [x] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
 - [ ] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
 - [ ] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
 - [ ] (7) Docs: README.md, README_vi.md, CHANGELOG `[Unreleased]`
@@ -56,6 +56,17 @@
 
 **Phát hiện 3.2 — mức: nhỏ.** `src/tui.rs:220` gọi `SysSampler::new()` đồng bộ trước vòng lặp → khởi động TUI bị chặn ~689 ms (đo ở trên, riêng phần refresh ~489 ms ngoài sleep). Chỉ xảy ra một lần, không chặn, nhưng là độ trễ có thể cảm nhận được trước frame đầu tiên.
 - Cách tái hiện: thêm timestamp trước/sau dòng `SysSampler::new()` trong `src/tui.rs:220` và chạy `agm tui` (cần TTY) — reviewer không chạy TUI theo quy tắc, số liệu lấy từ bench `new()` ở trên.
+
+### (4) Hiển thị — ĐẠT (1 phát hiện nhỏ)
+
+- **`agm sys` màu / NO_COLOR / --json — đạt.** `src/main.rs:265-279`: lệnh `sys` được xử lý trước `run(cli)` (không cần CSDL). `:266` tự bật JSON khi stdout không phải terminal; `:268` dùng `emit(json, &stats, || print_sys(...))`, `emit` (`:684-691`) in `serde_json::to_string_pretty` hoặc gọi hàm human. `print_sys` (`:998-1005`) render qua `render_sys_report(s, tui::pane_width())`, và nếu `NO_COLOR` khác rỗng thì `strip_sgr()` (`:979-995`, bỏ CSI kết thúc bằng `m`) → plain text. Đã chạy `target/debug/agm.exe sys --json`: keys `memory, cpu, disks, agents`, `cores=12, per_core=12`; không có byte `\x1b` trong output JSON, cả khi đặt `NO_COLOR=1`. `agm sys --help` ghi rõ "--json (mặc định khi đầu ra không phải terminal)".
+- **Header + bảng `system` qua `view` — đạt.** `src/dashboard.rs:574-575` chèn `system_summary` vào header **mọi view**; `:586-605` in `cpu n/a | ram n/a | <đĩa đầy nhất> n/a` khi chưa đo, mỗi giá trị tô màu theo ngưỡng. `Section::System` nằm trong `SELECTABLE` (`:1046-1053`), không nằm trong `DEFAULT` (`:1054`), `parse_view("system quota")` được test `tests/sysmon_test.rs:393-401`; nội dung section render qua `render_system` (`:939-951`). Test `tests/sysmon_test.rs:234-301` kiểm header `cpu 23% ram 91% C: 71%`, màu đỏ RAM >85% (`\x1b[91m`), đủ các dòng CPU/RAM/swap/đĩa/agent và SUM.
+- **60/110 cột — đạt (đã đo thực tế).** Chạy chương trình Rust ngoài repo gọi trực tiếp `render_sys_report` và `render_view` với dữ liệu giả (4 và 64 core, đĩa có `also_mounted_at`, 2 agent): ở cả `width=60` và `110`, dòng dài nhất = 59 / 109 (tức `< width`) cho cả `agm sys` lẫn TUI SYSTEM. `pane_width()` (`src/tui.rs:85-90`) đọc `COLUMNS`, clamp 60..200. Mọi dòng report đi qua `bounded_block`→`bounded_styled_line` (`src/dashboard.rs:931-936,1657+`), giữ SGR và cắt theo **cell** Unicode, không cắt grapheme.
+- **64 nhân — đạt.** `core_grid_lines` (`:750-778`) tính `label_w` từ `n-1`, `cell_w`, `cols` rồi `chunks(cols)` → với 64 core ở width 110 ra **13 dòng** lưới `#n ███████▌░ 81%`, mỗi dòng vẫn ≤109 cell (đo ở trên); ở width 60 tự xuống 3 cột/dòng. TUI dùng `core_spark_line` (`:728-747`) một dòng, cũng bị bound bởi `bounded_styled_line`. Không vỡ lưới/spark.
+- **Lọc CSI/OSC — đạt.** Nhãn đĩa trong header (`system_summary:595`), trong DISKS (`:856`) và `also_mounted_at` (`:850`) đều qua `sanitize_one_line`; tên agent (`:909`) qua `one_line` → gọi `sanitize_one_line` (`:1631-1632`). Hàm này (`:1583-1628`) xử lý CSI (`ESC [ ... @..~`), OSC (`ESC ] ... BEL / ESC \`) và cả escape kiểu `ESC SP`; thay control char bằng space. Thử mount giả dài 110 ký tự chứa đường dẫn: header vẫn bị giới hạn 109 cell, không tràn.
+
+**Phát hiện 4.1 — mức: nhỏ.** `src/tui.rs:89` `.clamp(60, 200)` khiến `agm sys` (dùng `pane_width()` ở `src/main.rs:999`) **không bao giờ render dưới 60 cột** dù hàm render `render_sys_report` hỗ trợ width nhỏ hơn (test `tests/sysmon_test.rs:350` tự render ở 40). Trên terminal <60 cột (vd `COLUMNS=40`), các dòng 59 cell bị tràn sang dòng mới. Không ảnh hưởng 60/110 theo yêu cầu, nên nhỏ.
+- Cách tái hiện: `COLUMNS=40 target/debug/agm.exe sys` (cần TTY để lấy human output) → vẫn render ở width 60; so sánh `render_sys_report(&stats, 40)` trực tiếp cho dòng ≤39.
 
 _(các mục còn lại sẽ điền dần)_
 

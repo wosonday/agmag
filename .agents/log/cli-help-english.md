@@ -24,3 +24,6 @@
 - cargo fmt -- src/main.rs
 - Result: cargo test --offline --test cli_test help -> 4 passed (including the 3 new help tests).
 - Sample help: root lists all commands in English; send --help shows code gloss+aliases; kill --help shows confirmation warning; udget set --help shows English arg descriptions.
+
+### Step 3: CHANGELOG
+- Added Unreleased/### Thay đổi bullet: "Help CLI chuyển sang tiếng Anh."

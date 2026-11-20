@@ -415,6 +415,7 @@ fn render_stale_quota_line_fits_60_and_110() -> anyhow::Result<()> {
         reset_passed: false,
         stale: true,
         observed_age_s: 90_000, // 1d01h
+        limited: false,
     });
     for w in [60usize, 110usize] {
         let plain = strip_ansi(&render(&snap, w));
@@ -476,6 +477,7 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
         reset_passed: true,
         stale: false,
         observed_age_s: 0,
+        limited: false,
     });
     snap.budgets.push(agmag::dashboard::BudgetView {
         scope: "task:over".into(),
@@ -924,5 +926,72 @@ fn where_shows_herdr_workspace_and_tab() -> anyhow::Result<()> {
     // No herdr location → working folder name.
     assert_eq!(agmag::dashboard::where_label("", r"D:\x\agmag"), "agmag");
     assert_eq!(agmag::dashboard::where_label("  ", "/r/repo"), "repo");
+    Ok(())
+}
+
+#[test]
+fn render_opencode_go_quota_labels_limited_and_stale_fit_60_110() -> anyhow::Result<()> {
+    use agmag::dashboard::render_view;
+    let store = seeded()?;
+    let mut snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    snap.quota = vec![
+        QuotaRow {
+            provider: "opencode-go".into(),
+            window_minutes: 300,
+            used_percent: 100.0,
+            left_percent: 0.0,
+            resets_at_s: 2_000_000,
+            observed_ms: 900_000_000,
+            reset_passed: false,
+            stale: false,
+            observed_age_s: 100,
+            limited: true,
+        },
+        QuotaRow {
+            provider: "opencode-go".into(),
+            window_minutes: 10080,
+            used_percent: 40.0,
+            left_percent: 60.0,
+            resets_at_s: 2_000_000,
+            observed_ms: 900_000_000,
+            reset_passed: false,
+            stale: false,
+            observed_age_s: 100,
+            limited: false,
+        },
+        QuotaRow {
+            provider: "opencode-go".into(),
+            window_minutes: 43200,
+            used_percent: 20.0,
+            left_percent: 80.0,
+            resets_at_s: 2_000_000,
+            observed_ms: 900_000_000,
+            reset_passed: false,
+            stale: true,
+            observed_age_s: 90_000,
+            limited: false,
+        },
+    ];
+    for w in [60usize, 110usize] {
+        let raw = render_view(&snap, w, &[agmag::dashboard::Section::Quota], None);
+        let plain = strip_ansi(&raw);
+        for needle in ["opencode-go", "5h", "7d", "mo", "limited", "stale"] {
+            assert!(
+                plain.contains(needle),
+                "missing '{needle}' at width {w} in:\n{plain}"
+            );
+        }
+        assert!(
+            raw.contains("\x1b[91m"),
+            "limited label must be red at width {w}:\n{raw}"
+        );
+        for (i, line) in plain.lines().enumerate() {
+            assert!(
+                line.chars().count() <= w,
+                "width {w} overflow at line {i} ({} chars):\n{line}\nfull:\n{plain}",
+                line.chars().count()
+            );
+        }
+    }
     Ok(())
 }

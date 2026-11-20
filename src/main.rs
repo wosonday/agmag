@@ -348,10 +348,15 @@ fn run(cli: Cli) -> Result<()> {
                 cfg.policy.codex_quota_poll_min,
                 std::sync::Arc::new(agmag::codex_quota::fetch_usage),
             );
+            let mut opencode_quota = agmag::opencode_quota::OpenCodeQuotaPoller::new(
+                cfg.policy.opencode_quota_poll_min,
+                std::sync::Arc::new(agmag::opencode_quota::fetch_usage),
+            );
             ops::daemon_loop(&store, &cfg, interval, |s| {
                 scan(s, now_ms() - SCAN_DAYS * DAY_MS)?;
                 agy_quota.tick(s, now_ms())?;
-                codex_quota.tick(s, now_ms())
+                codex_quota.tick(s, now_ms())?;
+                opencode_quota.tick(s, now_ms())
             })
         }
         Cmd::Ps { all } => {
@@ -521,6 +526,16 @@ fn run(cli: Cli) -> Result<()> {
                 {
                     Ok(_) => {}
                     Err(e) => eprintln!("agm: could not read codex quota: {e:#}"),
+                }
+                match agmag::opencode_quota::fetch_usage()
+                    .and_then(|out| agmag::opencode_quota::record_usage(&store, &out, now))
+                {
+                    Ok(p) if p.unknown > 0 => eprintln!(
+                        "agm: skipped {} unrecognized opencode-go quota meter(s)",
+                        p.unknown
+                    ),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("agm: could not read opencode-go quota: {e:#}"),
                 }
             }
             let cfg_loaded = cfg()?;
@@ -872,7 +887,9 @@ fn print_summary(sum: &UsageSummary) {
 }
 
 fn window_label(minutes: u32) -> String {
-    if minutes.is_multiple_of(1440) {
+    if minutes == 43200 {
+        "mo".to_string()
+    } else if minutes.is_multiple_of(1440) {
         format!("{}d", minutes / 1440)
     } else if minutes.is_multiple_of(60) {
         format!("{}h", minutes / 60)
@@ -909,15 +926,23 @@ fn quota_table(rows: &[report::QuotaRow], now_s: i64) -> Table {
             0.0
         };
         let filled = ((left / 10.0).round() as usize).min(10);
+        let limited = if r.limited {
+            " \x1b[91mlimited\x1b[0m"
+        } else {
+            ""
+        };
+        let left_text = if r.left_percent.is_finite() {
+            format!("{:.0}%{limited}", r.left_percent)
+        } else if r.limited {
+            "?\x1b[91m limited\x1b[0m".to_string()
+        } else {
+            "?".into()
+        };
         t.add_row(vec![
             r.provider.clone(),
             window_label(r.window_minutes),
             format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled)),
-            if r.left_percent.is_finite() {
-                format!("{:.0}%", r.left_percent)
-            } else {
-                "?".into()
-            },
+            left_text,
             reset,
         ]);
     }
@@ -943,6 +968,7 @@ mod tests {
             reset_passed: false,
             stale,
             observed_age_s: age_s,
+            limited: false,
         }
     }
 

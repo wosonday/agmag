@@ -96,7 +96,7 @@ The first run is a bit slow (it reads the last 7 days of logs); after that only 
 |---|---|---|
 | **Claude Code** | Optional. For **5h/7d subscription quota %** (and to use `agm manage`), run `agm hook install` **once** (applies to every Claude session) | Claude Code's bottom status line: `Opus 5.5 · ctx 34% · 5h 76% left · 7d 59% left`; and every `agm` command |
 | **Codex** | Nothing (quota is read from Codex logs; the daemon can also refresh it from `codex app-server` every 15 min, or now with `agm quota --refresh`) | `agm quota / ls / tui` |
-| **OpenCode** | Nothing (agm reads `opencode.db`, read-only) | `agm ls / cost / tui` |
+| **OpenCode** | Nothing (agm reads `opencode.db`, read-only). Go plan quota (5h/7d/30d) is read by the daemon every 15 min or with `agm quota --refresh` via `opencode api GET /api/experimental/usage/limits`; [Go Console](https://opencode.ai/console/go) remains the place for Extra Usage/budget | `agm quota / ls / cost / tui` |
 | **agy (Gemini)** | Nothing. agm reads `transcript.jsonl` of every interactive `antigravity-cli` session and `conversation_summaries.db` (read-only, for the working directory); `agm ask` is recorded separately and never double-counted. **Plan quota** (Gemini / Claude-GPT via agy / Argon) is read by the daemon every 15 min via `agy --print /usage` (no tokens), or now with `agm quota --refresh` | `agm ls / cost / quota / tui` |
 
 > `agm hook install` adds a `statusLine` to `~/.claude/settings.json`. If you already have your own statusLine, it refuses and does not overwrite it — call `agm hook statusline` from your own script instead.
@@ -208,7 +208,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 
 | Command | Purpose |
 |---|---|
-| `agm quota [--refresh]` | Subscription quota left per time window (`--refresh`: read agy and Codex quota now; stale rows are marked in the table, the TUI and in `--json`) |
+| `agm quota [--refresh]` | Subscription quota left per time window (`--refresh`: read agy, Codex, and OpenCode Go quota now; stale rows are marked in the table, the TUI and in `--json`) |
 | `agm ls [--days N]` | Sessions: source, model, tokens, % context, warnings |
 | `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Token totals with a bold **SUM** row; 24h/today/this-month summary + 4-month bar chart in local time. **USD** = tokens × each model's list API price for every model (subscriptions included, as what the usage would cost on the API); `≥ $x` when some tokens have no known price, `?` when none do. `billed (API)` in `--summary` is what API-billed models actually cost |
 | `agm log <session> [--limit N] [--full]` | Turn summaries (`--full`: raw log lines, Codex/Claude only) |

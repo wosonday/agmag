@@ -822,7 +822,9 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
                 }
             }
             for q in &s.quota {
-                let win = if q.window_minutes % 1440 == 0 {
+                let win = if q.window_minutes == 43200 {
+                    "mo".to_string()
+                } else if q.window_minutes % 1440 == 0 {
                     format!("{}d", q.window_minutes / 1440)
                 } else {
                     format!("{}h", q.window_minutes / 60)
@@ -836,15 +838,21 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
                         &format!("resets in {}h{:02}m", left / 3600, left % 3600 / 60),
                     )
                 };
-                // 10 cột: đủ cho `agy-gemini` / `agy-argon` mà không bị cắt.
-                let prov = one_line(&q.provider, 10);
+                // 11 cột: đủ cho `opencode-go`; vẫn gọn ở 60 cột.
+                let prov = one_line(&q.provider, 11);
+                let empty_bar = paint(GRAY, "░░░░░░░░░░");
+                let limited_tag = if q.limited {
+                    format!(" {}", paint(BRIGHT_RED, "limited"))
+                } else {
+                    String::new()
+                };
                 if q.stale {
                     let age = format_age_s(q.observed_age_s);
                     out += &format!(
-                        "  {} {}  {} {}  {reset}\n",
-                        paint(WHITE, &pad_cells(&prov, 10)),
+                        "  {} {}  {} {}{limited_tag}  {reset}\n",
+                        paint(WHITE, &pad_cells(&prov, 11)),
                         paint(CYAN, &format!("{:>3}", win)),
-                        paint(GRAY, "··········"),
+                        empty_bar,
                         paint(GRAY, &format!("stale · seen {age} ago")),
                     );
                 } else if q.left_percent.is_finite() {
@@ -852,17 +860,17 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
                     let col = pct_color(100.0 - q.left_percent);
                     let pct_str = paint(col, &format!("{:>3.0}% left", q.left_percent));
                     out += &format!(
-                        "  {} {}  {} {pct_str}  {reset}\n",
-                        paint(WHITE, &pad_cells(&prov, 10)),
+                        "  {} {}  {} {pct_str}{limited_tag}  {reset}\n",
+                        paint(WHITE, &pad_cells(&prov, 11)),
                         paint(CYAN, &format!("{:>3}", win)),
                         colored_bar(q.left_percent, col),
                     );
                 } else {
                     out += &format!(
-                        "  {} {}  {} {}  {reset}\n",
-                        paint(WHITE, &pad_cells(&prov, 10)),
+                        "  {} {}  {} {}{limited_tag}  {reset}\n",
+                        paint(WHITE, &pad_cells(&prov, 11)),
                         paint(CYAN, &format!("{:>3}", win)),
-                        paint(GRAY, "··········"),
+                        empty_bar,
                         paint(GRAY, "   ?"),
                     );
                 }

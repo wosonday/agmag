@@ -694,3 +694,131 @@ fn quota_rows_carry_stale_and_age() -> anyhow::Result<()> {
     assert_eq!(rows[0].observed_age_s, 30 * 60);
     Ok(())
 }
+
+#[test]
+fn opencode_go_quota_stale_by_age_and_new_usage() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let now_ms = 1_800_000_000_000_i64;
+    let cfg = Config::builtin();
+    // Seed opencode-go quota observed long ago -> stale by age.
+    store.insert_quota(&QuotaSnapshot {
+        provider: "opencode-go".into(),
+        ts_ms: now_ms - 61 * 60_000,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 40.0,
+            resets_at_s: now_ms / 1000 + 86_400,
+        }],
+    })?;
+    let rows = report::quota_with_config(&store, &cfg, now_ms / 1000)?;
+    let row = rows
+        .iter()
+        .find(|r| r.provider == "opencode-go" && r.window_minutes == 300)
+        .unwrap();
+    assert!(row.stale, "quota older than threshold must be stale");
+
+    // Fresh quota but newer usage in same opencode-go package -> stale.
+    let observed_ms = now_ms - 5 * 60_000;
+    store.insert_quota(&QuotaSnapshot {
+        provider: "opencode-go".into(),
+        ts_ms: observed_ms,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 40.0,
+            resets_at_s: now_ms / 1000 + 86_400,
+        }],
+    })?;
+    let sid = store.session_id_for_path(Source::OpenCode, "opencode://go-session")?;
+    store.upsert_usage(
+        sid,
+        &UsageRecord {
+            dedupe_key: "k1".into(),
+            ts_ms: observed_ms + 60_000,
+            model: Some("opencode-go/gpt-5.4".into()),
+            usage: Usage {
+                output: 10,
+                ..Default::default()
+            },
+        },
+    )?;
+    let rows = report::quota_with_config(&store, &cfg, now_ms / 1000)?;
+    let row = rows
+        .iter()
+        .find(|r| r.provider == "opencode-go" && r.window_minutes == 300)
+        .unwrap();
+    assert!(
+        row.stale,
+        "newer opencode-go/* usage after observed_ms must mark stale"
+    );
+
+    // Usage of a different package must not mark opencode-go stale.
+    let store2 = Store::open_in_memory()?;
+    store2.insert_quota(&QuotaSnapshot {
+        provider: "opencode-go".into(),
+        ts_ms: observed_ms,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 40.0,
+            resets_at_s: now_ms / 1000 + 86_400,
+        }],
+    })?;
+    let sid2 = store2.session_id_for_path(Source::OpenCode, "opencode://other")?;
+    store2.upsert_usage(
+        sid2,
+        &UsageRecord {
+            dedupe_key: "k2".into(),
+            ts_ms: observed_ms + 60_000,
+            model: Some("openai/gpt-6.1-sol".into()),
+            usage: Usage {
+                output: 10,
+                ..Default::default()
+            },
+        },
+    )?;
+    let rows = report::quota_with_config(&store2, &cfg, now_ms / 1000)?;
+    let row = rows
+        .iter()
+        .find(|r| r.provider == "opencode-go" && r.window_minutes == 300)
+        .unwrap();
+    assert!(
+        !row.stale,
+        "usage outside opencode-go package must not stale opencode-go"
+    );
+    Ok(())
+}
+
+#[test]
+fn opencode_go_budget_provider_window() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let now_ms = 1_800_000_000_000_i64;
+    let cfg = Config::builtin();
+    store.insert_quota(&QuotaSnapshot {
+        provider: "opencode-go".into(),
+        ts_ms: now_ms - 60_000,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 84.0,
+            resets_at_s: now_ms / 1000 + 3600,
+        }],
+    })?;
+    let pct = agmag::policy::provider_percent(&store, &cfg, "opencode-go", 300, now_ms)?;
+    assert_eq!(pct, Some(84.0));
+
+    // Stale data treated as no data (same as Codex).
+    let store2 = Store::open_in_memory()?;
+    store2.insert_quota(&QuotaSnapshot {
+        provider: "opencode-go".into(),
+        ts_ms: now_ms - 61 * 60_000,
+        windows: vec![QuotaWindow {
+            window_minutes: 300,
+            used_percent: 84.0,
+            resets_at_s: now_ms / 1000 + 3600,
+        }],
+    })?;
+    let pct = agmag::policy::provider_percent(&store2, &cfg, "opencode-go", 300, now_ms)?;
+    assert_eq!(
+        pct, None,
+        "stale opencode-go quota must be treated as no data"
+    );
+    Ok(())
+}

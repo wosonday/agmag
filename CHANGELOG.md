@@ -26,6 +26,7 @@
 
 - Hạn mức gói của agy: ba provider `agy-gemini`, `agy-3p` (Claude/GPT qua agy, tách khỏi hạn mức Claude Code) và `agy-argon`, đọc qua `agy --print /usage` (không tốn token). Daemon đọc trên luồng riêng mỗi `[policy].agy_quota_poll_min` phút (mặc định 15, `0` = tắt); `agm quota --refresh` đọc ngay. Dùng được cho ngân sách, vd `agm budget set provider:agy-gemini:10080 --soft 80 --hard 95`.
 - Hạn mức gói Codex từ nguồn tươi (0 token): `agm quota --refresh` và daemon (`[policy].codex_quota_poll_min`, mặc định 15 phút) đọc `codex app-server` (`account/rateLimits/read`), ghi provider `codex` (cửa sổ 300/10080 phút); lỗi/không đăng nhập/timeout không ghi dữ liệu giả. Thêm cấu hình `[policy].quota_stale_min` (mặc định 60 phút) và `[policy].codex_quota_poll_min`.
+- Hạn mức gói OpenCode Go (0 token): `agm quota --refresh` và daemon (`[policy].opencode_quota_poll_min`, mặc định 15 phút) đọc `opencode api GET /api/experimental/usage/limits`, ghi provider `opencode-go` với 3 cửa sổ `5h`/`7d`/`mo` (300/10080/43200 phút). Hiển thị nhãn `limited` (đỏ) khi bị chặn; dữ liệu stale (tuổi hoặc usage `opencode-go/*` mới sau lần quan sát) được coi như chưa có cho policy/ngân sách. Hỗ trợ ngân sách `provider:opencode-go:<window>` (vd 300). Go Console vẫn là nơi xem Extra Usage/budget.
 
 ### Sửa lỗi
 

@@ -131,6 +131,9 @@ pub struct Policy {
     /// Phút giữa hai lần daemon đọc hạn mức Codex (`codex app-server`); 0 = tắt.
     #[serde(default = "default_codex_quota_poll_min")]
     pub codex_quota_poll_min: u64,
+    /// Phút giữa hai lần daemon đọc hạn mức OpenCode Go (`opencode api …/usage/limits`); 0 = tắt.
+    #[serde(default = "default_opencode_quota_poll_min")]
+    pub opencode_quota_poll_min: u64,
 }
 
 impl Default for Policy {
@@ -146,6 +149,7 @@ impl Default for Policy {
             agy_quota_poll_min: 15,
             quota_stale_min: 60,
             codex_quota_poll_min: 15,
+            opencode_quota_poll_min: 15,
         }
     }
 }
@@ -155,6 +159,10 @@ fn default_quota_stale_min() -> u64 {
 }
 
 fn default_codex_quota_poll_min() -> u64 {
+    15
+}
+
+fn default_opencode_quota_poll_min() -> u64 {
     15
 }
 

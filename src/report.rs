@@ -108,6 +108,8 @@ pub struct QuotaRow {
     pub stale: bool,
     /// Tuổi dữ liệu (giây) kể từ `observed_ms`.
     pub observed_age_s: i64,
+    /// Cửa sổ đang bị chặn bởi nhà cung cấp (vd OpenCode Go `limited: true`).
+    pub limited: bool,
 }
 
 /// % đã dùng còn hiệu lực: cửa sổ đã reset mà chưa có số mới thì số cũ không còn đúng → 0.
@@ -708,9 +710,16 @@ pub fn quota_with_config(
         let used_percent: f64 = r.get(2)?;
         let observed_ms: i64 = r.get(4)?;
         let provider: String = r.get(0)?;
+        let window_minutes: u32 = r.get(1)?;
+        let limited = store
+            .setting(&format!("quota_limited:{provider}:{window_minutes}"))
+            .ok()
+            .flatten()
+            .as_deref()
+            == Some("1");
         Ok(QuotaRow {
             provider: provider.clone(),
-            window_minutes: r.get(1)?,
+            window_minutes,
             used_percent,
             left_percent: left_percent(used_percent, resets_at_s, now_s),
             resets_at_s,
@@ -718,6 +727,7 @@ pub fn quota_with_config(
             reset_passed: resets_at_s <= now_s,
             stale: quota_is_stale(store, cfg, &provider, observed_ms, now_ms),
             observed_age_s: (now_s - observed_ms / 1000).max(0),
+            limited,
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -746,10 +756,10 @@ fn package_has_usage_after(
     provider: &str,
     observed_ms: i64,
 ) -> bool {
-    // Chỉ codex và claude có ánh xạ gói ↔ usage. Khác → false.
     let is_codex = provider == "codex";
     let is_claude = provider == "claude";
-    if !is_codex && !is_claude {
+    let is_opencode_go = provider == "opencode-go";
+    if !is_codex && !is_claude && !is_opencode_go {
         return false;
     }
     let mut stmt = match store.conn().prepare(
@@ -773,7 +783,7 @@ fn package_has_usage_after(
                             .model(&model)
                             .map(|m| m.provider == "codex")
                             .unwrap_or(false)))
-        } else {
+        } else if is_claude {
             source == "claude"
                 || (source == "opencode"
                     && (model.starts_with("anthropic/")
@@ -781,6 +791,10 @@ fn package_has_usage_after(
                             .model(&model)
                             .map(|m| m.provider == "claude")
                             .unwrap_or(false)))
+        } else {
+            // opencode-go: mọi model OpenCode có tiền tố `opencode-go/` (kể cả biến thể -free)
+            // được coi là cùng gói khi không chắc chắn từ API.
+            source == "opencode" && model.starts_with("opencode-go/")
         };
         if belongs {
             return true;

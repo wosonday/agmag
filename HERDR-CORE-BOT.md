@@ -24,7 +24,7 @@ Thay vì viết script bash tự bắt `hc events --json`, tự đếm `jq` và 
 | **`agm` (`agmag` v0.3.0)** | Theo dõi `hc events`, đo token/hạn mức gói (Claude/Codex/OpenCode/`agy`), hộp thư người dùng, gửi tin có ghi sổ, giới hạn `max_workers` và ngân sách, xoay vòng thợ OpenCode & bàn giao phiên Claude/Codex, bảo vệ không tự kill Claude/Codex | `agm daemon`, `agm tui`, `agm spawn`, `agm send`, `agm inbox`, `agm reply`, `agm done`, `agm ask`, `agm manage`, `agm rotate`, `agm cleanup`, `agm budget`, `agm policy`, `agm hook` |
 | **Wrapper worktree (tùy chọn)** | Tạo `git worktree`, kiểm tra `tier:` / `skills:` trong `.agents/tasks/<ID>.md`, chạy `gitnexus analyze`, rồi gọi `agm spawn`; tự nhặt `.agents/inbox/*.md` | `dispatch.sh` (hoặc PowerShell tương đương), `cleanup-wt.sh` |
 
-**Phân biệt ngân sách:** Claude CEO phân bổ kinh phí; [Go Console](https://opencode.ai/console/go) là nguồn kiểm hạn mức Go. `agm` đo token và thực thi các ngưỡng đã cấu hình, không thay CEO duyệt nguồn tính phí hoặc tự chặn theo hạn mức Go. `agm 0.2.0` trên môi trường kiểm ngày 2026-11-20 chưa có Go trong `agm quota`.
+**Phân biệt ngân sách:** Claude CEO phân bổ kinh phí; [Go Console](https://opencode.ai/console/go) là nguồn kiểm hạn mức Go và nơi xem Extra Usage/budget. `agm quota` đã đọc được hạn mức Go (5h/tuần/tháng, provider `opencode-go`) qua `opencode api GET /api/experimental/usage/limits`; `agm` đo token và thực thi các ngưỡng đã cấu hình, không thay CEO duyệt nguồn tính phí.
 
 **Đo OpenCode theo nguồn tính phí:** `agm` lưu model OpenCode dạng `providerID/id` (vd `opencode-go/deepseek-v4-pro`, `nvidia-kimi/moonshotai/kimi-k3.1-pro`, `openai/gpt-6.1-sol`), nên `agm cost --by model` tách được Go, NVIDIA, Zen free và OpenAI chạy qua OpenCode; model mới không cần khai báo trước. Billing lấy theo model đã khai trong `providers.toml`, nếu không thì theo tiền tố provider (`[providers."opencode-go"] billing = "subscription"`); provider chưa khai (như NVIDIA) để là chưa rõ. Cột **USD** của `agm cost`/`agm tui` = token × giá API niêm yết của từng model (`assets/prices.toml`, ghi đè bằng `[models."<id>".price]`), tính cả gói tháng như *giá trị nếu dùng qua API* — **không phải hóa đơn**; tiền thực trả của model tính theo API nằm ở cột `billed (API)` của `agm cost --summary`. `≥ $x` nghĩa là còn token chưa biết giá.
 
@@ -99,7 +99,7 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000                 # đơ
 agm budget set provider:codex:10080 --soft 80 --hard 95                   # cảnh báo % hạn mức tuần
 ```
 
-`agm spawn` kiểm `max_workers` cho vai `worker` và trần `task:<ID>` theo token đã ghi nhận. `provider:` chỉ có giá trị khi `agm` có số liệu cho đúng nguồn/cửa sổ; không khai báo `provider:opencode-go:...` rồi coi đó là cổng chặn Go. `[policy].manager` chỉ là một đích nhận cảnh báo, không phải bộ phân bổ nhiều lane. Xem [quy tắc kinh phí của CEO](AGENTS-TUTORIAL.md#311-điều-phối-kinh-phí-ai).
+`agm spawn` kiểm `max_workers` cho vai `worker` và trần `task:<ID>` theo token đã ghi nhận. `provider:` chỉ có giá trị khi `agm` có số liệu cho đúng nguồn/cửa sổ; ví dụ `provider:opencode-go:300` có giá trị khi daemon/`agm quota --refresh` đọc được hạn mức Go (dữ liệu stale được coi như chưa có). `[policy].manager` chỉ là một đích nhận cảnh báo, không phải bộ phân bổ nhiều lane. Xem [quy tắc kinh phí của CEO](AGENTS-TUTORIAL.md#311-điều-phối-kinh-phí-ai).
 
 Còn `.agents/bot.env` trong từng dự án chỉ giữ phần Git/worktree cho wrapper:
 

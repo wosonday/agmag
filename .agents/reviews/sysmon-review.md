@@ -15,7 +15,7 @@
 - [x] (3) Chi phí/treo: refresh TUI, sleep chặn luồng, lệnh ngoài không hạn chót
 - [x] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
 - [x] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
-- [ ] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
+- [x] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
 - [ ] (7) Docs: README.md, README_vi.md, CHANGELOG `[Unreleased]`
 - [ ] (8) `cargo test --offline` + `cargo clippy --offline --all-targets -- -D warnings`
 
@@ -74,6 +74,14 @@
 - **`agm sys` chạy trước khi mở CSDL.** `src/main.rs:264-280`: nhánh `Cmd::Sys` nằm trước `run(cli)` (`:281`) — nơi `agm_home()`/config/`Store::open` bắt đầu (`:290-294`). Comment `:264` ghi rõ "No database needed". `read_once()`/`SysSampler` (`src/sysmon.rs:290-434`) chỉ gọi sysinfo, không có `store`/`conn`/`INSERT`/`execute` nào (đã `git grep`).
 - **Số liệu chỉ nằm trong bộ nhớ.** `Snapshot.system: Option<SysStats>` (`src/dashboard.rs:79`) được gán ở `src/tui.rs:232` rồi đọc để render (`:574-575`, `:1537`); `snapshot()` (`:82+`) và `render_view()` (`:1124+`) chỉ `query_row` đọc dữ liệu cũ. `git diff main HEAD -- '*.rs' | Select-String '^\+.*(set_setting|INSERT INTO|UPDATE |execute\(|store\.)'` → **không có dòng nào**. Hai `store.set_setting` trong `src/tui.rs:421,442` là mã cũ (`policy`, `view`) không nằm trong diff.
 - **Thử nghiệm:** đặt `AGM_HOME` trỏ tới một **tệp thường** (CSDL không thể mở) rồi chạy `agm.exe sys --json` → vẫn in JSON đầy đủ, `EXIT=0`. Khớp nhật ký `.agents/log/sysmon.md`: "No history in the database (no migration)" và "agm sys (handled before the database opens)".
+
+### (6) Ghép với `main` / đối chiếu bản gốc — ĐẠT (0 phát hiện)
+
+- **`src/main.rs` — chỉ thêm, không đụng lệnh cũ.** Diff có đúng 4 hunk: thêm biến thể `Cmd::Sys` (`:191`), nhánh xử lý `sys` trước `run(cli)` (`:261-280`), nhánh `Cmd::Sys => unreachable!()` trong match (`:340`), và hai hàm mới `strip_sgr`/`print_sys` (`:979-1005`) đặt **trước** `#[cfg(test)] mod tests` (`:1007`) đúng như brief. Không có dòng nào sửa `Cmd::Quota`, `quota_table`, hay `emit`.
+- **`src/tui.rs` — 3 dòng đổi.** `pane_width()` đổi `fn` → `pub(crate) fn` (`:85`); thêm `let mut sampler = SysSampler::new()` (`:220`); trong vòng lặp đổi `Ok(s) => render_view(...)` thành `Ok(mut s) => { s.system = ...; render_view(...) }` (`:230-234`). Không đụng `scan`, `snapshot`, `load_view`, xử lý phím hay command bar.
+- **`src/dashboard.rs` — mở rộng, không xóa logic.** Các dòng bị xóa trong toàn file chỉ là: `let items = [...]` → `let mut items = vec![...]` trong `render_header` (`:569-577`), `ALL: [Section; 6]` → `[Section; 7]` và `SELECTABLE: [Section; 5]` → `[Section; 6]` để thêm `System` (`:1036-1053`). `Section::DEFAULT` giữ nguyên `[Quota, Terminals, Inbox]` (`:1054`), khớp test `tests/sysmon_test.rs:400`. Không có hunk nào gần code `quota`/`opencode-go`.
+- **Test xác nhận luồng cũ:** `cargo test --offline --test dashboard_test --bin agm` → `render_opencode_go_quota_labels_limited_and_stale_fit_60_110 ... ok`, `render_stale_quota_line_fits_60_and_110 ... ok`, `view_command_picks_up_to_three_sections ... ok`, `plan_quota_shows_percent_left ... ok`; bin `agm` 5/5, dashboard 25/25. Cộng `sysmon_test` 9/9 → tổng 39 test nhắm mục này đạt.
+- **Đối chiếu `feat/sysmon-orig` (`9de7b5c`, gốc từ `a7ce50f`)**: `git diff feat/sysmon-orig HEAD -- src/sysmon.rs` chỉ là **thay đổi định dạng `cargo fmt`** (gộp/tách dòng, sắp xếp import `MINIMUM_CPU_UPDATE_INTERVAL`) — không khác biệt ngữ nghĩa. Tên 12 hàm test trong `tests/sysmon_test.rs` **giống hệt** hai nhánh; tập hàm sys-specific trong `dashboard.rs` (`render_sys_report`, `render_system`, `machine_lines`, `core_grid_lines`, `core_spark_line`, `disk_lines`, `agent_lines`, `system_summary`, `system_verdict`) **giống hệt**. Không thấy phần nào bị rơi khi apply lại lên `main` `0385149`.
 
 _(các mục còn lại sẽ điền dần)_
 

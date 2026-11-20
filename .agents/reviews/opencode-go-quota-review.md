@@ -12,7 +12,7 @@
 
 - [x] (1) Parse: percent = phần đã dùng; 300/10080/43200; kẹp 0–100; null/thiếu/meter lạ → không ghi, không giả 0%/100%
 - [x] (2) Fetch: hạn chót chung mọi bước, kill cả cây, không join luồng đọc khi quá hạn, test treo có biên dư
-- [ ] (3) Bảng + TUI: nhãn 5h/7d/mo, limited đỏ, stale, dòng stale không hiện như số tươi, 60/110 cột
+- [x] (3) Bảng + TUI: nhãn 5h/7d/mo, limited đỏ, stale, dòng stale không hiện như số tươi, 60/110 cột
 - [ ] (4) Stale opencode-go theo usage `opencode-go/*`
 - [ ] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
 - [ ] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
@@ -43,6 +43,16 @@
 
 **Phát hiện 2.2 — mức: nhỏ.** `src/opencode_quota.rs:162` và `:170`: thông báo lỗi ghi **"quá thời hạn sau 8 s"** trong khi hạn chót thực tế là 5 s (`:113`) và decision `.agents/decisions/opencode-go-quota.md:36` cũng ghi 5 s. Số 8 trong thông báo trùng với ngưỡng assert của test, dễ gây hiểu nhầm là hạn chót 8 s.
 - Cách tái hiện: chạy `cargo test --offline --test opencode_quota_test fetch_usage_hanging_binary_times_out_and_kills_tree -- --nocapture`; lỗi in ra "... quá thời hạn sau 8 s" dù hàm trả về sau ~5 s.
+
+### (3) Bảng `agm quota` + TUI — ĐẠT (1 phát hiện nhỏ)
+
+- **Nhãn 5h/7d/mo — đạt.** CLI `src/main.rs:889-899` (`43200 → "mo"` đứng trước nhánh `is_multiple_of(1440)`, `10080 → "7d"`, `300 → "5h"`); TUI `src/dashboard.rs:824-831` cùng quy ước. Test `tests/dashboard_test.rs:933-997` kiểm cả 3 nhãn cho `opencode-go`.
+- **limited đỏ — đạt.** CLI `src/main.rs:929-940` dùng `\x1b[91m`; TUI `src/dashboard.rs:844-848` dùng `BRIGHT_RED` (`\x1b[91m`). Test `tests/dashboard_test.rs:984-987` assert có mã đỏ.
+- **Stale không hiện như số tươi — đạt.** CLI `src/main.rs:911-922`: thay bar/`%` bằng `··········` + `stale · seen <age> ago`; TUI `src/dashboard.rs:849-857`: empty bar + chữ xám `GRAY`, không in `% left`. Test `src/main.rs:975-997` và `tests/dashboard_test.rs:403-450,984-993` khẳng định không có `78%`/`% left` trên dòng stale.
+- **60/110 cột — đạt.** `tests/dashboard_test.rs:933-997` render TUI ở 60 và 110, assert mọi dòng `line.chars().count() <= w`; `:403-450` kiểm riêng dòng stale ở 60/110; `:367-399` kiểm command bar. Không tràn.
+
+**Phát hiện 3.1 — mức: nhỏ.** `src/main.rs:911-922`: nhánh stale của bảng CLI `continue` **trước** khi tính `limited` (`:929`), nên một dòng vừa `stale` vừa `limited: true` **không** hiện nhãn `limited` đỏ trên `agm quota`. TUI (`src/dashboard.rs:852`) vẫn chèn `limited_tag` vào cả dòng stale → hai chế độ hiển thị không nhất quán, và yêu cầu "khi `limited: true` thì thêm nhãn `limited`" không được thỏa mãn đầy đủ ở CLI. Dữ liệu stale đã bị coi như "không có số tươi", nên không chặn.
+- Cách tái hiện: gieo `QuotaRow { provider: "opencode-go", window_minutes: 300, stale: true, limited: true, ... }`, chạy `agm quota` (không `--json`) → dòng đó chỉ có `stale · seen … ago`; chạy `agm tui` → cùng dòng có thêm `limited` đỏ. Có thể gọi hàm `quota_table` trong unit test của `src/main.rs` để so sánh chuỗi.
 
 ## KẾT LUẬN
 

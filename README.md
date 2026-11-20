@@ -67,12 +67,13 @@ agm cost           # token totals by model  (--by day | month | source | cwd, --
 agm cost --summary # 24h / today / this month + 4-month chart
 ```
 
-Example `agm quota` (columns: plan, window, % left, time until reset):
+Example `agm quota` (columns: plan, window, % left, status, time until reset). Stale rows show `stale · seen <age> ago` instead of a fresh bar/percentage — the same label as the TUI:
 
 ```
-plan    window  left
-codex   5h      █████████░  86%   in 4h38m
-codex   7d      █░░░░░░░░░  7%    in 115h41m
+plan    window  left         status                   reset
+codex   5h      █████████░   86%                     in 4h38m
+codex   7d      █░░░░░░░░░   7%                      in 115h41m
+codex   5h      ··········   stale · seen 1d05h ago  reset passed
 ```
 
 The first run is a bit slow (it reads the last 7 days of logs); after that only new data is read. For older data in the monthly statistics: `agm scan --since 2026-08-01` (or let `agm tui` backfill automatically).
@@ -207,7 +208,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 
 | Command | Purpose |
 |---|---|
-| `agm quota [--refresh]` | Subscription quota left per time window (`--refresh`: read agy and Codex quota now; stale rows are marked in the TUI and in `--json`) |
+| `agm quota [--refresh]` | Subscription quota left per time window (`--refresh`: read agy and Codex quota now; stale rows are marked in the table, the TUI and in `--json`) |
 | `agm ls [--days N]` | Sessions: source, model, tokens, % context, warnings |
 | `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Token totals with a bold **SUM** row; 24h/today/this-month summary + 4-month bar chart in local time. **USD** = tokens × each model's list API price for every model (subscriptions included, as what the usage would cost on the API); `≥ $x` when some tokens have no known price, `?` when none do. `billed (API)` in `--summary` is what API-billed models actually cost |
 | `agm log <session> [--limit N] [--full]` | Turn summaries (`--full`: raw log lines, Codex/Claude only) |

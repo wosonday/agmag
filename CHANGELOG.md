@@ -29,7 +29,7 @@
 
 ### Sửa lỗi
 
-- Dữ liệu hạn mức gói cũ được đánh dấu `stale` (`agm quota --json`: `stale`, `observed_age_s`; TUI: `stale · seen … ago` xám) khi quá `[policy].quota_stale_min` hoặc khi có usage mới cùng gói sau thời điểm quan sát; policy/ngân sách `provider:` coi dữ liệu stale như chưa có dữ liệu.
+- Dữ liệu hạn mức gói cũ được đánh dấu `stale` (`agm quota` bảng chữ + `--json`: `stale`, `observed_age_s`; TUI: `stale · seen … ago` xám) khi quá `[policy].quota_stale_min` hoặc khi có usage mới cùng gói sau thời điểm quan sát; policy/ngân sách `provider:` coi dữ liệu stale như chưa có dữ liệu. Bảng chữ không còn vẽ thanh/% tươi cho dòng stale.
 - `agm send` gửi được cho agent đang ở trạng thái `done` (vừa xong lượt, không làm việc). Trước đây `hc send --if idle` luôn từ chối trường hợp này; agent đang `working`/`blocked` vẫn không bị gõ chen.
 - Cửa sổ hạn mức đã reset mà chưa có số liệu mới: không còn hiển thị số cũ, và ngân sách `provider:` không còn báo động theo số cũ (vd 96% đã dùng trước khi reset).
 - Phiên OpenCode chỉ có message assistant lỗi/0 token không còn bị gắn cảnh báo giả `unknown format?`; Codex/Claude/agy giữ nguyên cảnh báo.

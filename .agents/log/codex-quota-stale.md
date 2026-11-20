@@ -31,3 +31,37 @@ Nhánh: `fix/codex-quota-stale` (dựng lại trên `main` 1465336, commit nền
 ### Ghi chú lệch/giới hạn
 - CLI bảng `agm quota` (text) chưa in nhãn `stale` riêng; trạng thái stale được phản ánh trong `--json` (`stale`, `observed_age_s`) và trong TUI (`stale · seen … ago`, xám) theo triển khai hiện có. Tài liệu đã mô tả đúng phạm vi hiển thị này.
 - Mục 3 bổ sung `kill_tree` + deadline chung 8s cho `fetch_usage`; không thay đổi hành vi parse hay điều kiện ghi (vẫn không ghi 0%/100% khi lỗi).
+
+## 2026-11-20 — Vòng sửa 1 (theo `.agents/reviews/codex-quota-stale-review.md`)
+
+Nhánh `fix/codex-quota-stale`. Không push/merge/rebase, không fmt cả cây (chỉ rustfmt các tệp sửa), không ghi `~/.agmag` thật khi chạy thử (mọi lần chạy dùng `AGM_HOME` tạm).
+
+### 1. Bảng chữ `agm quota` hiện stale
+- TDD RED: thêm test `quota_table_marks_stale_rows_without_fresh_bar` trong `src/main.rs` (hàm `quota_table` chưa tồn tại) → `cargo test --offline --bin agm` FAIL (`E0425: cannot find function quota_table`).
+- GREEN: tách hàm thuần `quota_table(rows, now_s) -> Table`; hàng stale in `··········` + `stale · seen <tuổi> ago` thay vì thanh `█/░` và `%`, dùng lại `dashboard::format_age_s` (đổi thành `pub`) nên cùng định dạng `1d01h` với TUI; `print_quota` chỉ còn `println!`. Hàng tươi giữ nguyên thanh/%.
+- Test: `cargo test --offline --bin agm` → 5 passed, 0 failed. `cargo clippy --offline --bin agm -- -D warnings` sạch.
+- Commit: `a131af0` `codex-quota-stale: show stale label in agm quota table`.
+
+### 2. Test treo có biên an toàn
+- TDD RED: `tests/codex_quota_test.rs` đổi sang so sánh `Duration` với `FETCH_TIMEOUT` công khai (`elapsed >= FETCH_TIMEOUT - 1s`, `elapsed <= FETCH_TIMEOUT + 4s`) → FAIL (`E0603: constant FETCH_TIMEOUT is private`).
+- GREEN: công khai `pub const FETCH_TIMEOUT: Duration = Duration::from_secs(8)` trong `src/codex_quota.rs` (hằng số vẫn 8s). Không đổi logic fetch/kill tree.
+- Test: `cargo test --offline --test codex_quota_test` → 5 passed, 0 failed (tổng binary ~8.44s, nằm trong biên 7–12s). `cargo clippy --offline --all-targets -- -D warnings` sạch.
+- Commit: `7a7fdce` `codex-quota-stale: give timeout test Duration safety bounds`.
+
+### 3. Tài liệu + nghiệm thu
+- `README.md` / `README_vi.md`: ví dụ bảng `agm quota` có dòng stale; mục lệnh ghi rõ stale được đánh dấu trong bảng, TUI và `--json`. `CHANGELOG.md`: bổ sung ghi chú bảng chữ không vẽ thanh/% tươi cho dòng stale.
+- `cargo test --offline`: **291 passed / 0 failed** (29 binary/doc-test; tăng 1 so với 290 trước vòng sửa). `cargo clippy --offline --all-targets -- -D warnings`: sạch. `cargo fmt --check`: sạch.
+- Chạy thật (stdout bị pipe nên CLI tự in JSON; dòng `stale` có trong JSON, bảng được phủ bởi unit test ở mục 1):
+  ```
+  $tmp = 'C:\Users\thanh\AppData\Local\Temp\opencode\agmag-round1-quota'
+  # AGM_HOME=$tmp\home, AGM_CODEX_DIR=$tmp\codex (fixture mini.jsonl 2026-11-18), các dir khác trong $tmp
+  cargo run --offline -- quota
+  → codex 300m: "stale": true, "observed_age_s": 199580
+    codex 10080m: "left_percent": 21.0, "stale": true, "observed_age_s": 199580
+    EXIT=0
+  ```
+- Commit: tài liệu + mục nhật ký này.
+
+### Ghi chú vòng sửa 1
+- Lệch nhẹ so với tệp tác vụ "Test CLI": test bảng nằm ở unit test của `quota_table` trong `src/main.rs`, không spawn binary trong TTY giả. Lý do: `src/main.rs:279` ép JSON khi stdout không phải terminal (mọi harness `Command::output()` đều là pipe), và repo không có thư viện pty; test ở hàm render thuần vẫn kiểm đúng hai trường hợp stale/tươi mà không thêm phụ thuộc hay cờ CLI mới.
+- Không đụng các phát hiện mức `nhỏ` còn lại của review (`snap_val` dead code, spawn/taskkill ngoài deadline, `quota_stale_min = 0`, `budget_ls` dùng builtin config) vì nằm ngoài phạm vi "Vòng sửa 1" đã được CEO đồng ý.

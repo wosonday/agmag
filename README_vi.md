@@ -65,12 +65,13 @@ agm cost           # tổng token theo model  (--by day | month | source | cwd, 
 agm cost --summary # 24h / hôm nay / tháng này + biểu đồ 4 tháng
 ```
 
-Ví dụ `agm quota`:
+Ví dụ `agm quota` (cột: plan, window, phần còn lại, trạng thái, tới reset). Dòng stale hiện `stale · seen <tuổi> ago` thay vì thanh/% như số tươi — cùng nhãn với TUI:
 
 ```
-plan    window  left
-codex   5h      █████████░  86%   in 4h38m
-codex   7d      █░░░░░░░░░  7%    in 115h41m
+plan    window  left         status                   reset
+codex   5h      █████████░   86%                     in 4h38m
+codex   7d      █░░░░░░░░░   7%                      in 115h41m
+codex   5h      ··········   stale · seen 1d05h ago  reset passed
 ```
 
 Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọc phần mới. Muốn có số liệu cũ hơn cho thống kê tháng: `agm scan --since 2026-08-01` (hoặc để `agm tui` tự backfill).
@@ -203,7 +204,7 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 
 | Lệnh | Việc |
 |---|---|
-| `agm quota [--refresh]` | Hạn mức gói còn lại theo cửa sổ thời gian (`--refresh`: đọc ngay hạn mức agy và Codex; dòng cũ/stale được đánh dấu trong TUI và trong `--json`) |
+| `agm quota [--refresh]` | Hạn mức gói còn lại theo cửa sổ thời gian (`--refresh`: đọc ngay hạn mức agy và Codex; dòng cũ/stale được đánh dấu trong bảng, trong TUI và trong `--json`) |
 | `agm ls [--days N]` | Các phiên: nguồn, model, token, % ngữ cảnh, cảnh báo |
 | `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Tổng token, có hàng **SUM** in đậm; tóm tắt 24h/hôm nay/tháng này + bar chart 4 tháng theo giờ máy. **USD** = token × giá API niêm yết của từng model, tính cho mọi model (kể cả gói tháng, như số tiền nếu dùng qua API); `≥ $x` khi có token chưa biết giá, `?` khi không token nào có giá. Cột `billed (API)` trong `--summary` là tiền thực trả của model tính theo API |
 | `agm log <session> [--limit N] [--full]` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc, chỉ Codex/Claude) |

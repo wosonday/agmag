@@ -293,6 +293,176 @@ fn rotation_unknown_successor_never_kills() -> Result<()> {
 }
 
 #[test]
+fn rotation_bare_opencode_uses_prompt_flag() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let out = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "rotation_bare_opencode_uses_prompt_flag_child",
+            "--nocapture",
+        ])
+        .env("AGM_HC_TEMPLATES", dir.path())
+        .env("AGM_ROT_CHILD", "opencode")
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn rotation_bare_opencode_uses_prompt_flag_child() -> Result<()> {
+    if std::env::var_os("AGM_ROT_CHILD").as_deref() != Some(std::ffi::OsStr::new("opencode")) {
+        return Ok(());
+    }
+    let store = setup("opencode", "idle")?;
+    store
+        .conn()
+        .execute("UPDATE terminals SET template='opencode'", [])?;
+    let hc = FakeHc::default();
+    let git = FakeGit {
+        touched: Some("abc123".into()),
+        clean: true,
+        ..Default::default()
+    };
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?;
+    assert_eq!(state(&store), "done");
+    let calls = hc.calls.borrow();
+    assert_eq!(calls[1], "kill t1");
+    assert!(
+        calls[2].starts_with("run [\"opencode\", \"--prompt\",")
+            && calls[2].contains(".agents/tasks/a.md"),
+        "{calls:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rotation_opencode_template_file_wins_over_program_path() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(
+        dir.path().join("opencode.md"),
+        "---\ncommand: opencode --agent worker\n---\nResume template.\n",
+    )?;
+    let out = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "rotation_opencode_template_file_wins_child",
+            "--nocapture",
+        ])
+        .env("AGM_HC_TEMPLATES", dir.path())
+        .env("AGM_ROT_CHILD", "opencode-template")
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn rotation_opencode_template_file_wins_child() -> Result<()> {
+    if std::env::var_os("AGM_ROT_CHILD").as_deref()
+        != Some(std::ffi::OsStr::new("opencode-template"))
+    {
+        return Ok(());
+    }
+    let store = setup("opencode", "idle")?;
+    store
+        .conn()
+        .execute("UPDATE terminals SET template='opencode'", [])?;
+    let hc = FakeHc::default();
+    let git = FakeGit {
+        touched: Some("abc123".into()),
+        clean: true,
+        ..Default::default()
+    };
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?;
+    assert_eq!(state(&store), "done");
+    let calls = hc.calls.borrow();
+    assert_eq!(calls[1], "kill t1");
+    // opencode.md exists on disk, so template treatment wins: task is joined as one arg,
+    // not rewritten to `--prompt <resume>` program form.
+    assert!(
+        calls[2].starts_with("run [\"opencode\",") && !calls[2].contains("\"--prompt\""),
+        "{calls:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn rotation_listed_template_with_bad_disk_fallback() -> Result<()> {
+    let base = tempfile::tempdir()?;
+    for (name, content) in [
+        ("missing-command", "---\n---\nbody\n"),
+        ("shell-char", "---\ncommand: opencode | cat\n---\nbody\n"),
+    ] {
+        let dir = base.path().join(name);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("worker-mid.md"), content)?;
+        let out = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "rotation_listed_template_with_bad_disk_fallback_child",
+                "--nocapture",
+            ])
+            .env("AGM_HC_TEMPLATES", &dir)
+            .env("AGM_ROT_BAD_DISK_CHILD", "1")
+            .output()?;
+        assert!(
+            out.status.success(),
+            "{name}\n{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rotation_listed_template_with_bad_disk_fallback_child() -> Result<()> {
+    if std::env::var_os("AGM_ROT_BAD_DISK_CHILD").is_none() {
+        return Ok(());
+    }
+    let store = setup("opencode", "idle")?;
+    let hc = FakeHc::default();
+    let git = FakeGit {
+        touched: Some("abc123".into()),
+        clean: true,
+        ..Default::default()
+    };
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?;
+    if cfg!(windows) {
+        assert_eq!(state(&store), "failed");
+        assert!(
+            !hc.calls
+                .borrow()
+                .iter()
+                .any(|c| c.starts_with("kill") || c.starts_with("run")),
+            "{:?}",
+            hc.calls.borrow()
+        );
+        assert_eq!(store.terminal("t1")?.unwrap().state, "live");
+    } else {
+        // Listed template is enough off Windows; disk fallback is not required for preflight.
+        assert_eq!(state(&store), "done");
+        assert!(hc.calls.borrow().iter().any(|c| c.starts_with("kill")));
+    }
+    Ok(())
+}
+
+#[test]
 fn failed_rotation_is_not_retried_automatically() -> Result<()> {
     let store = setup("opencode", "idle")?;
     let hc = FakeHc::default();

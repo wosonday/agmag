@@ -424,9 +424,13 @@ pub fn prepare_rotation_spawn(hc: &dyn Hc, req: &mut SpawnReq) -> Result<()> {
         .map(|ts| ts.iter().any(|t| t["name"].as_str() == Some(&req.template)))
         .unwrap_or(false);
     if listed {
+        if cfg!(windows) {
+            // `hc run <template>` cần đường dự phòng `sh` trên Windows, nên phải đọc được command:.
+            crate::hc::load_template(&req.template)?;
+        }
         return Ok(());
     }
-    // Đường dự phòng trên Windows: template có trên đĩa và parse được command:.
+    // Đường dự phòng: template có trên đĩa và parse được command:.
     if crate::hc::load_template(&req.template).is_ok() {
         return Ok(());
     }

@@ -78,11 +78,26 @@
 - Thêm tình huống `hc templates` không khả dụng nhưng template tạm hợp lệ: preflight và spawn vẫn phải dùng được đường đọc local.
 - Lệnh `cargo test --offline --test spawn_fallback_test local_template_can_verify_and_spawn_when_listing_is_unavailable` đạt 1/0 ngay, không RED.
 
-## 9. BỊ CHẶN — có tiến trình khác sửa cùng worktree
-- Sau lệnh trên, đọc lại `src/actions.rs` thấy `prepare_rotation_spawn` đã bị di chuyển và thêm `.unwrap_or(false)` + `load_template(...).is_ok()` mà phiên này chưa viết. `spawn_fallback_test.rs` và nhiều tệp bị format dù phiên này chưa chạy cargo fmt.
-- `git status --short` hiện có 51 tệp tracked đổi, gồm src/opencode.rs, src/report.rs, src/policy.rs, src/store/** ngoài phạm vi; README/CHANGELOG/decision cũng được tiến trình khác tạo/sửa. Không hoàn tác, không stage những thay đổi đó.
-- Dừng để tránh ghi đè/commit nhầm mã của tiến trình khác. Chỉ commit log này. Mã sản phẩm và test để nguyên chưa commit, cần người quản lý xác định ai đang chạy cùng worktree.
-- Các tệp phiên này trực tiếp đã sửa: src/main.rs, src/actions.rs, src/hc.rs, src/rotation.rs, tests/actions_test.rs, tests/common/mod.rs, tests/rotation_test.rs, tests/spawn_fallback_test.rs, .agents/log/spawn-fixes.md.
-- Kết quả GREEN gần nhất trước nhiễu: actions spawn 4/0, rotation 20/0, fallback 8/0. Smoke Python argv và template brief đều đạt, terminal t5b/t5g đã hc kill. Template agent gặp quota Go sau khi brief đã gửi (không sửa mã).
-- Chưa chạy toàn bộ cargo test --offline, clippy, fmt check; chưa thể xác nhận phạm vi sạch hay hoàn tất task. Không tạo subagent, không push/merge/rebase, không đổi phụ thuộc, không stage runtime.
-- Lệch task: dừng giữa chừng, chưa commit sản phẩm/tài liệu và chưa chạy gates cuối do concurrent writer; slice local-template chưa có RED nên chưa coi là TDD hoàn tất.
+## 10. Vòng sửa 1 (2026-11-20)
+- Đọc `.agents/tasks/spawn-fixes.md`, `.agents/reviews/spawn-fixes-review.md`, log cũ, git status/diff/diff --cached: worktree sạch, HEAD `b54f041 spawn-fixes: log`.
+- Phạm vi sửa vòng này: `src/actions.rs`, `tests/rotation_test.rs`, `.agents/log/spawn-fixes.md` (không chạm tệp ngoài scope; #3 `is_missing_sh` giữ nguyên).
+
+### #1 Bắt buộc — preflight rotation phải kiểm tra đường dự phòng trên Windows khi template được liệt kê
+- Test thêm: `rotation_listed_template_with_bad_disk_fallback` (+ child) qua `AGM_HC_TEMPLATES`, 2 trường hợp tệp `worker-mid.md` thiếu `command:` hoặc có ký tự shell. Nhánh mong đợi `#[cfg(windows)]`/`cfg!(windows)`: preflight lỗi, rotation `failed`, không kill/run, terminal cũ còn live; ngoài Windows giữ hành vi cũ (listed đủ, rotation `done`).
+- RED: `cargo test --offline --test rotation_test rotation_listed_template_with_bad_disk_fallback` → FAIL (child: `state left:"done" right:"failed"` trên Windows, chưa kiểm tra `load_template` khi listed).
+- Code: `src/actions.rs::prepare_rotation_spawn` — nếu `listed` thì trên Windows gọi `crate::hc::load_template(&req.template)?` trước khi trả `Ok`; ngoài Windows trả `Ok` như cũ.
+- GREEN: lệnh trên đạt 2/0.
+
+### #2 Nhỏ — test rotation nhánh OpenCode trần và template thắng
+- Thêm `rotation_bare_opencode_uses_prompt_flag` (+ child, `AGM_HC_TEMPLATES` trống): template terminal `opencode` không phải template hc/disk → preflight xác minh, kill + spawn với argv `["opencode", "--prompt", <resume>]`.
+- Thêm `rotation_opencode_template_file_wins_over_program_path` (+ child, có `opencode.md`): `load_template`/template treatment thắng, argv kế nhiệm không bị viết lại thành `--prompt` riêng (task gộp theo nhánh template).
+- Kết quả: `rotation_bare_opencode_uses_prompt_flag` 2/0, `rotation_opencode_template_file_wins_over_program_path` 1/0 (PASS). Nhánh bare opencode đã đúng sẵn; test ghi rõ hành vi và ưu tiên template.
+
+### #4 Nhật ký
+- Bỏ mục "BỊ CHẶN — có tiến trình khác sửa cùng worktree / chưa commit / chưa chạy gates" đã lỗi thời; thêm mục Vòng sửa 1.
+
+### Định dạng và gates
+- `rustfmt --edition 2024 src/actions.rs tests/rotation_test.rs`.
+- `cargo fmt --check` → sạch.
+- `cargo clippy --offline --all-targets -- -D warnings` → sạch.
+- `cargo test --offline` → toàn bộ PASS, 0 failed (gồm `rotation_test` 26 passed, `spawn_fallback_test` 9 passed, các suite khác xanh).

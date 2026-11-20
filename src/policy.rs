@@ -7,6 +7,7 @@ use rusqlite::{params, OptionalExtension};
 use crate::actions::{self, Caller};
 use crate::config::{context_pct, Config};
 use crate::hc::Hc;
+use crate::model::Source;
 use crate::store::{BudgetRow, Store, TerminalRow};
 
 pub const POLICY_ACTOR: &str = "agm-policy";
@@ -68,12 +69,30 @@ pub fn spawn_blocked_by_budget(store: &Store, task: &str) -> Result<Option<Strin
 
 /// % ngữ cảnh của phiên: cửa sổ ghi trong CSDL (log/hook) hoặc theo cấu hình model.
 pub fn session_context_pct(store: &Store, cfg: &Config, sid: i64) -> Result<Option<f64>> {
-    let row: Option<(Option<i64>, Option<i64>, Option<String>)> = store
+    type Row = (String, Option<i64>, Option<i64>, Option<String>);
+    let row: Option<Row> = store
         .conn()
-        .query_row("SELECT ctx_used, ctx_window, model FROM sessions WHERE id = ?1", [sid], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_row(
+            "SELECT source, ctx_used, ctx_window, model FROM sessions WHERE id = ?1",
+            [sid],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
         .optional()?;
-    let Some((Some(used), window, model)) = row else { return Ok(None) };
-    let window = window.map(|w| w as u64).or_else(|| model.as_deref().and_then(|m| cfg.model(m)).and_then(|m| m.context_window));
+    let Some((source, Some(used), window, model)) = row else {
+        return Ok(None);
+    };
+    let source = match source.as_str() {
+        "codex" => Source::Codex,
+        "claude" => Source::Claude,
+        "opencode" => Source::OpenCode,
+        "agy" => Source::Agy,
+        _ => return Ok(None),
+    };
+    let window = window.map(|w| w as u64).or_else(|| {
+        model
+            .as_deref()
+            .and_then(|m| cfg.context_window(&source, m))
+    });
     Ok(context_pct(used.max(0) as u64, window))
 }
 

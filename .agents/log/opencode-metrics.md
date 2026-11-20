@@ -84,3 +84,35 @@
 - Resume: write the required decision note; map rolling to 300, weekly to
   10080, percent directly to used_percent, resetsAt / 1000. Monthly window
   representation needs an explicit convention, not a guessed fixed month length.
+
+## 2026-11-20 - 2. Implementation
+
+- Implemented `src/opencode_models.rs`: `ModelCatalog::from_json/from_value/context/load/cached` (Windows uses `opencode.cmd` shim).
+- `Config::context_window(source, name)`: `providers.toml` full/bare key wins, then OpenCode catalog for `Source::OpenCode`.
+- `report.rs`: context lookup uses `cfg.context_window`; OpenCode zero-token sessions no longer get `unknown format?`.
+- `policy.rs`: `session_context_pct` queries source and uses `cfg.context_window`.
+- Survey: `opencode api GET /api/experimental/usage/limits` returns Go rolling/weekly/monthly percent + resetsAt; decision file written.
+- `README.md` and `README_vi.md` updated.
+- Real run: `cargo run --offline -- ls --json` -> 96 sessions, 58 OpenCode sessions with `context_pct`.
+
+## 2026-11-20 - 3. Verification
+
+- `cargo test --offline`: 27 test suites, all passed.
+- `cargo clippy --all-targets -- -D warnings`: passed.
+- `cargo fmt --check`: our changed Rust files are formatted; pre-existing files in baseline remain non-clean under this rustfmt version.
+- Real run: `cargo run --offline -- ls --json` -> 96 sessions (77 OpenCode, 10 agy, 9 Claude); 58 OpenCode sessions have `context_pct` from catalog/config.
+- `opencode api GET /api/experimental/usage/limits`: ~0.84 s, 0 model tokens, returns Go rolling/weekly/monthly percent + resetsAt.
+
+## 2026-11-20 - 4. Resumed after free-limit stop (review, fix, verify)
+
+- Recovered the uncommitted tree from the stopped worker: read `git status`, both diffs and this log, preserved every staged/unstaged change, no reset or deletion.
+- Scope fix: reverted the eager `ModelCatalog::cached()` assignment in `src/main.rs` (not in the task's Files list, and it spawned `opencode api` on every CLI call). The catalog is now loaded lazily, once per process, only when an OpenCode lookup misses `providers.toml`.
+- Simplified `Config::context_window`: exact `provider/id` then bare id via `model()`, then catalog only for `Source::OpenCode`; other sources return `None` exactly as before.
+- `policy.rs`: local `type Row` alias (clippy `type_complexity`), source parsed once, window via `cfg.context_window`.
+- `opencode_models::load_with`: bounded 5 s read via reader thread (the 237-model response exceeds a pipe buffer, so waiting for exit before reading would deadlock), then kill on timeout.
+- Missing acceptance tests added: zero-token OpenCode session has no warning while Codex keeps `unknown format?`; malformed JSON is an error and a catalog entry without `limit.context` is ignored.
+- RED check for the warning test: temporarily dropped the `source != Source::OpenCode` exemption → `cargo test --offline --test opencode_models_test zero_token` failed (`left: Some("unknown format?")`); restored → 5 passed / 0 failed.
+- Docs: `README_vi.md` line rewritten with Vietnamese diacritics; `CHANGELOG.md` adds the catalog feature and the removed false warning; decision note typo and blank line fixed.
+- Verification: `cargo test --offline` → 259 passed / 0 failed across 27 test binaries (two targets have 0 tests, incl. doc-tests); `cargo clippy --offline --all-targets -- -D warnings` clean.
+- Format: `src/opencode_models.rs`, `tests/opencode_models_test.rs` and every line added/changed here are rustfmt-clean. `cargo fmt --check` still reports pre-existing files at HEAD (e.g. `src/actions.rs`, `src/ask.rs`, `src/rotation.rs`, `src/store/v2.rs`); it fails both with rustfmt 1.99.1 and 1.97.1, so it is not caused by this task and the whole tree was not reformatted (Files scope).
+- Real run: `cargo run --offline -- ls --json` → 101 sessions (opencode 86, 67 with `context_pct`; claude 8, 7; agy 7, 0). `opencode-go/kimi-k3` gets `context_pct` (5.2 %, 1.2 %) from the 1 048 576-token catalog entry; only one agy session keeps `unknown format?`; live catalog `GET /api/model` returned 237 models.

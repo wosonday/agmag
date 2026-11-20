@@ -91,6 +91,9 @@ pub struct Config {
     pub aliases: BTreeMap<String, String>,
     #[serde(default)]
     pub policy: Policy,
+    /// Danh mục model OpenCode (chỉ đọc, cache trong tiến trình). Không nằm trong providers.toml.
+    #[serde(skip)]
+    pub opencode_models: Option<crate::opencode_models::ModelCatalog>,
 }
 
 /// Ngưỡng và hạn mức cho policy (ngân sách, cảnh báo ngữ cảnh, xoay vòng thợ).
@@ -153,6 +156,21 @@ impl Config {
     pub fn model(&self, name: &str) -> Option<&ModelCfg> {
         let find = |n: &str| self.models.get(self.aliases.get(n).map(String::as_str).unwrap_or(n));
         find(name).or_else(|| find(split_provider(name)?.1))
+    }
+
+    /// Context window for a model: providers.toml wins (an exact `provider/id` key, then the bare id, both via
+    /// `model`), then the OpenCode catalog for OpenCode sources. Nothing is guessed.
+    pub fn context_window(&self, source: &Source, name: &str) -> Option<u64> {
+        if let Some(window) = self.model(name).and_then(|m| m.context_window) {
+            return Some(window);
+        }
+        if source != &Source::OpenCode {
+            return None;
+        }
+        match &self.opencode_models {
+            Some(catalog) => catalog.context(name),
+            None => crate::opencode_models::ModelCatalog::cached().and_then(|c| c.context(name)),
+        }
     }
 
     /// List price of a model: a price set in providers.toml wins, then the built-in table, then `-free`/`:free`

@@ -16,7 +16,7 @@
 - [x] (4) Stale opencode-go theo usage `opencode-go/*`
 - [x] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
 - [x] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
-- [ ] (7) Docs/decision khớp mã
+- [x] (7) Docs/decision khớp mã
 - [ ] Chạy `cargo test --offline`
 
 ## Phát hiện
@@ -84,6 +84,24 @@ Kiểm `git diff main 2913a4d` (diff sản phẩm, trước khi tôi thêm tệp
 
 **Phát hiện 6.2 — mức: nhỏ.** `tests/opencode_quota_test.rs:6`: fixture có `"id": "org_x", "name": "x"` — `org_x` là giá trị giả, trùng mẫu `org_...`. Parser bỏ qua `workspace` (`src/opencode_quota.rs:34-45`), nên không ảnh hưởng hành vi; chỉ là tàn dư hình thức.
 - Cách tái hiện: `git diff main 2913a4d -- tests/opencode_quota_test.rs | Select-String 'org_'` → trúng dòng 6. Có thể bỏ hẳn trường `workspace` trong fixture vì `parse_usage` không đọc nó.
+
+### (7) Docs / decision khớp mã — ĐẠT (1 phát hiện nhỏ)
+
+| Decision/tài liệu | Mã | Khớp |
+|---|---|---|
+| `.agents/decisions/opencode-go-quota.md:3` "đã cài" | `src/opencode_quota.rs`, `src/main.rs:351-354,530-539`, `src/config.rs:134-136` | ✓ |
+| Decision `:29` `rolling→300/5h`, `weekly→10080/7d`, `monthly→43200/mo` | `src/opencode_quota.rs:50`, `src/main.rs:889-899`, `src/dashboard.rs:824-831` | ✓ |
+| Decision `:30` `clamp(0..100)`, `resetsAt/1000` | `src/opencode_quota.rs:74,78` | ✓ |
+| Decision `:31` null/thiếu/lạ → skip, không số giả | `src/opencode_quota.rs:36-73` | ✓ (xem phát hiện 1.1) |
+| Decision `:32` setting `quota_limited:opencode-go:<window>` + nhãn đỏ | `src/opencode_quota.rs:104-108`, `src/main.rs:929-940`, `src/dashboard.rs:844-848` | ✓ |
+| Decision `:36` `AGM_OPENCODE_BIN`, `opencode`/`opencode.cmd`, hạn chót 5 s, kill_tree, không join | `src/opencode_quota.rs:113-199` | ✓ (xem phát hiện 2.1/2.2) |
+| Decision `:37` `[policy].opencode_quota_poll_min` mặc định 15, 0=tắt, daemon + `--refresh` | `src/config.rs:134-136,152,165-167`, `src/main.rs:351-359,511-543`, `src/opencode_quota.rs:225-228` | ✓ |
+| Decision `:39` mọi `opencode-go/*` cùng gói | `src/report.rs:795-798` | ✓ |
+| Decision `:40` ngân sách provider, stale = không có dữ liệu | `src/policy.rs:50-52,67-75` | ✓ |
+| `README.md:99,211`, `README_vi.md:97,207`, `CHANGELOG.md:29`, `HERDR-CORE-BOT.md:27,102` — quota đọc Go, `--refresh` có Go, Go Console xem Extra Usage/budget, bỏ câu "chưa có Go" | nội dung diff | ✓ |
+
+**Phát hiện 7.1 — mức: nhỏ.** `README.md:99` ghi "Go plan quota (5h/7d/**30d**)", trong khi task `:22` và decision `:29` chốt nhãn cửa sổ 43200 là **`mo`, không phải `30d`**. `README_vi.md:97` dùng "30 ngày" (mang tính mô tả, chấp nhận được). Đây là sai lệch tài liệu, không ảnh hưởng hiển thị thực tế (`src/main.rs:890-891` trả `mo`).
+- Cách tái hiện: so sánh `README.md:99` với `src/main.rs:889-899` — chạy `agm quota --json` với dữ liệu `window_minutes: 43200` → dòng JSON có `window_minutes: 43200` và bảng in nhãn `mo`; README ghi `30d`. Nên sửa thành `5h/7d/mo (30 ngày)`.
 
 ## KẾT LUẬN
 

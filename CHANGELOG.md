@@ -25,9 +25,11 @@
 - Cửa sổ ngữ cảnh của model OpenCode: `providers.toml` (`[models."<providerID/id>"]` rồi `[models."<id>"]`) luôn thắng; nếu thiếu, `agm` đọc `limit.context` từ danh mục của OpenCode (`opencode api GET /api/model`, cache trong tiến trình). Nhờ đó `ctx %`, `ctx_warn` và `ctx_rotate` hoạt động với `opencode/*`, `opencode-go/*`; model không có ở đâu vẫn để trống, không đoán.
 
 - Hạn mức gói của agy: ba provider `agy-gemini`, `agy-3p` (Claude/GPT qua agy, tách khỏi hạn mức Claude Code) và `agy-argon`, đọc qua `agy --print /usage` (không tốn token). Daemon đọc trên luồng riêng mỗi `[policy].agy_quota_poll_min` phút (mặc định 15, `0` = tắt); `agm quota --refresh` đọc ngay. Dùng được cho ngân sách, vd `agm budget set provider:agy-gemini:10080 --soft 80 --hard 95`.
+- Hạn mức gói Codex từ nguồn tươi (0 token): `agm quota --refresh` và daemon (`[policy].codex_quota_poll_min`, mặc định 15 phút) đọc `codex app-server` (`account/rateLimits/read`), ghi provider `codex` (cửa sổ 300/10080 phút); lỗi/không đăng nhập/timeout không ghi dữ liệu giả. Thêm cấu hình `[policy].quota_stale_min` (mặc định 60 phút) và `[policy].codex_quota_poll_min`.
 
 ### Sửa lỗi
 
+- Dữ liệu hạn mức gói cũ được đánh dấu `stale` (`agm quota --json`: `stale`, `observed_age_s`; TUI: `stale · seen … ago` xám) khi quá `[policy].quota_stale_min` hoặc khi có usage mới cùng gói sau thời điểm quan sát; policy/ngân sách `provider:` coi dữ liệu stale như chưa có dữ liệu.
 - `agm send` gửi được cho agent đang ở trạng thái `done` (vừa xong lượt, không làm việc). Trước đây `hc send --if idle` luôn từ chối trường hợp này; agent đang `working`/`blocked` vẫn không bị gõ chen.
 - Cửa sổ hạn mức đã reset mà chưa có số liệu mới: không còn hiển thị số cũ, và ngân sách `provider:` không còn báo động theo số cũ (vd 96% đã dùng trước khi reset).
 - Phiên OpenCode chỉ có message assistant lỗi/0 token không còn bị gắn cảnh báo giả `unknown format?`; Codex/Claude/agy giữ nguyên cảnh báo.

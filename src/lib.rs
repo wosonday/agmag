@@ -21,3 +21,4 @@ pub mod policy;
 pub mod report;
 pub mod rotation;
 pub mod store;
+pub mod sysmon;

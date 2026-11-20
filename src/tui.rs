@@ -82,7 +82,7 @@ fn console_size() -> Option<(usize, usize)> {
 
 /// Pane width: `COLUMNS` overrides the detected width; 110 when unknown. Height is not used: the whole dashboard
 /// is printed and the user scrolls.
-fn pane_width() -> usize {
+pub(crate) fn pane_width() -> usize {
     env_usize("COLUMNS")
         .or(console_size().map(|r| r.0))
         .unwrap_or(110)
@@ -216,6 +216,9 @@ pub fn run(
     let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;
     let mut cleanup_selected: Option<Vec<CleanupCandidate>> = None;
 
+    // RAM/CPU/disk for the header and SYSTEM section; kept across frames because CPU % is a difference.
+    let mut sampler = agmag::sysmon::SysSampler::new();
+
     let mut out = std::io::stdout();
     let mut last_frame: Option<String> = None;
     let mut after_input = true;
@@ -225,7 +228,10 @@ pub fn run(
         let now = crate::now_ms();
         let w = pane_width();
         let text = match snapshot(store, cfg, now) {
-            Ok(s) => render_view(&s, w, &view, None),
+            Ok(mut s) => {
+                s.system = sampler.as_mut().map(|m| m.sample());
+                render_view(&s, w, &view, None)
+            }
             Err(e) => format!(
                 "\x1b[1;91m{}\x1b[0m\n",
                 one_line(

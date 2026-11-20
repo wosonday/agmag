@@ -65,6 +65,7 @@ agm quota          # subscription quota: 5-hour / 7-day windows, time until rese
 agm ls             # today's sessions: model, tokens, % context
 agm cost           # token totals by model  (--by day | month | source | cwd, --days 7)
 agm cost --summary # 24h / today / this month + 4-month chart
+agm sys            # live RAM / CPU / disks + how much each agent's processes use
 ```
 
 Example `agm quota` (columns: plan, window, % left, status, time until reset). Stale rows show `stale · seen <age> ago` instead of a fresh bar/percentage — the same label as the TUI:
@@ -118,7 +119,7 @@ agm tui
 ```
 
 ```
- ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ UTC+07:00
+ ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ cpu 23% ram 57% C: 71% │ UTC+07:00
 ── ◈ PLAN QUOTA (left) ───────────────────────────────────────────
   codex      5h  █████████░  86% left  resets in 4h38m
   codex      7d  █░░░░░░░░░   7% left  resets in 115h41m
@@ -155,7 +156,7 @@ TUI commands (type, then Enter):
 | `cleanup` · `cleanup 1,2` · `cleanup all` | List / select handed-off sessions to clean up (requires `y` confirmation) |
 | `interrupt t5` · `kill t5` | Interrupt / kill (both require an extra `y` confirmation) |
 | `policy off` | Disable all automatic actions |
-| `view` · `view terminals inbox` · `view default` | Show the current view / pick up to 3 sections (`quota`, `usage`, `terminals`, `budgets`, `inbox`); remembered across restarts. RECENT MESSAGES is always shown and does not count |
+| `view` · `view terminals inbox` · `view default` | Show the current view / pick up to 3 sections (`quota`, `usage`, `terminals`, `budgets`, `inbox`, `system`); remembered across restarts. RECENT MESSAGES is always shown and does not count |
 | `quit` | Quit |
 
 Each command also accepts its first letter as a shortcut (`r`, `d`, `s`, `c`, `i`, `k`, `p`, `q`). Message types for `send`: `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` (any letter case). The legacy Vietnamese types (`GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`) still work in the TUI; messages are stored and forwarded with the Vietnamese code, and `agm send --type` is unchanged.
@@ -214,7 +215,8 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 | `agm log <session> [--limit N] [--full]` | Turn summaries (`--full`: raw log lines, Codex/Claude only) |
 | `agm scan [--days N \| --since YYYY-MM-DD]` | Scan Codex/Claude/agy/OpenCode logs now (view commands scan automatically) |
 | `agm daemon [--interval 10] [--replay <file>]` | Background: hc events, log scanning, terminal↔session matching, budgets, rotation (`--replay`: load events from a file, for debugging) |
-| `agm tui [--refresh 2]` | Dashboard |
+| `agm sys` | Live machine load: CPU % with a grid of **every logical core** (`#0 ██████▏░ 76%`, busiest core and idle count on the CPU line), RAM (and swap), every disk (used/free, read/write per second) and each agent's **process tree** (`claude-code`, `codex`, `opencode`, `agy`; desktop apps as `claude-app`, `codex-app`, `agy-app`): process count, RAM, % of machine CPU, plus a **Σ SUM** row. Colored report in three sections (MACHINE · DISKS · AGENTS) opening with a load verdict: green `● OK` (room for more workers), yellow `● BUSY` (CPU or RAM ≥ 60%), red `● HIGH LOAD` (≥ 85%, hold off spawning) and `⚠ <disk> nearly full` at 90%. Each agent keeps its TERMINALS color and gets a RAM-share bar. Takes ~0.7 s (CPU % needs two readings); nothing is stored. `--json` for agents, `NO_COLOR=1` for plain text |
+| `agm tui [--refresh 2]` | Dashboard. The header always shows `cpu · ram · fullest disk` (green < 60%, yellow < 85%, red); `view system` adds the full SYSTEM section, with one colored column per core (`┊ cores ▆▃▆▅▅▅`) |
 | `agm ps [--all]` | herdr-core terminals known to agm |
 | `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Inbox; answer an agent's question; dismiss an item |
 | `agm send <target> --type <TYPE> [--task ID] <text>` | Send a recorded message; target `user` → inbox |
@@ -354,6 +356,7 @@ Models without a declared price or context window show `?` — agm never invents
 - agy tokens outside `antigravity-cli` (e.g. IDE sessions that don't write `transcript.jsonl`) can only be measured via `agm ask`.
 - ChatGPT quota consumed by OpenCode isn't in any log; agm sees it indirectly via Codex's next `rate_limits` record.
 - Provider budgets only warn; they don't block `spawn` yet (agm doesn't know which provider a template uses).
+- `agm sys` matches agents by process name (no PID comes from herdr), so it counts every Claude Code/Codex/OpenCode/agy process on the machine, not only herdr terminals; a child counts for its nearest agent ancestor (a worker started by a CEO counts for the worker). Sizes use 1 GB = 1024³ bytes, like Windows Task Manager.
 - Claude/Codex hand-off is a convention, not a write lock on the old session — if you keep typing in the old session, both may edit the same files.
 - An agent with a TTY that clears `HC_TERMINAL_ID` and types `y` itself would theoretically be treated as the user (agm doesn't inspect the parent process tree).
 - `agm tui` is a periodically redrawn panel + command line; no keyboard navigation yet.

@@ -16,6 +16,7 @@ toml = "1.2.1"
 walkdir = "2.5.0"
 unicode-width = "0.2.3"
 unicode-segmentation = "1.13.3"
+sysinfo = { version = "0.40.4", default-features = false, features = ["system", "disk"] }
 
 # Pane size for `agm tui` (both crates are already in the lock file through other dependencies).
 [target.'cfg(windows)'.dependencies]

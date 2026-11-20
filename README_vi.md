@@ -63,6 +63,7 @@ agm quota          # hạn mức gói: 5 giờ / 7 ngày, còn bao lâu tới re
 agm ls             # phiên hôm nay: model, token, % ngữ cảnh
 agm cost           # tổng token theo model  (--by day | month | source | cwd, --days 7)
 agm cost --summary # 24h / hôm nay / tháng này + biểu đồ 4 tháng
+agm sys            # RAM / CPU / ổ đĩa đang dùng + phần do từng agent chiếm
 ```
 
 Ví dụ `agm quota` (cột: plan, window, phần còn lại, trạng thái, tới reset). Dòng stale hiện `stale · seen <tuổi> ago` thay vì thanh/% như số tươi — cùng nhãn với TUI:
@@ -116,7 +117,7 @@ agm tui
 ```
 
 ```
- ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ UTC+07:00
+ ◆ agmag  ● POLICY ON │ 7 terminals (1 blocked) │ inbox 1 │ cpu 23% ram 57% C: 71% │ UTC+07:00
 ── ◈ PLAN QUOTA (left) ───────────────────────────────────────────
   codex      5h  █████████░  86% left  resets in 4h38m
   codex      7d  █░░░░░░░░░   7% left  resets in 115h41m
@@ -153,7 +154,7 @@ Lệnh trong TUI (gõ rồi Enter):
 | `cleanup` · `cleanup 1,2` · `cleanup all` | Liệt kê / chọn phiên đã bàn giao để dọn (phải xác nhận `y`) |
 | `interrupt t5` · `kill t5` | Ngắt / dừng (cả hai đều phải gõ thêm `y` xác nhận) |
 | `policy off` | Tắt mọi hành động tự động |
-| `view` · `view terminals inbox` · `view default` | Xem bố cục hiện tại / chọn tối đa 3 bảng (`quota`, `usage`, `terminals`, `budgets`, `inbox`); được nhớ cho lần mở sau. RECENT MESSAGES luôn hiện và không tính vào 3 bảng |
+| `view` · `view terminals inbox` · `view default` | Xem bố cục hiện tại / chọn tối đa 3 bảng (`quota`, `usage`, `terminals`, `budgets`, `inbox`, `system`); được nhớ cho lần mở sau. RECENT MESSAGES luôn hiện và không tính vào 3 bảng |
 | `quit` | Thoát |
 
 Mỗi lệnh vẫn nhận chữ cái đầu làm phím tắt (`r`, `d`, `s`, `c`, `i`, `k`, `p`, `q`). Loại tin cho `send`: `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` (không phân biệt hoa/thường). Mã tiếng Việt cũ (`GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`) vẫn dùng được trong TUI; tin vẫn được lưu và chuyển đi với mã tiếng Việt, `agm send --type` không đổi.
@@ -210,7 +211,8 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 | `agm log <session> [--limit N] [--full]` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc, chỉ Codex/Claude) |
 | `agm scan [--days N \| --since YYYY-MM-DD]` | Quét log Codex/Claude/agy/OpenCode ngay (các lệnh xem tự quét) |
 | `agm daemon [--interval 10] [--replay <tệp>]` | Chạy nền: sự kiện hc, quét log, ghép terminal↔phiên, ngân sách, xoay vòng (`--replay`: nạp sự kiện từ tệp để gỡ lỗi) |
-| `agm tui [--refresh 2]` | Bảng điều khiển |
+| `agm sys` | Tải máy hiện tại: CPU % kèm lưới **từng nhân logic** (`#0 ██████▏░ 76%`, dòng CPU ghi nhân bận nhất và số nhân rảnh), RAM (và swap), từng ổ đĩa (đã dùng/còn trống, đọc/ghi mỗi giây) và **cây tiến trình** của từng agent (`claude-code`, `codex`, `opencode`, `agy`; app desktop là `claude-app`, `codex-app`, `agy-app`): số tiến trình, RAM, % CPU toàn máy, kèm hàng **Σ SUM**. Báo cáo có màu gồm ba phần (MACHINE · DISKS · AGENTS), mở đầu bằng dòng đánh giá tải: xanh `● OK` (còn chỗ mở thêm thợ), vàng `● BUSY` (CPU hoặc RAM ≥ 60%), đỏ `● HIGH LOAD` (≥ 85%, tạm dừng mở thợ) và `⚠ <ổ> nearly full` khi ổ đầy từ 90%. Mỗi agent giữ màu như bảng TERMINALS và có thanh tỉ lệ RAM. Mất khoảng 0,7 giây (CPU % cần hai lần đo); không lưu gì. `--json` cho agent, `NO_COLOR=1` để in không màu |
+| `agm tui [--refresh 2]` | Bảng điều khiển. Thanh tiêu đề luôn hiện `cpu · ram · ổ đầy nhất` (xanh < 60%, vàng < 85%, đỏ); `view system` thêm bảng SYSTEM đầy đủ, mỗi nhân một cột màu (`┊ cores ▆▃▆▅▅▅`) |
 | `agm ps [--all]` | Terminal của herdr-core mà agm biết |
 | `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Hộp thư; trả lời câu hỏi của agent; đóng mục |
 | `agm send <đích> --type <LOẠI> [--task ID] <tin>` | Gửi tin có ghi lại; đích `user` → hộp thư |
@@ -350,6 +352,7 @@ Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.
 - Token của agy ngoài `antigravity-cli` (ví dụ phiên IDE không ghi `transcript.jsonl`) chỉ đo được qua `agm ask`.
 - Hạn mức ChatGPT do OpenCode tiêu không có trong log; agm thấy gián tiếp qua lần ghi `rate_limits` kế tiếp của Codex.
 - Ngân sách theo provider chỉ cảnh báo, chưa chặn `spawn` (agm chưa biết template dùng provider nào).
+- `agm sys` nhận agent theo tên tiến trình (herdr không cho PID), nên đếm mọi tiến trình Claude Code/Codex/OpenCode/agy trên máy chứ không chỉ terminal herdr; tiến trình con tính cho agent tổ tiên gần nhất (thợ do CEO mở tính cho thợ). Dung lượng tính 1 GB = 1024³ byte như Task Manager của Windows.
 - Bàn giao Claude/Codex là quy ước, không khóa ghi phiên cũ — nếu bạn gõ tiếp vào phiên cũ, hai phiên có thể sửa trùng.
 - Agent có TTY, tự xóa `HC_TERMINAL_ID` rồi tự gõ `y` về lý thuyết vẫn được coi là người dùng (agm không kiểm cây tiến trình cha).
 - `agm tui` là bảng vẽ lại theo chu kỳ + dòng lệnh, chưa có điều hướng bằng phím.

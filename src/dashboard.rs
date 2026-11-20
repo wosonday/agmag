@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::policy::{budget_value, enabled, session_context_pct};
 use crate::report::{QuotaRow, UsageBucket, UsageSummary, spark_bar, usage_summary};
 use crate::store::{InboxRow, MessageRow, Store};
+use crate::sysmon::{CpuStats, SysStats, human_bytes, mount_label};
 
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[2m";
@@ -27,6 +28,9 @@ const BOLD_YELLOW: &str = "\x1b[1;93m";
 const BRIGHT_RED: &str = "\x1b[91m";
 const BOLD_RED: &str = "\x1b[1;91m";
 const BRIGHT_MAGENTA: &str = "\x1b[95m";
+const MAGENTA: &str = "\x1b[35m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TermView {
@@ -71,6 +75,8 @@ pub struct Snapshot {
     pub budgets: Vec<BudgetView>,
     pub inbox: Vec<InboxRow>,
     pub messages: Vec<MessageRow>,
+    /// Live RAM/CPU/disk readings; `agm tui` fills this in (the database has none). `None` = not measured.
+    pub system: Option<SysStats>,
 }
 
 pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
@@ -171,6 +177,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
         budgets,
         inbox: store.inbox(true)?,
         messages: store.messages(5)?,
+        system: None,
     })
 }
 
@@ -559,16 +566,403 @@ fn render_header(s: &Snapshot, width: usize) -> String {
     let offset_plain = sanitize_one_line(&s.usage_summary.offset_label);
 
     let sep = paint(GRAY, " │ ");
-    let items = [
+    let mut items = vec![
         brand_and_policy,
         term_item,
         (inbox_plain.chars().count(), inbox_styled),
-        (offset_plain.chars().count(), paint(GRAY, &offset_plain)),
     ];
+    if let Some(sys) = &s.system {
+        items.push(system_summary(sys));
+    }
+    items.push((offset_plain.chars().count(), paint(GRAY, &offset_plain)));
     let mut out = String::new();
     for line in wrap_styled_items(&items, &sep, 3, 1, max_w) {
         out += &format!(" {line}\n");
     }
+    out
+}
+
+/// `cpu 23% ram 57% C: 71%` for the header: plain length + styled text, each figure colored by load.
+fn system_summary(sys: &SysStats) -> (usize, String) {
+    let mut parts: Vec<(String, Option<f64>)> = vec![
+        ("cpu".into(), sys.cpu.as_ref().map(|c| c.usage_percent)),
+        (
+            "ram".into(),
+            sys.memory.as_ref().and_then(|m| m.used_percent),
+        ),
+    ];
+    if let Some(d) = sys.fullest_disk() {
+        parts.push((sanitize_one_line(&d.label()), d.used_percent));
+    }
+    let mut plain = Vec::new();
+    let mut styled = Vec::new();
+    for (name, p) in parts {
+        let value = p.map_or_else(|| "n/a".to_string(), |v| format!("{v:.0}%"));
+        let color = p.map_or(GRAY, pct_color);
+        plain.push(format!("{name} {value}"));
+        styled.push(format!("{} {}", paint(GRAY, &name), paint(color, &value)));
+    }
+    (plain.join(" ").chars().count(), styled.join(" "))
+}
+
+fn opt_pct_label(p: Option<f64>) -> String {
+    p.map_or_else(|| " n/a".into(), |v| format!("{v:>3.0}%"))
+}
+
+fn opt_bar(p: Option<f64>) -> String {
+    match p {
+        Some(v) => colored_bar(v, pct_color(v)),
+        None => paint(GRAY, "··········"),
+    }
+}
+
+/// Same hues as the agent column of TERMINALS; desktop apps use the darker shade of their CLI's color.
+fn agent_color(agent: &str) -> &'static str {
+    match agent {
+        "claude-code" => BRIGHT_MAGENTA,
+        "claude-app" => MAGENTA,
+        "codex" => BRIGHT_GREEN,
+        "codex-app" => GREEN,
+        "opencode" => BRIGHT_CYAN,
+        "agy" => BRIGHT_YELLOW,
+        "agy-app" => YELLOW,
+        _ => WHITE,
+    }
+}
+
+fn rate_label(r: Option<f64>) -> String {
+    r.map_or_else(|| "-".into(), |v| format!("{}/s", human_bytes(v as u64)))
+}
+
+/// One-line load verdict from the busiest of CPU and RAM, plus a warning for a nearly full fixed disk.
+fn system_verdict(sys: &SysStats) -> String {
+    let cpu = sys.cpu.as_ref().map(|c| c.usage_percent);
+    let ram = sys.memory.as_ref().and_then(|m| m.used_percent);
+    let worst = cpu
+        .into_iter()
+        .chain(ram)
+        .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |a| a.max(v))));
+    let (style, badge, advice) = match worst {
+        None => (GRAY, "○ UNKNOWN", "measuring…"),
+        Some(v) if v >= 85.0 => (BOLD_RED, "● HIGH LOAD", "hold off spawning new workers"),
+        Some(v) if v >= 60.0 => (BOLD_YELLOW, "● BUSY", "spawn new workers with care"),
+        Some(_) => (BOLD_GREEN, "● OK", "room for more workers"),
+    };
+    let figure = |name: &str, p: Option<f64>| match p {
+        Some(v) => format!(
+            "{} {}",
+            paint(GRAY, name),
+            paint(pct_color(v), &format!("{v:.0}%"))
+        ),
+        None => format!("{} {}", paint(GRAY, name), paint(GRAY, "n/a")),
+    };
+    let mut line = format!(
+        "  {}  {} {} {}  {} {}",
+        paint(style, badge),
+        figure("cpu", cpu),
+        paint(GRAY, "·"),
+        figure("ram", ram),
+        paint(GRAY, "→"),
+        paint(WHITE, advice)
+    );
+    if let Some(d) = sys
+        .fullest_disk()
+        .filter(|d| d.used_percent.is_some_and(|p| p >= 90.0))
+    {
+        line += &format!(
+            "  {}",
+            paint(
+                BOLD_RED,
+                &format!("⚠ {} nearly full", sanitize_one_line(&d.label()))
+            )
+        );
+    }
+    line
+}
+
+/// `  ▣ CPU    ████████░░  83%  detail`: icon, padded name, load-colored bar and figure, then the detail.
+fn meter_line(icon: &str, name: &str, name_w: usize, p: Option<f64>, detail: &str) -> String {
+    format!(
+        "  {} {} {} {}  {detail}",
+        paint(BRIGHT_CYAN, icon),
+        paint(WHITE, &pad_cells(&one_line(name, name_w), name_w)),
+        opt_bar(p),
+        paint(p.map_or(GRAY, pct_color), &opt_pct_label(p)),
+    )
+}
+
+fn used_of(used: u64, total: u64) -> String {
+    format!(
+        "{} {}",
+        paint(WHITE, &human_bytes(used)),
+        paint(GRAY, &format!("/ {}", human_bytes(total)))
+    )
+}
+
+/// Column where meter bars start (`  ▣ CPU    `), so core rows line up under the CPU bar.
+const METER_INDENT: usize = 11;
+const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+
+/// `12 cores · busiest #3 97% · 4 idle (<10%)`: the CPU line's detail.
+fn cpu_detail(c: &CpuStats) -> String {
+    let cores = paint(GRAY, &format!("{} cores", c.logical_cores));
+    let Some((i, p)) = c
+        .per_core_percent
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+    else {
+        return cores;
+    };
+    let idle = c.per_core_percent.iter().filter(|&&p| p < 10.0).count();
+    format!(
+        "{cores} {} {} {}",
+        paint(GRAY, &format!("· busiest #{i}")),
+        paint(pct_color(p), &format!("{p:.0}%")),
+        paint(GRAY, &format!("· {idle} idle")),
+    )
+}
+
+/// TUI: one colored column per logical core, `▁` idle … `█` busy, under the CPU bar.
+fn core_spark_line(c: &CpuStats) -> Option<String> {
+    if c.per_core_percent.is_empty() {
+        return None;
+    }
+    let spark: String = c
+        .per_core_percent
+        .iter()
+        .map(|&p| {
+            paint(
+                pct_color(p),
+                SPARK[((p.clamp(0.0, 100.0) / 100.0) * 7.0).round() as usize],
+            )
+        })
+        .collect();
+    Some(format!(
+        "  {} {} {spark}",
+        paint(BRIGHT_CYAN, "┊"),
+        paint(GRAY, &pad_cells("cores", 6))
+    ))
+}
+
+/// `agm sys`: `#0 ██████▌░  81%` for every logical core, as many per row as fit in `max_w`.
+fn core_grid_lines(c: &CpuStats, max_w: usize) -> Vec<String> {
+    let n = c.per_core_percent.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let label_w = format!("#{}", n - 1).len();
+    let cell_w = label_w + 1 + 8 + 1 + 4;
+    let gap = 3;
+    let cols = (max_w.saturating_sub(METER_INDENT) + gap) / (cell_w + gap);
+    let cols = cols.clamp(1, n);
+    let cells: Vec<String> = c
+        .per_core_percent
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| {
+            let col = pct_color(p);
+            format!(
+                "{} {} {}",
+                paint(GRAY, &format!("{:<label_w$}", format!("#{i}"))),
+                fine_bar(p, col, 8),
+                paint(col, &format!("{p:>3.0}%"))
+            )
+        })
+        .collect();
+    cells
+        .chunks(cols)
+        .map(|row| format!("{}{}", " ".repeat(METER_INDENT), row.join(&" ".repeat(gap))))
+        .collect()
+}
+
+/// Machine meters. `core_grid_w`: `None` = one spark line for the cores (TUI), `Some(w)` = full grid (`agm sys`).
+fn machine_lines(sys: &SysStats, core_grid_w: Option<usize>) -> Vec<String> {
+    let mut out = Vec::new();
+    let cpu = sys.cpu.as_ref();
+    let detail = cpu.map_or_else(|| paint(GRAY, "measuring…"), cpu_detail);
+    out.push(meter_line(
+        "▣",
+        "CPU",
+        6,
+        cpu.map(|c| c.usage_percent),
+        &detail,
+    ));
+    if let Some(c) = cpu {
+        match core_grid_w {
+            None => out.extend(core_spark_line(c)),
+            Some(w) => out.extend(core_grid_lines(c, w)),
+        }
+    }
+    match &sys.memory {
+        Some(m) => {
+            out.push(meter_line(
+                "▤",
+                "RAM",
+                6,
+                m.used_percent,
+                &used_of(m.used_bytes, m.total_bytes),
+            ));
+            if m.swap_total_bytes > 0 {
+                let p = crate::sysmon::pct(m.swap_used_bytes, m.swap_total_bytes);
+                out.push(meter_line(
+                    "↺",
+                    "swap",
+                    6,
+                    p,
+                    &used_of(m.swap_used_bytes, m.swap_total_bytes),
+                ));
+            }
+        }
+        None => out.push(meter_line("▤", "RAM", 6, None, "")),
+    }
+    out
+}
+
+fn disk_lines(sys: &SysStats) -> Vec<String> {
+    let name_w = sys
+        .disks
+        .iter()
+        .map(|d| d.label().width())
+        .max()
+        .unwrap_or(0)
+        .clamp(6, 14);
+    sys.disks
+        .iter()
+        .map(|d| {
+            let mut detail = format!(
+                "{} {}   {} {}  {} {}",
+                paint(WHITE, &format!("{} free", human_bytes(d.available_bytes))),
+                paint(GRAY, &format!("of {}", human_bytes(d.total_bytes))),
+                paint(BRIGHT_GREEN, "↓"),
+                paint(GRAY, &rate_label(d.read_bytes_per_s)),
+                paint(BRIGHT_YELLOW, "↑"),
+                paint(GRAY, &rate_label(d.write_bytes_per_s)),
+            );
+            if d.removable {
+                detail += &format!("  {}", paint(BRIGHT_MAGENTA, "removable"));
+            }
+            if !d.also_mounted_at.is_empty() {
+                let labels: Vec<String> = d
+                    .also_mounted_at
+                    .iter()
+                    .map(|m| sanitize_one_line(&mount_label(m)))
+                    .collect();
+                detail += &format!("  {}", paint(DIM, &format!("(also {})", labels.join(", "))));
+            }
+            meter_line(
+                "◫",
+                &sanitize_one_line(&d.label()),
+                name_w,
+                d.used_percent,
+                &detail,
+            )
+        })
+        .collect()
+}
+
+/// `cells`-wide bar with 1/8-cell steps (`▏▎▍▌▋▊▉█`), so shares of a few percent still show.
+fn fine_bar(pct: f64, color: &str, cells: usize) -> String {
+    const PARTS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+    let eighths = ((pct.clamp(0.0, 100.0) / 100.0) * (cells * 8) as f64).round() as usize;
+    let (full, part) = (eighths / 8, eighths % 8);
+    let used_cells = full + usize::from(part > 0);
+    format!(
+        "{color}{}{}{GRAY}{}{RESET}",
+        "█".repeat(full),
+        PARTS[part],
+        "░".repeat(cells.saturating_sub(used_cells))
+    )
+}
+
+fn agent_lines(sys: &SysStats) -> Vec<String> {
+    if sys.agents.is_empty() {
+        return vec![paint(GRAY, "  (no agent processes running)")];
+    }
+    let total_ram = sys.memory.as_ref().map_or(0, |m| m.total_bytes);
+    let share = |bytes: u64| crate::sysmon::pct(bytes, total_ram);
+    let mut out = vec![paint(
+        GRAY,
+        &format!(
+            "    {:<12} {:<15} {:>8} {:>6} {:>7}",
+            "agent", "share of RAM", "RAM", "procs", "CPU"
+        ),
+    )];
+    for a in &sys.agents {
+        let color = agent_color(&a.agent);
+        let bar = match share(a.memory_bytes) {
+            Some(p) => format!(
+                "{} {}",
+                fine_bar(p, color, 10),
+                paint(color, &format!("{p:>3.0}%"))
+            ),
+            None => format!("{} {}", paint(GRAY, "··········"), paint(GRAY, " n/a")),
+        };
+        let cpu = match a.cpu_percent {
+            Some(c) => paint(pct_color(c), &format!("{:>7}", format!("{c:.1}%"))),
+            None => paint(GRAY, &format!("{:>7}", "n/a")),
+        };
+        out.push(format!(
+            "  {} {} {bar} {} {} {cpu}",
+            paint(color, "●"),
+            paint(color, &pad_cells(&one_line(&a.agent, 12), 12)),
+            paint(WHITE, &format!("{:>8}", human_bytes(a.memory_bytes))),
+            paint(GRAY, &format!("{:>6}", a.processes)),
+        ));
+    }
+    let mem: u64 = sys.agents.iter().map(|a| a.memory_bytes).sum();
+    let procs: usize = sys.agents.iter().map(|a| a.processes).sum();
+    let cpu: Option<f64> = sys.agents.iter().map(|a| a.cpu_percent).sum();
+    let share_label = share(mem).map_or_else(|| "n/a".to_string(), |p| format!("{p:.0}% of RAM"));
+    let cpu_label = cpu.map_or_else(|| "n/a".to_string(), |c| format!("{c:.1}%"));
+    out.push(paint(
+        BOLD_CYAN,
+        &format!(
+            "  Σ {} {} {:>8} {procs:>6} {cpu_label:>7}",
+            pad_cells("SUM", 12),
+            pad_cells(&share_label, 15),
+            human_bytes(mem)
+        ),
+    ));
+    out
+}
+
+fn bounded_block(lines: Vec<String>, max_w: usize) -> String {
+    lines
+        .into_iter()
+        .map(|l| format!("{}\n", bounded_styled_line(&l, max_w)))
+        .collect()
+}
+
+/// Body of the TUI SYSTEM section: verdict, machine meters, disks, agents (no sub-titles, to save lines).
+fn render_system(sys: Option<&SysStats>, max_w: usize) -> String {
+    let Some(sys) = sys else {
+        return format!(
+            "{}\n",
+            paint(GRAY, "  (system metrics unavailable on this platform)")
+        );
+    };
+    let mut lines = vec![system_verdict(sys)];
+    lines.extend(machine_lines(sys, None));
+    lines.extend(disk_lines(sys));
+    lines.extend(agent_lines(sys));
+    bounded_block(lines, max_w)
+}
+
+/// Full colored report for `agm sys`: MACHINE, DISKS and AGENTS sections, every line bounded to `width`.
+pub fn render_sys_report(sys: &SysStats, width: usize) -> String {
+    let max_w = width.saturating_sub(1);
+    let mut out = section("◉", "MACHINE", width);
+    let mut machine = vec![system_verdict(sys)];
+    machine.extend(machine_lines(sys, Some(max_w)));
+    out += &bounded_block(machine, max_w);
+    if !sys.disks.is_empty() {
+        out += &section("◫", "DISKS", width);
+        out += &bounded_block(disk_lines(sys), max_w);
+    }
+    out += &section("◆", "AGENTS (each with its whole process tree)", width);
+    out += &bounded_block(agent_lines(sys), max_w);
     out
 }
 
@@ -631,6 +1025,7 @@ pub enum Section {
     Terminals,
     Budgets,
     Inbox,
+    System,
     Messages,
 }
 
@@ -638,21 +1033,23 @@ pub enum Section {
 pub const MAX_VIEW: usize = 3;
 
 impl Section {
-    pub const ALL: [Section; 6] = [
+    pub const ALL: [Section; 7] = [
         Section::Quota,
         Section::Usage,
         Section::Terminals,
         Section::Budgets,
         Section::Inbox,
+        Section::System,
         Section::Messages,
     ];
     /// Sections `view` can pick; RECENT MESSAGES is always shown, just above the command bar.
-    pub const SELECTABLE: [Section; 5] = [
+    pub const SELECTABLE: [Section; 6] = [
         Section::Quota,
         Section::Usage,
         Section::Terminals,
         Section::Budgets,
         Section::Inbox,
+        Section::System,
     ];
     pub const DEFAULT: [Section; 3] = [Section::Quota, Section::Terminals, Section::Inbox];
 
@@ -663,6 +1060,7 @@ impl Section {
             Section::Terminals => "terminals",
             Section::Budgets => "budgets",
             Section::Inbox => "inbox",
+            Section::System => "system",
             Section::Messages => "messages",
         }
     }
@@ -1133,6 +1531,10 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
                     one_line(&i.text, max_text),
                 );
             }
+        }
+        Section::System => {
+            out += &section("◉", "SYSTEM (live · agent = its whole process tree)", width);
+            out += &render_system(s.system.as_ref(), max_w);
         }
         Section::Messages => {
             out += &section("»", "RECENT MESSAGES", width);

@@ -191,6 +191,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: HookCmd,
     },
+    /// RAM / CPU / disk of this machine and how much each agent's process tree uses (live, not stored)
+    Sys,
     /// Giao diện theo dõi trong một pane của herdr
     Tui {
         #[arg(long, default_value_t = 2)]
@@ -259,6 +261,23 @@ fn main() -> ExitCode {
         println!("{}", ops::hook_statusline(&agm_home(), now_ms()));
         return ExitCode::SUCCESS;
     }
+    // No database needed: `agm sys` still works when ~/.agmag is missing or locked.
+    if let Cmd::Sys = cli.cmd {
+        let json = cli.json || !std::io::stdout().is_terminal();
+        return match agmag::sysmon::read_once() {
+            Some(stats) => match emit(json, &stats, || print_sys(&stats)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("agm: error: {e:#}");
+                    ExitCode::from(1)
+                }
+            },
+            None => {
+                eprintln!("agm: error: system metrics are not available on this platform");
+                ExitCode::from(1)
+            }
+        };
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -321,7 +340,8 @@ fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Hook {
             cmd: HookCmd::Statusline,
-        } => unreachable!("xử lý trong main"),
+        }
+        | Cmd::Sys => unreachable!("xử lý trong main"),
         Cmd::Hook {
             cmd: HookCmd::Install,
         } => ops::hook_install(&std::env::current_exe()?),
@@ -954,6 +974,34 @@ fn quota_table(rows: &[report::QuotaRow], now_s: i64) -> Table {
 
 fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
     println!("{}", quota_table(rows, now_s));
+}
+
+/// Removes ANSI SGR sequences (`ESC [ ... m`) for `NO_COLOR` output.
+fn strip_sgr(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            for ch in chars.by_ref() {
+                if ch == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Colored MACHINE / DISKS / AGENTS report, sized to the terminal; plain text when `NO_COLOR` is set.
+fn print_sys(s: &agmag::sysmon::SysStats) {
+    let report = agmag::dashboard::render_sys_report(s, tui::pane_width());
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        print!("{}", strip_sgr(&report));
+    } else {
+        print!("{report}");
+    }
 }
 
 #[cfg(test)]

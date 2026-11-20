@@ -395,7 +395,7 @@ fn cli_cleanup_yes_without_human_confirmation_does_not_touch_terminals() {
     }
     let out = agm_env(tmp.path(), &["cleanup", "--all", "--yes"], &[]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("Đã hủy."));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Cancelled."));
     let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
     assert_eq!(store.terminal("t1").unwrap().unwrap().state, "live");
     assert_eq!(store.conn().query_row(

@@ -23,6 +23,20 @@ pub fn default_db() -> PathBuf {
     })
 }
 
+/// Cờ trong `settings`: model OpenCode đã được lưu theo dạng `providerID/id`.
+const MODEL_KEY_SETTING: &str = "opencode_model_key";
+const MODEL_KEY_VERSION: &str = "provider/id";
+
+/// Khóa model gồm provider của OpenCode (`opencode-go/deepseek-v4-pro`, `nvidia-kimi/moonshotai/kimi-k3.1-pro`)
+/// để cùng một model qua hai nguồn tính phí khác nhau không bị gộp. Thiếu `providerID` → giữ id trần.
+fn model_key(model: &Value) -> Option<String> {
+    let id = model["id"].as_str().filter(|s| !s.is_empty())?;
+    Some(match model["providerID"].as_str().filter(|s| !s.is_empty()) {
+        Some(provider) => format!("{provider}/{id}"),
+        None => id.to_string(),
+    })
+}
+
 struct Msg {
     id: String,
     session: String,
@@ -44,7 +58,12 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
     let key = format!("opencode-db:{}", crate::ingest::path_key(db));
     // Con trỏ kép (time_updated, rowid): message chèn sau trong cùng mili-giây có rowid lớn hơn nên không bị bỏ sót.
     // Lưu trong Cursor: offset = time_updated, size = rowid.
-    let (since, since_row) = store.cursor(&key)?.map_or((0, 0), |c| (c.offset as i64, c.size as i64));
+    // Bản cũ lưu model trần (không provider) → nạp lại toàn bộ một lần; upsert theo id message nên không nhân đôi.
+    let rescan = store.setting(MODEL_KEY_SETTING)?.as_deref() != Some(MODEL_KEY_VERSION);
+    let (since, since_row) = match store.cursor(&key)? {
+        Some(c) if !rescan => (c.offset as i64, c.size as i64),
+        _ => (0, 0),
+    };
 
     let msgs: Vec<Msg> = src
         .prepare(
@@ -85,8 +104,13 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
         let ts = data["time"]["created"].as_i64().unwrap_or(m.updated);
         match m.kind.as_str() {
             "assistant" => {
-                if let Some(model) = data["model"]["id"].as_str() {
+                let model = model_key(&data["model"]);
+                if let Some(model) = &model {
                     store.set_model(sid, model)?;
+                }
+                // OpenCode's `variant` is the reasoning level picked in the TUI; "default" carries no information.
+                if let Some(variant) = data["model"]["variant"].as_str().filter(|v| !v.is_empty() && *v != "default") {
+                    store.set_effort(sid, variant)?;
                 }
                 let tok = &data["tokens"];
                 let total: u64 = [&tok["input"], &tok["output"], &tok["cache"]["read"], &tok["cache"]["write"]].iter().filter_map(|v| v.as_u64()).sum();
@@ -106,7 +130,7 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
                         &UsageRecord {
                             dedupe_key: m.id.clone(),
                             ts_ms: ts,
-                            model: data["model"]["id"].as_str().map(String::from),
+                            model: model.clone(),
                             usage,
                         },
                     )?;
@@ -128,6 +152,9 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
         }
     }
     store.save_cursor(&Cursor { path: key, offset: max_updated.max(0) as u64, size: max_row.max(0) as u64, mtime_ms: 0, head_hash: 0 })?;
+    if rescan {
+        store.set_setting(MODEL_KEY_SETTING, MODEL_KEY_VERSION)?;
+    }
     tx.commit()?;
     Ok(stats)
 }

@@ -151,3 +151,21 @@ fn empty_app_strings_fall_back_to_argv() {
     assert_eq!(row.app.as_deref(), Some("opencode"));
     assert_eq!(app_from_argv(&["".into()]), None);
 }
+
+/// herdr's location is a label in snapshots/events and a top-level field in `hc ls`; both end up in labels.
+#[test]
+fn herdr_where_is_kept_from_labels_or_hc_ls() {
+    let from_event = agmag::hc::terminal_row_from(&serde_json::json!({
+        "address": "t11", "state": "live", "labels": {"where": "MATHY-AI / 1"}
+    }));
+    assert_eq!(from_event.labels.get("where").map(String::as_str), Some("MATHY-AI / 1"));
+    let from_ls = agmag::hc::terminal_row_from(&serde_json::json!({
+        "address": "t1s", "state": "live", "where": "agmag / agm-ceo"
+    }));
+    assert_eq!(from_ls.labels.get("where").map(String::as_str), Some("agmag / agm-ceo"));
+    // A label already present wins over the top-level copy.
+    let both = agmag::hc::terminal_row_from(&serde_json::json!({
+        "address": "t2", "where": "x / y", "labels": {"where": "a / b"}
+    }));
+    assert_eq!(both.labels.get("where").map(String::as_str), Some("a / b"));
+}

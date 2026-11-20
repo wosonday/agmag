@@ -1,5 +1,6 @@
 //! `agm tui`: periodically redrawn ANSI dashboard + short command prompt.
-//! No heavy TUI library (offline build); keybindings are replaced by single-letter commands: r d s c i k p q.
+//! No heavy TUI library (offline build); keybindings are replaced by typed commands (reply, done, send, cleanup,
+//! interrupt, kill, policy, quit), each with a single-letter alias.
 
 use std::fmt::Write as _;
 use std::io::{BufRead, IsTerminal, Write};
@@ -11,7 +12,7 @@ use anyhow::Result;
 
 use agmag::actions::{self, eligible_cleanups, execute_cleanup_batch, Caller, CleanupCandidate};
 use agmag::config::Config;
-use agmag::dashboard::{bounded_styled_line, one_line, parse_command, render, snapshot, TuiCmd};
+use agmag::dashboard::{bounded_styled_line, one_line, parse_command, parse_view, render_view, snapshot, Section, TuiCmd};
 use agmag::hc::HcCli;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
@@ -23,8 +24,76 @@ enum NoteKind {
     Err,
 }
 
-fn width() -> usize {
-    std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).unwrap_or(110).clamp(60, 200)
+/// Clear the screen AND the scrollback, then home. The full frame is printed on the normal screen, so the part
+/// above the pane stays reachable with the mouse wheel, and older frames never pile up above it.
+const CLEAR_ALL: &[u8] = b"\x1b[2J\x1b[3J\x1b[H";
+
+/// Settings key that remembers the sections chosen with `view`.
+const VIEW_SETTING: &str = "tui_view";
+
+fn env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0)
+}
+
+/// Visible size of the console window (columns, rows), if stdout is a console.
+#[cfg(windows)]
+fn console_size() -> Option<(usize, usize)> {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_OUTPUT_HANDLE,
+    };
+    // SAFETY: plain Win32 calls on the process's own stdout handle; `info` is a POD out-parameter.
+    unsafe {
+        let handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        let mut info: CONSOLE_SCREEN_BUFFER_INFO = std::mem::zeroed();
+        if GetConsoleScreenBufferInfo(handle, &mut info) == 0 {
+            return None;
+        }
+        let w = i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1;
+        let h = i32::from(info.srWindow.Bottom) - i32::from(info.srWindow.Top) + 1;
+        (w > 0 && h > 0).then_some((w as usize, h as usize))
+    }
+}
+
+#[cfg(unix)]
+fn console_size() -> Option<(usize, usize)> {
+    // SAFETY: TIOCGWINSZ only writes into the zeroed `winsize` we pass.
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) != 0 || ws.ws_col == 0 || ws.ws_row == 0 {
+            return None;
+        }
+        Some((usize::from(ws.ws_col), usize::from(ws.ws_row)))
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn console_size() -> Option<(usize, usize)> {
+    None
+}
+
+/// Pane width: `COLUMNS` overrides the detected width; 110 when unknown. Height is not used: the whole dashboard
+/// is printed and the user scrolls.
+fn pane_width() -> usize {
+    env_usize("COLUMNS").or(console_size().map(|r| r.0)).unwrap_or(110).clamp(60, 200)
+}
+
+/// Whether to repaint: always after user input (the echoed line must be wiped), otherwise only when the frame
+/// changed, so a user scrolled up to read is not pulled back to the bottom every refresh.
+fn needs_redraw(frame: &str, last: Option<&str>, after_input: bool) -> bool {
+    after_input || last != Some(frame)
+}
+
+fn load_view(store: &Store) -> Vec<Section> {
+    store
+        .setting(VIEW_SETTING)
+        .ok()
+        .flatten()
+        .and_then(|v| parse_view(&v).ok())
+        .unwrap_or_else(|| Section::DEFAULT.to_vec())
+}
+
+fn view_names(view: &[Section]) -> String {
+    view.iter().map(|s| s.name()).collect::<Vec<_>>().join(" ")
 }
 
 fn confirmation_note(action: &str) -> String {
@@ -36,7 +105,7 @@ fn render_frame(text: &str, w: usize, cleanup_list: Option<&[CleanupCandidate]>,
     let mut body = String::with_capacity(text.len() + 512);
     body.push_str(text);
     if let Some(list) = cleanup_list {
-        let hdr = one_line("── MANUAL CLEANUP (enter 'c 1,2' or 'c all'; Enter to refresh) ──", max_w);
+        let hdr = one_line("── MANUAL CLEANUP (enter 'cleanup 1,2' or 'cleanup all'; Enter to refresh) ──", max_w);
         let _ = writeln!(body, "\x1b[1;93m{hdr}\x1b[0m");
         for (i, c) in list.iter().enumerate() {
             let st = if c.old_live { "live" } else { "exited" };
@@ -116,20 +185,21 @@ pub fn run(
     }
 
     let mut note: Option<(NoteKind, String)> = None;
+    let mut view = load_view(store);
     let mut pending: Option<TuiCmd> = None;
     let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;
     let mut cleanup_selected: Option<Vec<CleanupCandidate>> = None;
 
     let mut out = std::io::stdout();
-    // Initial full clear before the first home-positioned frame.
-    let _ = out.write_all(b"\x1b[2J");
+    let mut last_frame: Option<String> = None;
+    let mut after_input = true;
 
     loop {
         let _ = scan(store);
         let now = crate::now_ms();
-        let w = width();
+        let w = pane_width();
         let text = match snapshot(store, cfg, now) {
-            Ok(s) => render(&s, w),
+            Ok(s) => render_view(&s, w, &view, None),
             Err(e) => format!("\x1b[1;91m{}\x1b[0m\n", one_line(&format!("failed to read database: {e:#}"), w.saturating_sub(1))),
         };
         let frame = render_frame(
@@ -138,14 +208,20 @@ pub fn run(
             cleanup_list.as_deref(),
             note.as_ref().map(|(k, s)| (*k, s.as_str())),
         );
-        out.write_all(frame.as_bytes())?;
-        out.flush()?;
+        if needs_redraw(&frame, last_frame.as_deref(), after_input) {
+            out.write_all(CLEAR_ALL)?;
+            out.write_all(frame.as_bytes())?;
+            out.flush()?;
+            last_frame = Some(frame);
+        }
+        after_input = false;
 
         let line = match rx.recv_timeout(Duration::from_secs(refresh.max(1))) {
             Ok(l) => l,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         };
+        after_input = true;
         let now = crate::now_ms();
         note = None;
 
@@ -282,6 +358,19 @@ pub fn run(
                     Err(e) => (NoteKind::Err, format!("ERROR — policy NOT changed: {e:#}")),
                 });
             }
+            Ok(TuiCmd::View(None)) => {
+                note = Some((
+                    NoteKind::Ok,
+                    format!("view: {} (choose up to 3 of {}; `view default`)", view_names(&view), Section::names()),
+                ));
+            }
+            Ok(TuiCmd::View(Some(v))) => {
+                view = v;
+                note = Some(match store.set_setting(VIEW_SETTING, &view_names(&view)) {
+                    Ok(()) => (NoteKind::Ok, format!("view: {}", view_names(&view))),
+                    Err(e) => (NoteKind::Warn, format!("view: {} (not saved: {e:#})", view_names(&view))),
+                });
+            }
             Err(e) => note = Some((NoteKind::Err, e)),
         }
     }
@@ -289,7 +378,22 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{confirmation_note, render_frame, NoteKind};
+    use super::{confirmation_note, needs_redraw, render_frame, NoteKind, CLEAR_ALL};
+
+    #[test]
+    fn repaint_only_on_change_or_after_input() {
+        assert!(needs_redraw("a", None, false), "first frame");
+        assert!(!needs_redraw("a", Some("a"), false), "unchanged frame must not yank a scrolled-up user");
+        assert!(needs_redraw("b", Some("a"), false), "changed frame");
+        assert!(needs_redraw("a", Some("a"), true), "user input always repaints (wipes the echoed line)");
+    }
+
+    #[test]
+    fn clear_wipes_screen_and_scrollback_without_alternate_screen() {
+        let clear = std::str::from_utf8(CLEAR_ALL).unwrap();
+        assert!(clear.contains("\x1b[2J") && clear.contains("\x1b[3J") && clear.ends_with("\x1b[H"));
+        assert!(!clear.contains("?1049"), "normal screen keeps mouse scrolling");
+    }
     use unicode_width::UnicodeWidthStr;
 
     #[test]

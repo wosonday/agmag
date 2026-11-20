@@ -37,25 +37,43 @@ pub fn link_all(store: &Store) -> Result<usize> {
     // terminal → danh sách phiên ứng viên
     let mut cands: Vec<(String, Vec<i64>)> = Vec::new();
     for t in store.terminals(true)? {
-        if t.session.is_some() || t.labels.contains_key("agm.parent_rotation") {
+        if t.labels.contains_key("agm.parent_rotation") {
             continue;
         }
         let (Some(app), Some(cwd)) = (t.app.as_deref(), t.cwd.as_deref()) else { continue };
         let Some(source) = source_for_app(app) else { continue };
+        // One OpenCode TUI hosts many sessions over its life: opened now, first prompt much later, `/new` anytime.
+        let multi = source == "opencode";
+        // Already linked: only an automatic OpenCode link may move on, to a session newer than the current one.
+        let newer_than = match t.session {
+            None => None,
+            Some(sid) if multi && t.link_source.as_deref() == Some("auto") => Some(
+                store
+                    .conn()
+                    .query_row("SELECT COALESCE(started_ms, 0) FROM sessions WHERE id = ?1", [sid], |r| r.get::<_, i64>(0))
+                    .unwrap_or(0),
+            ),
+            Some(_) => continue,
+        };
         let want = norm_cwd(cwd);
+        let until = if multi { i64::MAX } else { t.created_ms + AFTER_MS };
         let mut stmt = store.conn().prepare(
             "SELECT s.id, s.cwd FROM sessions s
-             WHERE s.source = ?1 AND s.started_ms BETWEEN ?2 AND ?3
-               AND NOT EXISTS (SELECT 1 FROM terminals x WHERE x.session = s.id)",
+             WHERE s.source = ?1 AND s.started_ms BETWEEN ?2 AND ?3 AND s.started_ms > ?4
+               AND NOT EXISTS (SELECT 1 FROM terminals x WHERE x.session = s.id)
+             ORDER BY s.started_ms DESC, s.id DESC",
         )?;
-        let ids: Vec<i64> = stmt
-            .query_map(params![source, t.created_ms - BEFORE_MS, t.created_ms + AFTER_MS], |r| {
+        let mut ids: Vec<i64> = stmt
+            .query_map(params![source, t.created_ms - BEFORE_MS, until, newer_than.unwrap_or(i64::MIN)], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))
             })?
             .filter_map(|r| r.ok())
             .filter(|(_, c)| c.as_deref().map(norm_cwd).as_deref() == Some(want.as_str()))
             .map(|(id, _)| id)
             .collect();
+        if multi {
+            ids.truncate(1); // the newest session is the one this OpenCode terminal is working in
+        }
         cands.push((t.address, ids));
     }
     // Mỗi phiên là ứng viên của bao nhiêu terminal.

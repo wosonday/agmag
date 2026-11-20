@@ -10,6 +10,27 @@ use crate::launch::LaunchSpec;
 use crate::store::{MessageRow, Store};
 
 pub const KINDS: [&str; 7] = ["GIAO", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "CHƯA ĐẠT"];
+
+/// English message types shown in `agm tui`, paired with the stored code (SQLite, forwarded text, `agm send --type`).
+pub const KINDS_EN: [(&str, &str); 7] = [
+    ("ASSIGN", "GIAO"),
+    ("REPORT", "BÁO CÁO"),
+    ("ERROR", "LỖI"),
+    ("QUESTION", "HỎI"),
+    ("BLOCKED", "CHẶN"),
+    ("PASS", "ĐẠT"),
+    ("FAIL", "CHƯA ĐẠT"),
+];
+
+/// English name of a stored code for display; unknown codes are returned unchanged.
+pub fn kind_to_english(stored: &str) -> &str {
+    KINDS_EN.iter().find(|(_, vi)| *vi == stored).map_or(stored, |(en, _)| en)
+}
+
+/// Stored code for an English type (any letter case). Whole word only: `REPORTING` is not `REPORT`.
+pub fn kind_from_english(word: &str) -> Option<&'static str> {
+    KINDS_EN.iter().find(|(en, _)| en.eq_ignore_ascii_case(word)).map(|(_, vi)| *vi)
+}
 const PROTECTED_APPS: [&str; 2] = ["codex", "claude-code"];
 
 #[derive(Debug, Clone, PartialEq)]

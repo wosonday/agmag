@@ -185,3 +185,43 @@ fn policy_defaults() {
 fn gpt_sol_has_window() {
     assert_eq!(Config::builtin().model("gpt-6.1-sol").unwrap().context_window, Some(475000));
 }
+
+/// OpenCode keys are `providerID/id`: the bare id's entry is reused; an exact `provider/id` entry wins.
+#[test]
+fn opencode_provider_keys_resolve_models() {
+    let cfg: Config = toml::from_str(
+        r#"
+[providers.codex]
+billing = "subscription"
+[providers.openrouter]
+billing = "api"
+[models."gpt-6.1-sol"]
+provider = "codex"
+context_window = 475000
+[models."openrouter/gpt-6.1-sol"]
+provider = "openrouter"
+context_window = 200000
+"#,
+    )
+    .unwrap();
+    assert_eq!(cfg.model("openai/gpt-6.1-sol").unwrap().context_window, Some(475000));
+    assert_eq!(cfg.model("openrouter/gpt-6.1-sol").unwrap().context_window, Some(200000));
+    assert!(cfg.model("opencode-go/deepseek-v4-pro").is_none());
+    assert_eq!(agmag::config::split_provider("nvidia-kimi/moonshotai/kimi-k3.1-pro"), Some(("nvidia-kimi", "moonshotai/kimi-k3.1-pro")));
+    assert_eq!(agmag::config::split_provider("gpt-6.1-sol"), None);
+    assert_eq!(agmag::config::split_provider("/x"), None);
+}
+
+/// Future OpenCode models need no [models] entry: the provider prefix alone decides billing.
+#[test]
+fn undeclared_opencode_model_billed_by_provider_prefix() {
+    let cfg = Config::builtin();
+    // Declared model wins over the prefix (ChatGPT login through OpenCode = Codex subscription).
+    assert_eq!(cfg.billing_for_model("openai/gpt-6.1-sol"), Some(Billing::Subscription));
+    assert_eq!(cfg.billing_for_model("opencode-go/deepseek-v4-pro"), Some(Billing::Subscription));
+    assert_eq!(cfg.billing_for_model("opencode-go/some-model-from-2027"), Some(Billing::Subscription));
+    assert_eq!(cfg.billing_for_model("openrouter/qwen/qwen4-max"), Some(Billing::Api));
+    // Unknown provider (e.g. NVIDIA, fees unverified) stays unknown rather than guessed.
+    assert_eq!(cfg.billing_for_model("nvidia-kimi/moonshotai/kimi-k3.1-pro"), None);
+    assert_eq!(cfg.billing_for_model("nope"), None);
+}

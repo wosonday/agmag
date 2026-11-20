@@ -1,0 +1,113 @@
+# Built-in list prices, USD per 1M tokens, used by `agm cost` / `agm tui` to show what usage is worth at API rates.
+# Snapshot 2026-11-20 from the providers' public API prices (models.dev catalog; Claude rates checked against
+# Anthropic's published table). Base tier only: long-context surcharges (GPT > 272k, Claude Haiku 5.5 > 100k) are
+# not applied. Missing cache_write = input price. Override any entry with [models."<id>".price] in providers.toml.
+# Keys are bare model ids; OpenCode `provider/id`, dated ids (`-20251001`) and agy effort suffixes (`-high`) are
+# matched after stripping. Ids ending in `-free` / `:free` cost $0. Models not listed here show "?".
+
+# Anthropic
+[prices."claude-fable-5-2"]
+input = 8.0
+output = 40.0
+cache_read = 0.2
+cache_write = 10.0
+
+[prices."claude-fable-5-1"]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+cache_write = 12.5
+
+[prices."claude-opus-5-5"]
+input = 4.0
+output = 20.0
+cache_read = 0.2
+cache_write = 5.0
+
+[prices."claude-opus-5"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write = 6.25
+
+[prices."claude-sonnet-5-5"]
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.5
+
+[prices."claude-sonnet-5"]
+input = 2.0
+output = 10.0
+cache_read = 0.2
+cache_write = 2.5
+
+[prices."claude-haiku-5-5"]
+input = 0.1
+output = 0.5
+cache_read = 0.01
+cache_write = 0.125
+
+[prices."claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+cache_write = 1.25
+
+# OpenAI
+[prices."gpt-6.2-astra"]
+input = 8.0
+output = 40.0
+cache_read = 0.4
+cache_write = 10.0
+
+[prices."gpt-6.2-sol"]
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.5
+
+[prices."gpt-6.1-sol"]
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.5
+
+# Google
+[prices."gemini-4-argon"]
+input = 2.0
+output = 10.0
+cache_read = 0.1
+cache_write = 2.0
+
+[prices."gemini-4-hydrogen"]
+input = 1.5
+output = 7.5
+cache_read = 0.075
+cache_write = 1.5
+
+[prices."gemini-3.8-flash"]
+input = 0.75
+output = 3.75
+cache_read = 0.075
+cache_write = 0.75
+
+# DeepSeek (OpenCode Go serves the same models; Go itself is a subscription)
+[prices."deepseek-v4-pro"]
+input = 0.66
+output = 1.98
+cache_read = 0.022
+cache_write = 0.66
+
+[prices."deepseek-v4.1-flash"]
+input = 0.15
+output = 0.6
+cache_read = 0.003
+cache_write = 0.15
+
+# Moonshot
+[prices."kimi-k3"]
+input = 3.0
+output = 15.0
+cache_read = 0.3
+cache_write = 3.0

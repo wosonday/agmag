@@ -10,6 +10,7 @@ dependencies = [
  "clap",
  "comfy-table",
  "dirs",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",
@@ -19,6 +20,7 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
  "walkdir",
+ "windows-sys",
 ]
 
 [[package]]

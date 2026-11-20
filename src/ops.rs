@@ -80,7 +80,7 @@ pub fn daemon_loop(store: &Store, cfg: &Config, interval: u64, mut periodic: imp
     });
     let hc = HcCli::default();
     let git = GitCli;
-    eprintln!("agm daemon: đang theo dõi (chu kỳ {interval}s). Ctrl+C để dừng.");
+    eprintln!("agm daemon: watching (every {interval}s). Ctrl+C to stop.");
     let mut last: Option<std::time::Instant> = None;
     loop {
         let wait = last.map_or(Duration::ZERO, |l| Duration::from_secs(interval).saturating_sub(l.elapsed()));
@@ -125,7 +125,7 @@ pub fn send(store: &Store, to: &str, kind: &str, task: Option<&str>, text: &str,
     if json_out {
         print_json(&m)?;
     } else {
-        println!("Tin #{} → {}: {}{}", m.id, m.to, m.status, m.detail.as_deref().map(|d| format!(" ({d})")).unwrap_or_default());
+        println!("Message #{} → {}: {}{}", m.id, m.to, m.status, m.detail.as_deref().map(|d| format!(" ({d})")).unwrap_or_default());
     }
     if m.status == "failed" {
         bail!("gửi không thành công: {}", m.detail.unwrap_or_default());
@@ -139,10 +139,10 @@ pub fn inbox(store: &Store, all: bool, json_out: bool) -> Result<()> {
         return print_json(&rows);
     }
     if rows.is_empty() {
-        println!("Hộp thư trống.");
+        println!("Inbox is empty.");
     }
     for r in rows {
-        let done = if r.resolved_ms.is_some() { " (đã xử lý)" } else { "" };
+        let done = if r.resolved_ms.is_some() { " (resolved)" } else { "" };
         println!("#{} [{}{}] {} — {}{done}", r.id, r.source, r.kind.map(|k| format!("/{k}")).unwrap_or_default(), r.terminal.unwrap_or_else(|| "-".into()), r.text);
     }
     Ok(())
@@ -150,7 +150,7 @@ pub fn inbox(store: &Store, all: bool, json_out: bool) -> Result<()> {
 
 pub fn reply(store: &Store, id: i64, text: &str, now: i64) -> Result<()> {
     actions::reply(store, &HcCli::default(), id, text, now)?;
-    println!("Đã trả lời mục #{id}.");
+    println!("Replied to #{id}.");
     Ok(())
 }
 
@@ -172,7 +172,7 @@ pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Res
         "kill" => actions::kill(store, &hc, &c, target, now)?,
         _ => actions::interrupt(store, &hc, &c, target, now)?,
     }
-    println!("Đã {verb} {target}.");
+    println!("Done: {verb} {target}.");
     Ok(())
 }
 
@@ -181,9 +181,9 @@ pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
     match t.app.as_deref() {
         Some("opencode") => {
             if rotation::start(store, &t.address, None, true, now)? {
-                println!("Đã xếp {target} vào hàng xoay vòng; daemon sẽ yêu cầu bàn giao khi agent rảnh.");
+                println!("Queued {target} for rotation; the daemon will request a handoff when the agent is idle.");
             } else {
-                println!("{target} đang trong một vòng xoay.");
+                println!("{target} is already rotating.");
             }
             Ok(())
         }
@@ -195,9 +195,9 @@ pub fn rotate(store: &Store, target: &str, yes: bool, now: i64) -> Result<()> {
                 bail!("{target} ({app}) là phiên mở tay chưa bật quản lý — chạy `agm manage {target}` trước.");
             }
             if rotation::start(store, &t.address, None, true, now)? {
-                println!("Đã xếp {target} ({app}) vào hàng bàn giao & mở phiên kế nhiệm (không kill phiên cũ).");
+                println!("Queued {target} ({app}) for handoff and a successor session (the old session is not killed).");
             } else {
-                println!("{target} đang trong một vòng bàn giao hoặc đã bàn giao.");
+                println!("{target} is already in a handoff or has handed off.");
             }
             Ok(())
         }
@@ -228,7 +228,7 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
         // Tắt quản lý là hạ quyền nên ai cũng được làm, nhưng nhật ký phải ghi đúng người gọi.
         let who = hc_terminal().unwrap_or_else(|| "user".into());
         store.log_action(&who, "manage", &t.address, "off", true, now)?;
-        println!("Đã tắt quản lý tự động cho {}.", t.address);
+        println!("Automatic management disabled for {}.", t.address);
         return Ok(());
     }
     let hc = HcCli::default();
@@ -277,7 +277,7 @@ pub fn manage(store: &Store, target: &str, off: bool, cmd: Option<&str>, raw_arg
     let c = caller(store, false, Some(&question))?;
     actions::set_managed_launch(store, &c, &t.address, &spec, now)?;
     println!(
-        "Đã bật quản lý cho {} ({app}): exe={}, args={:?}, cwd={}",
+        "Management enabled for {} ({app}): exe={}, args={:?}, cwd={}",
         t.address, spec.executable, spec.argv, spec.cwd
     );
     Ok(())
@@ -292,7 +292,7 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
         if json_out {
             return print_json(&serde_json::json!({"done": 0, "skipped": [], "errors": []}));
         }
-        println!("Không có phiên đã bàn giao nào đủ điều kiện dọn dẹp.");
+        println!("No handed-off sessions are ready for cleanup.");
         return Ok(());
     }
 
@@ -314,13 +314,13 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
         if !std::io::stdin().is_terminal() {
             bail!("cần chỉ định terminal, `--all` hoặc chạy ở terminal tương tác để chọn");
         }
-        eprint!("Chọn số mục cần dọn (vd 1,2 hoặc all; Enter để hủy): ");
+        eprint!("Select items to clean up (e.g. 1,2 or all; Enter cancels): ");
         std::io::stderr().flush()?;
         let mut line = String::new();
         std::io::stdin().read_line(&mut line)?;
         let indices = parse_selection(line.trim(), candidates.len())?;
         if indices.is_empty() {
-            println!("Đã hủy.");
+            println!("Cancelled.");
             return Ok(());
         }
         indices.into_iter().map(|idx| candidates[idx].clone()).collect()
@@ -328,16 +328,16 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
 
     if targets.is_empty() && !all {
         // Đã hiển thị bảng ở trên; giờ chỉ hiện danh sách đã chốt.
-        println!("Sẽ dọn {} mục:", selected.len());
+        println!("Will clean up {} item(s):", selected.len());
     } else {
         print_cleanup_candidates(&selected);
     }
-    let prompt = format!("Xác nhận dọn {} phiên cũ đã bàn giao?", selected.len());
+    let prompt = format!("Confirm cleanup of {} handed-off session(s)?", selected.len());
     // Batch cleanup always requires one typed confirmation, including --yes.
     // A cached app classification must never authorize a protected live target.
     let c = caller(store, false, Some(&prompt))?;
     if !matches!(c, Caller::User { confirmed: true }) {
-        println!("Đã hủy.");
+        println!("Cancelled.");
         return Ok(());
     }
     let report = execute_cleanup_batch(store, &HcCli::default(), &c, &selected, now)?;
@@ -345,16 +345,16 @@ pub fn cleanup(store: &Store, targets: &[String], all: bool, _yes: bool, json_ou
         return print_json(&report);
     }
     println!(
-        "Hoàn tất dọn dẹp: {} đã dọn, {} bỏ qua, {} lỗi.",
+        "Cleanup finished: {} cleaned, {} skipped, {} errors.",
         report.done,
         report.skipped.len(),
         report.errors.len()
     );
     for s in &report.skipped {
-        println!("  [bỏ qua] {s}");
+        println!("  [skipped] {s}");
     }
     for e in &report.errors {
-        println!("  [lỗi] {e}");
+        println!("  [error] {e}");
     }
     Ok(())
 }
@@ -385,7 +385,7 @@ fn print_cleanup_candidates(items: &[CleanupCandidate]) {
         let old_st = if c.old_live { "live" } else { "exited" };
         let new_desc = match (&c.new_terminal, c.new_live) {
             (Some(a), true) => format!("{a} (live)"),
-            (Some(a), false) => format!("{a} (không live)"),
+            (Some(a), false) => format!("{a} (not live)"),
             (None, _) => "-".into(),
         };
         println!(
@@ -419,7 +419,7 @@ pub fn budget_set(store: &Store, scope: &str, soft: f64, hard: f64, action: &str
         bail!("hành động '{action}' không hợp lệ: notify | interrupt | kill");
     }
     store.set_budget(&BudgetRow { scope: scope.into(), unit: unit.into(), soft, hard, action: action.into() })?;
-    println!("Đã đặt ngân sách {scope}: mềm {soft}, cứng {hard} {unit}, hành động {action}.");
+    println!("Budget {scope} set: soft {soft}, hard {hard} {unit}, action {action}.");
     Ok(())
 }
 
@@ -433,7 +433,7 @@ pub fn budget_ls(store: &Store, json_out: bool, now_ms: i64) -> Result<()> {
         return print_json(&rows);
     }
     for r in rows {
-        println!("{} — {} / mềm {} / cứng {} {} ({})", r["scope"], r["value"], r["soft"], r["hard"], r["unit"].as_str().unwrap_or(""), r["action"].as_str().unwrap_or(""));
+        println!("{} — {} / soft {} / hard {} {} ({})", r["scope"], r["value"], r["soft"], r["hard"], r["unit"].as_str().unwrap_or(""), r["action"].as_str().unwrap_or(""));
     }
     Ok(())
 }
@@ -444,7 +444,7 @@ pub fn link(store: &Store, terminal: &str, session_prefix: &str) -> Result<()> {
         bail!("không biết terminal {terminal} (chạy `agm daemon` hoặc `agm ps` trước)");
     }
     store.link_terminal(terminal, sid, "manual")?;
-    println!("Đã ghép {terminal} ↔ {path}.");
+    println!("Linked {terminal} ↔ {path}.");
     Ok(())
 }
 
@@ -481,6 +481,6 @@ pub fn hook_install(agm_exe: &Path) -> Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     std::fs::write(&path, serde_json::to_string_pretty(&v)?)?;
-    println!("Đã thêm statusLine vào {}.", path.display());
+    println!("Added statusLine to {}.", path.display());
     Ok(())
 }

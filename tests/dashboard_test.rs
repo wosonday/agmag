@@ -132,7 +132,7 @@ fn render_contains_all_english_sections_and_colors() -> anyhow::Result<()> {
         "Chạy test?",
         "RECENT MESSAGES",
         "codex-mgr → t5",
-        "[GIAO]",
+        "[ASSIGN]",
         "(delivered)",
         "cmd:",
         "cleanup",
@@ -199,22 +199,77 @@ fn render_shows_red_warning_for_live_rotation_pair() -> anyhow::Result<()> {
 
 #[test]
 fn parse_commands() {
-    assert_eq!(parse_command("r 3 có, chạy đi"), Ok(TuiCmd::Reply(3, "có, chạy đi".into())));
-    assert_eq!(parse_command("s t5 GIAO làm tiếp"), Ok(TuiCmd::Send("t5".into(), "GIAO".into(), "làm tiếp".into())));
-    assert_eq!(parse_command("s t5 BÁO CÁO xong"), Ok(TuiCmd::Send("t5".into(), "BÁO CÁO".into(), "xong".into())));
-    assert_eq!(parse_command("k t5"), Ok(TuiCmd::Kill("t5".into())));
-    assert_eq!(parse_command("i t5"), Ok(TuiCmd::Interrupt("t5".into())));
-    assert_eq!(parse_command("p off"), Ok(TuiCmd::Policy(false)));
-    assert_eq!(parse_command("q"), Ok(TuiCmd::Quit));
+    // Full names and single-letter aliases give the same command.
+    for (full, alias) in [("reply 3 có, chạy đi", "r 3 có, chạy đi"), ("done 4", "d 4"), ("kill t5", "k t5"),
+        ("interrupt t5", "i t5"), ("policy off", "p off"), ("quit", "q"), ("cleanup 1,3", "c 1,3"),
+        ("send t5 ASSIGN làm tiếp", "s t5 ASSIGN làm tiếp")] {
+        assert_eq!(parse_command(full), parse_command(alias), "{full}");
+        assert!(parse_command(full).is_ok(), "{full}");
+    }
+    assert_eq!(parse_command("reply 3 có, chạy đi"), Ok(TuiCmd::Reply(3, "có, chạy đi".into())));
+    assert_eq!(parse_command("kill t5"), Ok(TuiCmd::Kill("t5".into())));
+    assert_eq!(parse_command("interrupt t5"), Ok(TuiCmd::Interrupt("t5".into())));
+    assert_eq!(parse_command("policy off"), Ok(TuiCmd::Policy(false)));
+    assert_eq!(parse_command("quit"), Ok(TuiCmd::Quit));
     assert_eq!(parse_command(""), Ok(TuiCmd::Refresh));
-    assert_eq!(parse_command("r x có").unwrap_err(), "usage: r <id> <reply>");
-    assert_eq!(parse_command("zzz").unwrap_err(), "unknown command 'zzz'");
-    assert_eq!(parse_command("s t5  GIAO  làm"), Ok(TuiCmd::Send("t5".into(), "GIAO".into(), "làm".into())));
-    assert!(parse_command("s t5 GIAOX làm").is_err());
-    assert_eq!(parse_command("d 4"), Ok(TuiCmd::Done(4)));
-    assert_eq!(parse_command("c"), Ok(TuiCmd::Cleanup(None)));
-    assert_eq!(parse_command("c 1,3"), Ok(TuiCmd::Cleanup(Some("1,3".into()))));
-    assert_eq!(parse_command("c all"), Ok(TuiCmd::Cleanup(Some("all".into()))));
+    assert_eq!(parse_command("done 4"), Ok(TuiCmd::Done(4)));
+    assert_eq!(parse_command("cleanup"), Ok(TuiCmd::Cleanup(None)));
+    assert_eq!(parse_command("cleanup all"), Ok(TuiCmd::Cleanup(Some("all".into()))));
+    assert_eq!(parse_command("r x có").unwrap_err(), "usage: reply <#> <text>");
+    assert_eq!(parse_command("done x").unwrap_err(), "usage: done <#>");
+    let unknown = parse_command("zzz").unwrap_err();
+    assert!(unknown.starts_with("unknown command 'zzz'") && unknown.contains("reply, done, send"), "{unknown}");
+}
+
+#[test]
+fn send_accepts_english_and_legacy_vietnamese_types() {
+    let send = |t: &str, k: &str, m: &str| -> Result<TuiCmd, String> { Ok(TuiCmd::Send(t.into(), k.into(), m.into())) };
+    for (en, vi) in [("ASSIGN", "GIAO"), ("REPORT", "BÁO CÁO"), ("ERROR", "LỖI"), ("QUESTION", "HỎI"),
+        ("BLOCKED", "CHẶN"), ("PASS", "ĐẠT"), ("FAIL", "CHƯA ĐẠT")] {
+        let expected = send("t5", vi, "Nội dung");
+        assert_eq!(parse_command(&format!("send t5 {en} Nội dung")), expected, "{en}");
+        assert_eq!(parse_command(&format!("send t5 {vi} Nội dung")), expected, "{vi}");
+    }
+    assert_eq!(parse_command("s user QUESTION Cần xác nhận?"), parse_command("s user HỎI Cần xác nhận?"));
+    assert_eq!(parse_command("s t5 report Đã chạy test"), send("t5", "BÁO CÁO", "Đã chạy test"));
+    assert_eq!(parse_command("send t5 Pass OK"), send("t5", "ĐẠT", "OK"));
+    // Message text keeps its case and Unicode; extra spaces between fields are ignored.
+    assert_eq!(parse_command("send t5  REPORT  Đã XONG 界 👩‍💻"), send("t5", "BÁO CÁO", "Đã XONG 界 👩‍💻"));
+}
+
+#[test]
+fn send_rejects_bad_type_target_or_message() {
+    for (line, needle) in [
+        ("send t5 REPORTING done", "unknown message type"),
+        ("send t5 GIAOX làm", "unknown message type"),
+        ("send t5 NOPE x", "unknown message type"),
+        ("send", "missing target terminal"),
+        ("send t5 REPORT", "missing message text"),
+        ("send t5 BÁO CÁO", "missing message text"),
+        ("send t5 REPORT    ", "missing message text"),
+    ] {
+        let err = parse_command(line).unwrap_err();
+        assert!(err.contains(needle), "{line}: {err}");
+        assert!(err.contains("ASSIGN|REPORT|ERROR|QUESTION|BLOCKED|PASS|FAIL"), "{line}: {err}");
+    }
+}
+
+#[test]
+fn command_bar_lists_full_names_and_all_english_types() -> anyhow::Result<()> {
+    let store = seeded()?;
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    for width in [60, 110] {
+        let plain = strip_ansi(&render(&snap, width));
+        let bar = &plain[plain.rfind("cmd:").expect("cmd bar")..];
+        for name in ["reply", "done", "send", "cleanup", "interrupt", "kill", "policy", "view", "quit",
+            "ASSIGN", "REPORT", "ERROR", "QUESTION", "BLOCKED", "PASS", "FAIL"] {
+            assert!(bar.contains(name), "width {width}: missing '{name}' in:
+{bar}");
+        }
+        assert!(bar.lines().all(|l| l.chars().count() < width), "width {width} overflow:
+{bar}");
+    }
+    Ok(())
 }
 
 #[test]
@@ -228,6 +283,8 @@ fn render_edge_widths_cross_year_and_extreme_values() -> anyhow::Result<()> {
             usage: Usage { output: 50_000, ..Default::default() },
             billing: None,
             cost_usd: None,
+            value_usd: None,
+            unpriced_tokens: 0,
         })
         .collect();
     snap.quota.push(QuotaRow {
@@ -356,5 +413,179 @@ fn wide_budget_scope_preserves_soft_and_hard_badges() -> anyhow::Result<()> {
         assert!(plain.contains(&format!(" {badge}")), "{badge} missing:\n{plain}");
         assert!(plain.lines().all(|line| line.width() < 60));
     }
+    Ok(())
+}
+
+#[test]
+fn terminals_show_name_dot_agent_model_effort_and_where() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t11".into(),
+        name: Some("w-login-1".into()),
+        app: Some("codex".into()),
+        cwd: Some(r"D:\Project\agmag\.wt\login-1".into()),
+        state: "live".into(),
+        status: Some("working".into()),
+        ..Default::default()
+    })?;
+    store.upsert_terminal(&TerminalRow { address: "t12".into(), app: Some("antigravity".into()), state: "live".into(), ..Default::default() })?;
+    let codex = store.session_id_for_path(Source::Codex, "codex://a")?;
+    store.set_model(codex, "gpt-6.1-sol")?;
+    store.set_effort(codex, "high")?;
+    store.link_terminal("t11", codex, "manual")?;
+    let agy = store.session_id_for_path(Source::Agy, "agy://b")?;
+    store.set_model(agy, "gemini-4-argon-medium")?;
+    store.link_terminal("t12", agy, "manual")?;
+    let plain = strip_ansi(&render(&snapshot(&store, &Config::builtin(), 1_000_000)?, 160));
+    for needle in ["name", "agent", "model", "effort", "where", "● w-login-1", "● t12", "gpt-6.1-sol", "high",
+        "gemini-4-argon", "medium", "login-1"] {
+        assert!(plain.contains(needle), "missing '{needle}' in:\n{plain}");
+    }
+    assert!(!plain.contains("gemini-4-argon-medium"), "agy effort suffix should move to the effort column:\n{plain}");
+    Ok(())
+}
+
+#[test]
+fn terminals_columns_order_short_name_and_folder_only() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t20".into(),
+        name: Some("worker-with-a-really-long-name-1".into()),
+        app: Some("opencode".into()),
+        cwd: Some(r"D:\Project\agmag\.wt\login-1\".into()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    let plain = strip_ansi(&render(&snapshot(&store, &Config::builtin(), 1_000_000)?, 160));
+    let header = plain.lines().find(|l| l.contains("name") && l.contains("agent")).expect("terminals header");
+    let order = ["name", "agent", "model", "effort", "where", "task", "tokens", "ctx", "last msg", "status"];
+    let pos: Vec<usize> = order.iter().map(|h| header.find(h).unwrap_or_else(|| panic!("{h} in {header}"))).collect();
+    assert!(pos.windows(2).all(|w| w[0] < w[1]), "column order wrong: {header}");
+    let row = plain.lines().find(|l| l.contains("● worker")).expect("terminal row");
+    assert!(row.contains("● worker-with…") && !row.contains("long-name-1"), "name not shortened: {row}");
+    assert!(row.contains(" login-1 ") && !row.contains("Project") && !row.contains(".wt"), "where should be the folder only: {row}");
+    Ok(())
+}
+
+#[test]
+fn split_effort_and_folder_name() {
+    use agmag::dashboard::{folder_name, split_effort};
+    assert_eq!(split_effort("gemini-4-argon-high", None), ("gemini-4-argon".into(), "high".into()));
+    assert_eq!(split_effort("claude-opus-5-5", Some("max")), ("claude-opus-5-5".into(), "max".into()));
+    assert_eq!(split_effort("claude-opus-5-5", None), ("claude-opus-5-5".into(), String::new()));
+    assert_eq!(split_effort("opencode-go/deepseek-v4-pro", Some("high")), ("opencode-go/deepseek-v4-pro".into(), "high".into()));
+    assert_eq!(folder_name(r"D:\Project\agmag\.wt\login-1"), "login-1");
+    assert_eq!(folder_name(r"D:\Project\agmag\"), "agmag");
+    assert_eq!(folder_name("/home/u/repo/"), "repo");
+    assert_eq!(folder_name("agmag"), "agmag");
+    assert_eq!(folder_name(r"D:\"), "D:");
+    assert_eq!(folder_name(""), "");
+}
+
+#[test]
+fn terminals_show_last_message_kind_in_english_with_direction() -> anyhow::Result<()> {
+    use agmag::store::MessageRow;
+    let store = Store::open_in_memory()?;
+    for (address, name) in [("t3p", Some("ceo")), ("t3v", None), ("t9", None)] {
+        store.upsert_terminal(&TerminalRow {
+            address: address.into(),
+            name: name.map(String::from),
+            app: Some("codex".into()),
+            state: "live".into(),
+            ..Default::default()
+        })?;
+    }
+    let msg = |ts: i64, from: &str, to: &str, kind: &str| MessageRow {
+        ts_ms: ts, from: from.into(), to: to.into(), kind: kind.into(), text: "x".into(), status: "delivered".into(),
+        ..Default::default()
+    };
+    // Messages may name a terminal by address or by name.
+    store.add_message(&msg(1, "ceo", "t3v", "GIAO"))?;
+    store.add_message(&msg(2, "t3v", "t3p", "BÁO CÁO"))?;
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    let last = |addr: &str| snap.terminals.iter().find(|t| t.address == addr).unwrap().last_msg.clone();
+    assert_eq!(last("t3v"), Some(("REPORT".to_string(), true)));
+    assert_eq!(last("t3p"), Some(("REPORT".to_string(), false)));
+    assert_eq!(last("t9"), None);
+    let plain = strip_ansi(&render(&snap, 160));
+    for needle in ["last msg", "→ REPORT", "← REPORT", "[REPORT]", "[ASSIGN]"] {
+        assert!(plain.contains(needle), "missing '{needle}' in:\n{plain}");
+    }
+    assert!(!plain.contains("[BÁO CÁO]") && !plain.contains("[GIAO]"), "{plain}");
+    Ok(())
+}
+
+#[test]
+fn view_command_picks_up_to_three_sections() {
+    use agmag::dashboard::{parse_view, Section};
+    assert_eq!(parse_command("view"), Ok(TuiCmd::View(None)));
+    // Any order and case; shown in display order; duplicates collapse.
+    assert_eq!(
+        parse_command("v inbox QUOTA,terminals"),
+        Ok(TuiCmd::View(Some(vec![Section::Quota, Section::Terminals, Section::Inbox])))
+    );
+    assert_eq!(parse_view("inbox inbox"), Ok(vec![Section::Inbox]));
+    // RECENT MESSAGES is pinned, so it is not a choice (and never uses one of the 3 slots).
+    assert!(parse_view("messages").unwrap_err().contains("always shown"));
+    assert!(!Section::names().contains("messages"));
+    assert_eq!(parse_view("default"), Ok(Section::DEFAULT.to_vec()));
+    assert!(parse_view("quota usage terminals inbox").unwrap_err().starts_with("usage: view <1-3 of"));
+    assert!(parse_view("quota nope").unwrap_err().contains("unknown section 'nope'"));
+    assert!(parse_command("view").is_ok() && parse_command("view a b c d").is_err());
+}
+
+#[test]
+fn render_view_shows_only_chosen_sections_and_fits_height() -> anyhow::Result<()> {
+    use agmag::dashboard::{render_view, Section};
+    let store = seeded()?;
+    for i in 0..30 {
+        store.upsert_terminal(&TerminalRow {
+            address: format!("x{i}"),
+            app: Some("opencode".into()),
+            state: "live".into(),
+            ..Default::default()
+        })?;
+    }
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    let plain = strip_ansi(&render_view(&snap, 110, &[Section::Terminals], None));
+    assert!(plain.contains("TERMINALS") && plain.contains("cmd:"), "{plain}");
+    assert!(plain.contains("RECENT MESSAGES") && plain.contains("[ASSIGN]"), "messages are always shown:\n{plain}");
+    assert!(plain.find("RECENT MESSAGES") < plain.find("cmd:"), "messages sit just above the command bar:\n{plain}");
+    for hidden in ["PLAN QUOTA", "USAGE (", "BUDGETS", "INBOX"] {
+        assert!(!plain.contains(hidden), "'{hidden}' should be hidden:\n{plain}");
+    }
+    for height in [24, 40] {
+        let plain = strip_ansi(&render_view(&snap, 110, &Section::DEFAULT, Some(height)));
+        // Two lines stay free for the note and the `agm>` prompt, so the pane never scrolls.
+        assert!(plain.lines().count() <= height - 2, "height {height}: {} lines\n{plain}", plain.lines().count());
+        for needle in ["agmag", "PLAN QUOTA", "TERMINALS", "INBOX", "RECENT MESSAGES", "more lines", "cmd:", "TYPE:"] {
+            assert!(plain.contains(needle), "height {height}: missing '{needle}':\n{plain}");
+        }
+    }
+    // Enough room → nothing is cut.
+    let full = strip_ansi(&render_view(&snap, 110, &Section::DEFAULT, Some(500)));
+    assert!(!full.contains("more lines"), "{full}");
+    Ok(())
+}
+
+#[test]
+fn where_shows_herdr_workspace_and_tab() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let mut labels = std::collections::BTreeMap::new();
+    labels.insert("where".to_string(), "MATHY-AI / opus-high".to_string());
+    store.upsert_terminal(&TerminalRow {
+        address: "t35".into(),
+        app: Some("antigravity".into()),
+        cwd: Some(r"D:\Project\MATHY-AI".into()),
+        labels,
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    let plain = strip_ansi(&render(&snapshot(&store, &Config::builtin(), 1_000_000)?, 160));
+    let row = plain.lines().find(|l| l.contains("● t35")).expect("row");
+    assert!(row.contains("MATHY-AI / opus-high"), "{row}");
+    // No herdr location → working folder name.
+    assert_eq!(agmag::dashboard::where_label("", r"D:\x\agmag"), "agmag");
+    assert_eq!(agmag::dashboard::where_label("  ", "/r/repo"), "repo");
     Ok(())
 }

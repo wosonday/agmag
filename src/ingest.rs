@@ -207,6 +207,7 @@ pub fn ingest_file(store: &Store, source: Source, path: &Path) -> Result<IngestS
                     match event {
                         ParseEvent::Meta(meta) => store.set_meta(sid, &meta)?,
                         ParseEvent::Model(model) => store.set_model(sid, &model)?,
+                        ParseEvent::Effort(effort) => store.set_effort(sid, &effort)?,
                         ParseEvent::Usage(usage) => store.upsert_usage(sid, &usage)?,
                         ParseEvent::Quota(quota) => store.insert_quota(&quota)?,
                         ParseEvent::Context(context) => store.set_context(sid, &context)?,

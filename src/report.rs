@@ -47,7 +47,12 @@ pub enum UsageWindow {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UsageBucket {
     pub usage: Usage,
+    /// Actually billed: API-billed models with a price only (None if one of them has no price).
     pub api_usd: Option<f64>,
+    /// Worth at list API prices, every priced model (subscriptions included). Tokens without a price are
+    /// counted in `unpriced_tokens` instead, so the value is a lower bound when that is non-zero.
+    pub value_usd: f64,
+    pub unpriced_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,7 +84,12 @@ pub struct CostRow {
     pub key: String,
     pub usage: Usage,
     pub billing: Option<Billing>,
+    /// Actually billed (API-billed models with a price); None when unknown or not billed per token.
     pub cost_usd: Option<f64>,
+    /// Worth at list API prices for every priced model; None when no token in the row has a price.
+    pub value_usd: Option<f64>,
+    /// Tokens of models without a known price (not included in `value_usd`).
+    pub unpriced_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,9 +180,9 @@ pub fn sessions(store: &Store, cfg: &Config, since_ms: i64) -> Result<Vec<Sessio
             .map(|w| w as u64)
             .or_else(|| model.as_deref().and_then(|m| cfg.model(m)).and_then(|m| m.context_window));
         let warning = if bad > 0 {
-            Some(format!("không đọc được {bad} dòng"))
+            Some(format!("{bad} unreadable lines"))
         } else if turns > 0 && usages == 0 {
-            Some("định dạng lạ?".to_string())
+            Some("unknown format?".to_string())
         } else {
             None
         };
@@ -320,6 +330,75 @@ struct CostAcc {
     usage: Usage,
     billing: Option<Option<Billing>>, // None = chưa có hàng; Some(x) = billing chung (x None nếu lẫn/không rõ)
     cost: Option<f64>,                // None khi có ít nhất một hàng không tính được USD
+    value: Option<f64>,               // giá trị theo bảng giá của các hàng có giá
+    unpriced: u64,                    // token của hàng không có giá
+}
+
+impl CostAcc {
+    fn new() -> Self {
+        CostAcc { usage: Usage::default(), billing: None, cost: Some(0.0), value: None, unpriced: 0 }
+    }
+
+    fn add(&mut self, usage: &Usage, billing: Option<Billing>, row_cost: Option<f64>, row_value: Option<f64>) {
+        self.usage.add(usage);
+        self.billing = Some(match self.billing {
+            None => billing,
+            Some(prev) if prev == billing => prev,
+            Some(_) => None,
+        });
+        self.cost = match (self.cost, row_cost) {
+            (Some(a), Some(b)) => Some(a + b),
+            _ => None,
+        };
+        match row_value {
+            Some(v) => self.value = Some(self.value.unwrap_or(0.0) + v),
+            None => self.unpriced += usage.total(),
+        }
+    }
+
+    fn into_row(self, key: String) -> CostRow {
+        CostRow {
+            key,
+            usage: self.usage,
+            billing: self.billing.flatten(),
+            cost_usd: self.cost,
+            value_usd: self.value,
+            unpriced_tokens: self.unpriced,
+        }
+    }
+}
+
+/// (actually billed USD, list-price value USD) of one usage record.
+fn price_row(cfg: &Config, model: Option<&str>, usage: &Usage) -> (Option<Billing>, Option<f64>, Option<f64>) {
+    let billing = model.and_then(|m| cfg.billing_for_model(m));
+    let value = model.and_then(|m| cfg.price_for(m)).map(|p| cost_usd(usage, &p));
+    // Real cost only for API-billed models; a subscription is not billed per token.
+    let cost = if billing == Some(Billing::Api) { value } else { None };
+    (billing, cost, value)
+}
+
+/// Column-wise sum of cost rows (the SUM line of `agm cost`). `value_usd` is None only if no row had a price.
+pub fn cost_totals(rows: &[CostRow]) -> CostRow {
+    let mut usage = Usage::default();
+    let mut value: Option<f64> = None;
+    let mut unpriced = 0;
+    for r in rows {
+        usage.add(&r.usage);
+        if let Some(v) = r.value_usd {
+            value = Some(value.unwrap_or(0.0) + v);
+        }
+        unpriced += r.unpriced_tokens;
+    }
+    CostRow { key: "SUM".into(), usage, billing: None, cost_usd: None, value_usd: value, unpriced_tokens: unpriced }
+}
+
+/// USD cell text: `$1.23`; `≥ $1.23` when some tokens have no price (the value is a lower bound); `?` when none do.
+pub fn value_label(value_usd: Option<f64>, unpriced_tokens: u64) -> String {
+    match value_usd {
+        None => "?".into(),
+        Some(v) if unpriced_tokens > 0 => format!("≥ ${v:.2}"),
+        Some(v) => format!("${v:.2}"),
+    }
 }
 
 /// Tổng token theo nhóm kể từ `since_ms` (dùng giờ mặc định của máy tính).
@@ -361,29 +440,10 @@ pub fn cost_with_offset(
             GroupBy::Source => source,
             GroupBy::Cwd => cwd.unwrap_or_else(|| "?".into()),
         };
-        let billing = model.as_deref().and_then(|m| cfg.billing_for_model(m));
-        let price = model.as_deref().and_then(|m| cfg.model(m)).and_then(|m| m.price.as_ref());
-        // cost_usd chỉ được gọi cho model trả theo API và có giá (gói tháng không quy ra tiền).
-        let row_cost = match (billing, price) {
-            (Some(Billing::Api), Some(p)) => Some(cost_usd(&usage, p)),
-            _ => None,
-        };
-        let acc = groups.entry(key).or_insert(CostAcc { usage: Usage::default(), billing: None, cost: Some(0.0) });
-        acc.usage.add(&usage);
-        acc.billing = Some(match acc.billing {
-            None => billing,
-            Some(prev) if prev == billing => prev,
-            Some(_) => None,
-        });
-        acc.cost = match (acc.cost, row_cost) {
-            (Some(a), Some(b)) => Some(a + b),
-            _ => None,
-        };
+        let (billing, row_cost, row_value) = price_row(cfg, model.as_deref(), &usage);
+        groups.entry(key).or_insert_with(CostAcc::new).add(&usage, billing, row_cost, row_value);
     }
-    Ok(groups
-        .into_iter()
-        .map(|(key, acc)| CostRow { key, usage: acc.usage, billing: acc.billing.flatten(), cost_usd: acc.cost })
-        .collect())
+    Ok(groups.into_iter().map(|(key, acc)| acc.into_row(key)).collect())
 }
 
 /// Tổng hợp 24h, hôm nay, tháng này và 4 tháng gần nhất (đủ cả bucket 0).
@@ -414,47 +474,37 @@ pub fn usage_summary_with_offset(
     let mut months: BTreeMap<String, CostAcc> = bounds
         .recent_month_keys
         .iter()
-        .map(|k| (k.clone(), CostAcc { usage: Usage::default(), billing: None, cost: Some(0.0) }))
+        .map(|k| (k.clone(), CostAcc::new()))
         .collect();
 
     let mut usd_unknown = [false; 3]; // 24h, hôm nay, tháng này
-    let add_bucket = |b: &mut UsageBucket, u: &Usage, row_usd: Option<f64>| {
+    let add_bucket = |b: &mut UsageBucket, u: &Usage, row_usd: Option<f64>, row_value: Option<f64>| {
         b.usage.add(u);
         if let Some(c) = row_usd {
             b.api_usd = Some(b.api_usd.unwrap_or(0.0) + c);
+        }
+        match row_value {
+            Some(v) => b.value_usd += v,
+            None => b.unpriced_tokens += u.total(),
         }
     };
 
     for row in rows {
         let (model, ts_ms, usage) = row?;
-        let billing = model.as_deref().and_then(|m| cfg.billing_for_model(m));
-        let price = model.as_deref().and_then(|m| cfg.model(m)).and_then(|m| m.price.as_ref());
-        let row_cost = match (billing, price) {
-            (Some(Billing::Api), Some(p)) => Some(cost_usd(&usage, p)),
-            _ => None,
-        };
+        let (billing, row_cost, row_value) = price_row(cfg, model.as_deref(), &usage);
         // Trả theo API mà chưa khai giá: tổng USD của ô không còn biết được (không số liệu giả).
         let unpriced_api = billing == Some(Billing::Api) && row_cost.is_none();
         let starts = [bounds.last_24h_start_ms, bounds.today_start_ms, bounds.month_start_ms];
         for ((start, bucket), unknown) in starts.into_iter().zip([&mut b24, &mut bday, &mut bmon]).zip(usd_unknown.iter_mut()) {
             if ts_ms >= start {
-                add_bucket(bucket, &usage, row_cost);
+                add_bucket(bucket, &usage, row_cost, row_value);
                 *unknown |= unpriced_api;
             }
         }
         if ts_ms >= bounds.four_months_start_ms {
             let mkey = local_month_key(ts_ms, offset_at);
             if let Some(acc) = months.get_mut(&mkey) {
-                acc.usage.add(&usage);
-                acc.billing = Some(match acc.billing {
-                    None => billing,
-                    Some(prev) if prev == billing => prev,
-                    Some(_) => None,
-                });
-                acc.cost = match (acc.cost, row_cost) {
-                    (Some(a), Some(b)) => Some(a + b),
-                    _ => None,
-                };
+                acc.add(&usage, billing, row_cost, row_value);
             }
         }
     }
@@ -468,9 +518,12 @@ pub fn usage_summary_with_offset(
     let recent_months = months
         .into_iter()
         .map(|(key, acc)| {
-            let billing = acc.billing.flatten();
-            let cost_usd = if acc.usage.total() == 0 { None } else { acc.cost };
-            CostRow { key, usage: acc.usage, billing, cost_usd }
+            let empty = acc.usage.total() == 0;
+            let mut row = acc.into_row(key);
+            if empty {
+                row.cost_usd = None;
+            }
+            row
         })
         .collect();
 

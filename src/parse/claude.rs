@@ -6,6 +6,7 @@ use crate::model::*;
 #[derive(Default)]
 pub struct ClaudeParser {
     model: Option<String>,
+    effort: Option<String>,
     meta_emitted: bool,
 }
 
@@ -44,6 +45,13 @@ impl LogParser for ClaudeParser {
                     {
                         self.seed_model(model);
                         events.push(ParseEvent::Model(model.to_owned()));
+                    }
+                    // Claude Code tags each assistant line with the effort in force (`/effort` can change it).
+                    if let Some(effort) = value["effort"].as_str().filter(|e| !e.is_empty())
+                        && self.effort.as_deref() != Some(effort)
+                    {
+                        self.effort = Some(effort.to_owned());
+                        events.push(ParseEvent::Effort(effort.to_owned()));
                     }
                     if let Some(id) = message["id"].as_str() {
                         let usage = &message["usage"];

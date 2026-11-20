@@ -12,7 +12,9 @@ fn opening_migrated_db_does_not_wait_for_write_lock() -> anyhow::Result<()> {
     let store = Store::open(&path)?;
     assert!(t0.elapsed() < std::time::Duration::from_secs(1), "mở CSDL mất {:?}", t0.elapsed());
     let v: i64 = store.conn().query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
+    let has_effort: bool = store.conn().query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')", [], |r| r.get(0))?;
+    assert!(has_effort);
     daemon.execute_batch("ROLLBACK;")?;
     Ok(())
 }
@@ -41,7 +43,9 @@ fn migrates_v1_to_v2() -> anyhow::Result<()> {
     }
     let store = Store::open(&path)?;
     let v: i64 = store.conn().query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
+    let has_effort: bool = store.conn().query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')", [], |r| r.get(0))?;
+    assert!(has_effort);
     let n: i64 = store.conn().query_row("SELECT COUNT(*) FROM inbox", [], |r| r.get(0))?;
     assert_eq!(n, 0);
     Ok(())
@@ -59,7 +63,9 @@ fn migrates_v2_to_v3_idempotently() -> anyhow::Result<()> {
     }
     let store = Store::open(&path)?;
     let v: i64 = store.conn().query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
+    let has_effort: bool = store.conn().query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')", [], |r| r.get(0))?;
+    assert!(has_effort);
     drop(store);
     // Mở lại lần hai không lỗi cột trùng.
     let store2 = Store::open(&path)?;

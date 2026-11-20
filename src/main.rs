@@ -6,12 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use comfy_table::{presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{presets::UTF8_FULL_CONDENSED, Attribute, Cell, CellAlignment, Table};
 use serde::Serialize;
 
-use agmag::config::{Billing, Config};
+use agmag::config::Config;
 use agmag::ingest::{ingest_source, Roots};
-use agmag::model::{Source, Usage};
+use agmag::model::Source;
 use agmag::report::{
     self, compute_local_bounds, coverage_status, days_from_civil, render_bar, sqlite_offset_at,
     window_since_ms, GroupBy, UsageSummary, UsageWindow,
@@ -250,7 +250,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("agm: lỗi: {e:#}");
+            eprintln!("agm: error: {e:#}");
             ExitCode::from(1)
         }
     }
@@ -294,7 +294,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Daemon { replay: Some(file), .. } => {
             let n = ops::daemon_replay(&store, &file, now)?;
             agmag::correlate::link_all(&store)?;
-            emit(json, &serde_json::json!({ "applied": n }), || println!("Đã nạp {n} sự kiện."))
+            emit(json, &serde_json::json!({ "applied": n }), || println!("Applied {n} events."))
         }
         Cmd::Daemon { interval, replay: None } => {
             let cfg = cfg()?;
@@ -316,7 +316,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Inbox { all } => ops::inbox(&store, all, json),
         Cmd::Done { id } => {
             agmag::actions::dismiss(&store, id, now)?;
-            emit(json, &serde_json::json!({ "done": id }), || println!("Đã đóng mục #{id}."))
+            emit(json, &serde_json::json!({ "done": id }), || println!("Dismissed #{id}."))
         }
         Cmd::Reply { id, text } => ops::reply(&store, id, &text.join(" "), now),
         Cmd::Spawn { template, task, role, name, cwd, text } => {
@@ -339,13 +339,13 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Policy { state } => match state.as_str() {
             "status" => {
                 let on = agmag::policy::enabled(&store)?;
-                emit(json, &serde_json::json!({ "enabled": on }), || println!("policy: {}", if on { "bật" } else { "TẮT" }))
+                emit(json, &serde_json::json!({ "enabled": on }), || println!("policy: {}", if on { "ON" } else { "OFF" }))
             }
             s => {
                 store.set_setting("policy", s)?;
                 store.log_action(&ops::hc_terminal().unwrap_or_else(|| "user".into()), "policy", s, "", true, now)?;
                 emit(json, &serde_json::json!({ "enabled": s == "on" }), || {
-                    println!("policy: {}", if s == "on" { "bật" } else { "TẮT — không còn hành động tự động" })
+                    println!("policy: {}", if s == "on" { "ON" } else { "OFF — no automatic actions" })
                 })
             }
         },
@@ -366,7 +366,7 @@ fn run(cli: Cli) -> Result<()> {
         ),
         Cmd::Scan { .. } => emit(json, &stats_json(&stats), || {
             println!(
-                "Đã quét {} tệp, {} dòng mới ({} sự kiện, {} dòng loại lạ, {} dòng hỏng).",
+                "Scanned {} files, {} new lines ({} events, {} unknown lines, {} bad lines).",
                 stats.files, stats.lines, stats.events, stats.unknown, stats.bad
             )
         }),
@@ -389,9 +389,9 @@ fn run(cli: Cli) -> Result<()> {
             if refresh {
                 // Lỗi agy (chưa cài, mất mạng, chưa đăng nhập) không chặn việc in hạn mức Codex/Claude.
                 match agmag::agy_quota::fetch_usage().and_then(|out| agmag::agy_quota::record_usage(&store, &out, now)) {
-                    Ok(p) if p.unknown > 0 => eprintln!("agm: bỏ qua {} bucket hạn mức agy không nhận ra", p.unknown),
+                    Ok(p) if p.unknown > 0 => eprintln!("agm: skipped {} unrecognized agy quota bucket(s)", p.unknown),
                     Ok(_) => {}
-                    Err(e) => eprintln!("agm: không đọc được hạn mức agy: {e:#}"),
+                    Err(e) => eprintln!("agm: could not read agy quota: {e:#}"),
                 }
             }
             let rows = report::quota(&store, now / 1000)?;
@@ -411,7 +411,7 @@ fn run(cli: Cli) -> Result<()> {
                 emit(true, &raw, || {})
             } else {
                 emit(json, &turns, || {
-                    let mut t = table(&["giờ (UTC)", "vai", "tóm tắt"]);
+                    let mut t = table(&["time (UTC)", "role", "summary"]);
                     for turn in &turns {
                         t.add_row(vec![hhmm(turn.ts_ms), format!("{:?}", turn.role).to_lowercase(), turn.summary.clone()]);
                     }
@@ -458,7 +458,7 @@ fn scan(store: &Store, since_ms: i64) -> Result<agmag::ingest::IngestStats> {
     match agmag::opencode::ingest_opencode(store, &agmag::opencode::default_db()) {
         Ok(oc) => stats.add(&oc),
         Err(err) => {
-            eprintln!("agm: bỏ qua opencode.db: {err:#}");
+            eprintln!("agm: skipped opencode.db: {err:#}");
             stats.skipped += 1;
         }
     }
@@ -470,7 +470,7 @@ fn scan(store: &Store, since_ms: i64) -> Result<agmag::ingest::IngestStats> {
             stats.add(&ag);
         }
         Err(err) => {
-            eprintln!("agm: bỏ qua agy: {err:#}");
+            eprintln!("agm: skipped agy: {err:#}");
             stats.skipped += 1;
         }
     }
@@ -478,7 +478,7 @@ fn scan(store: &Store, since_ms: i64) -> Result<agmag::ingest::IngestStats> {
 }
 
 fn print_terminals(rows: &[agmag::store::TerminalRow]) {
-    let mut t = table(&["terminal", "tên", "app", "trạng thái", "task", "vai", "phiên", "thư mục"]);
+    let mut t = table(&["terminal", "name", "agent", "status", "task", "role", "session", "where"]);
     for r in rows {
         t.add_row(vec![
             r.address.clone(),
@@ -536,7 +536,7 @@ fn hhmm(ts_ms: i64) -> String {
 }
 
 fn print_sessions(rows: &[report::SessionRow]) {
-    let mut t = table(&["nguồn", "phiên", "model", "token", "ngữ cảnh", "lần cuối (UTC)", "thư mục", "cảnh báo"]);
+    let mut t = table(&["source", "session", "model", "tokens", "context", "last (UTC)", "where", "warning"]);
     for r in rows {
         t.add_row(vec![
             r.source.as_str().to_string(),
@@ -552,33 +552,27 @@ fn print_sessions(rows: &[report::SessionRow]) {
     println!("{t}");
 }
 
-fn usd_cell(billing: Option<Billing>, cost: Option<f64>) -> String {
-    match (billing, cost) {
-        (_, Some(c)) => format!("${c:.2}"),
-        (Some(Billing::Subscription), None) => "— (gói tháng)".into(),
-        _ => "?".into(),
-    }
-}
+const USD_NOTE: &str = "USD = tokens × each model's list API price (built-in table, or [models.\"<id>\".price] in \
+providers.toml). Subscription plans (codex, claude, agy, opencode-go) are not billed per token: this is what the \
+same usage would cost on the API. ≥ = some tokens have no known price; ? = no price.";
 
 fn print_cost(rows: &[report::CostRow], by: GroupBy) {
     let key = match by {
         GroupBy::Model => "model",
-        GroupBy::Day => "ngày (giờ máy)",
-        GroupBy::Month => "tháng (giờ máy)",
-        GroupBy::Source => "nguồn",
-        GroupBy::Cwd => "thư mục",
+        GroupBy::Day => "day (local)",
+        GroupBy::Month => "month (local)",
+        GroupBy::Source => "source",
+        GroupBy::Cwd => "where",
     };
     let with_bar = matches!(by, GroupBy::Day | GroupBy::Month);
     let max_tok = rows.iter().map(|r| r.usage.total()).max().unwrap_or(0);
-    let mut header = vec![key, "input", "cache đọc", "cache ghi", "output", "tổng"];
+    let mut header = vec![key, "input", "cache read", "cache write", "output", "total"];
     if with_bar {
-        header.push("biểu đồ (token)");
+        header.push("chart (tokens)");
     }
     header.push("USD");
     let mut t = table(&header);
-    let mut total = Usage::default();
-    for r in rows {
-        total.add(&r.usage);
+    let cells = |r: &report::CostRow, bar: Option<String>| {
         let mut row = vec![
             r.key.clone(),
             human_tokens(r.usage.input_uncached),
@@ -587,19 +581,29 @@ fn print_cost(rows: &[report::CostRow], by: GroupBy) {
             human_tokens(r.usage.output),
             human_tokens(r.usage.total()),
         ];
-        if with_bar {
-            row.push(render_bar(r.usage.total(), max_tok, 16, false));
+        row.extend(bar);
+        row.push(report::value_label(r.value_usd, r.unpriced_tokens));
+        row
+    };
+    for r in rows {
+        t.add_row(cells(r, with_bar.then(|| render_bar(r.usage.total(), max_tok, 16, false))));
+    }
+    // SUM line: every numeric column added up, in bold.
+    let sum = report::cost_totals(rows);
+    t.add_row(
+        cells(&sum, with_bar.then(String::new))
+            .into_iter()
+            .map(|c| Cell::new(c).add_attribute(Attribute::Bold))
+            .collect::<Vec<_>>(),
+    );
+    // Numbers read better right-aligned (every column except the key and the chart).
+    for idx in (1..header.len()).filter(|&i| !(with_bar && i == 6)) {
+        if let Some(col) = t.column_mut(idx) {
+            col.set_cell_alignment(CellAlignment::Right);
         }
-        row.push(usd_cell(r.billing, r.cost_usd));
-        t.add_row(row);
     }
-    let mut foot = vec!["TỔNG".into(), String::new(), String::new(), String::new(), String::new(), human_tokens(total.total())];
-    if with_bar {
-        foot.push(String::new());
-    }
-    foot.push(String::new());
-    t.add_row(foot);
     println!("{t}");
+    println!("{USD_NOTE}");
 }
 
 fn cost_target_since_ms(
@@ -625,13 +629,14 @@ fn cost_target_since_ms(
 }
 
 fn print_summary(sum: &UsageSummary) {
-    println!("SỬ DỤNG ({})", sum.offset_label);
-    let mut t = table(&["cửa sổ", "input", "cache đọc", "cache ghi", "output", "tổng", "USD (API)"]);
+    println!("USAGE ({})", sum.offset_label);
+    let mut t = table(&["window", "input", "cache read", "cache write", "output", "total", "USD", "billed (API)"]);
     for (label, b) in [
-        ("24h qua", &sum.last_24h),
-        ("Hôm nay", &sum.today),
-        ("Tháng này", &sum.this_month),
+        ("Last 24h", &sum.last_24h),
+        ("Today", &sum.today),
+        ("This month", &sum.this_month),
     ] {
+        let priced = b.usage.total() > b.unpriced_tokens;
         t.add_row(vec![
             label.into(),
             human_tokens(b.usage.input_uncached),
@@ -639,24 +644,28 @@ fn print_summary(sum: &UsageSummary) {
             human_tokens(b.usage.cache_write),
             human_tokens(b.usage.output),
             human_tokens(b.usage.total()),
+            report::value_label(priced.then_some(b.value_usd), b.unpriced_tokens),
             b.api_usd.map(|c| format!("${c:.2}")).unwrap_or_else(|| "—".into()),
         ]);
     }
+    for idx in 1..8 {
+        if let Some(col) = t.column_mut(idx) {
+            col.set_cell_alignment(CellAlignment::Right);
+        }
+    }
     println!("{t}");
 
-    println!("\n4 THÁNG GẦN NHẤT (biểu đồ tổng token)");
+    println!("\nLAST {} MONTHS (total tokens, USD at list prices)", sum.recent_months.len());
     let max_m = sum.recent_months.iter().map(|r| r.usage.total()).max().unwrap_or(0);
     for r in &sum.recent_months {
         let bar = render_bar(r.usage.total(), max_m, 20, false);
-        let usd = match (r.billing, r.cost_usd) {
-            (_, Some(c)) => format!("  ${c:.2}"),
-            _ => String::new(),
-        };
+        let usd = if r.usage.total() == 0 { String::new() } else { format!("  {}", report::value_label(r.value_usd, r.unpriced_tokens)) };
         println!("  {}  {}  {:>6}{usd}", r.key, bar, human_tokens(r.usage.total()));
     }
+    println!("\n{USD_NOTE}");
     if sum.incomplete_coverage {
         println!(
-            "\n! Dữ liệu log cũ có thể chưa đầy đủ từ {} (chạy `agm scan --since {}`).",
+            "\n! Older log data may be incomplete since {} (run `agm scan --since {}`).",
             sum.four_months_start_day,
             sum.four_months_start_day,
         );
@@ -675,15 +684,15 @@ fn window_label(minutes: u32) -> String {
 
 fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
     // Hiển thị phần CÒN LẠI (giảm dần từ 100%); JSON vẫn có cả `used_percent` lẫn `left_percent`.
-    let mut t = table(&["gói", "cửa sổ", "còn lại", "", "reset"]);
+    let mut t = table(&["plan", "window", "left", "", "reset"]);
     for r in rows {
         let left = if r.left_percent.is_finite() { r.left_percent } else { 0.0 };
         let filled = ((left / 10.0).round() as usize).min(10);
         let reset = if r.reset_passed {
-            "đã reset".to_string()
+            "reset passed".to_string()
         } else {
             let left = r.resets_at_s - now_s;
-            format!("còn {}h{:02}m", left / 3600, left % 3600 / 60)
+            format!("in {}h{:02}m", left / 3600, left % 3600 / 60)
         };
         t.add_row(vec![
             r.provider.clone(),

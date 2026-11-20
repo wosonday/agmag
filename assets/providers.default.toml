@@ -13,6 +13,12 @@ billing = "api"
 [providers.ollama]
 billing = "api"
 
+# OpenCode lưu model dạng `providerID/id`; provider dưới đây là tiền tố đó.
+# Go là gói tháng; hạn mức 5h/tuần/tháng chỉ xem được trên Go Console, agm không đọc được.
+[providers."opencode-go"]
+billing = "subscription"
+# NVIDIA (`nvidia-kimi`, `nvidia-mistral`, `nvidia-nemotron`): chưa xác minh phí → không khai báo, USD hiện "?".
+
 [models."gpt-6.1-sol"]
 provider = "codex"
 # Codex tự báo model_context_window = 475000 trong log; OpenCode cần giá trị này.

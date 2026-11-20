@@ -109,10 +109,10 @@ fn warnings_and_context_fallback() -> anyhow::Result<()> {
     let mut cfg = Config::builtin();
     cfg.models.insert("custom".into(), ModelCfg { provider: "codex".into(), context_window: Some(100), price: None });
     let rows = report::sessions(&store, &cfg, 0)?;
-    assert_eq!(rows[0].warning.as_deref(), Some("định dạng lạ?"));
+    assert_eq!(rows[0].warning.as_deref(), Some("unknown format?"));
     assert_eq!(rows[0].context_pct, Some(25.0));
     store.add_line_stats(sid, 0, 2)?;
-    assert_eq!(report::sessions(&store, &cfg, 0)?[0].warning.as_deref(), Some("không đọc được 2 dòng"));
+    assert_eq!(report::sessions(&store, &cfg, 0)?[0].warning.as_deref(), Some("2 unreadable lines"));
     store.set_context(sid, &ContextSnapshot { ts_ms: 2, used_tokens: 25, window_tokens: Some(200) })?;
     assert_eq!(report::sessions(&store, &cfg, 0)?[0].context_pct, Some(12.5));
     Ok(())
@@ -237,13 +237,70 @@ fn summary_api_usd_is_unknown_when_an_api_model_has_no_price() -> anyhow::Result
 }
 
 #[test]
-fn cost_never_calls_human_pricing_for_subscription_or_missing_price() -> anyhow::Result<()> {
+fn subscription_has_list_value_but_no_billed_cost() -> anyhow::Result<()> {
     let store = fixtures()?;
     let mut cfg = Config::builtin();
     cfg.models.get_mut("gpt-6.1-sol").unwrap().price = Some(Price { input: 1.0, cache_read: 1.0, cache_write: 1.0, output: 1.0 });
-    assert!(report::cost(&store, &cfg, GroupBy::Model, 0)?.iter().all(|r| r.cost_usd.is_none()));
+    let rows = report::cost(&store, &cfg, GroupBy::Model, 0)?;
+    // Subscription: never "billed", but its worth at list price is shown.
+    assert!(rows.iter().all(|r| r.cost_usd.is_none()));
+    let sol = rows.iter().find(|r| r.key == "gpt-6.1-sol").expect("gpt row");
+    assert!(sol.value_usd.unwrap() > 0.0 && sol.unpriced_tokens == 0);
+    // API-billed without a user price falls back to the built-in list price, and then it is billed.
     cfg.providers.insert("codex".into(), ProviderCfg { billing: Billing::Api });
     cfg.models.get_mut("gpt-6.1-sol").unwrap().price = None;
-    assert!(report::cost(&store, &cfg, GroupBy::Model, 0)?.iter().all(|r| r.cost_usd.is_none()));
+    let rows = report::cost(&store, &cfg, GroupBy::Model, 0)?;
+    let sol = rows.iter().find(|r| r.key == "gpt-6.1-sol").expect("gpt row");
+    assert!(sol.cost_usd.is_some() && sol.cost_usd == sol.value_usd);
     Ok(())
+}
+
+#[test]
+fn price_lookup_strips_provider_date_and_effort_and_frees_zen() {
+    use agmag::config::model_id_candidates;
+    let cfg = Config::builtin();
+    let opus = cfg.price_for("claude-opus-5-5").expect("built-in Opus 5.5 price");
+    assert_eq!((opus.input, opus.output, opus.cache_read, opus.cache_write), (4.0, 20.0, 0.2, 5.0));
+    for name in ["anthropic/claude-opus-5-5", "claude-opus-5-5-high", "openrouter/claude-opus-5-5"] {
+        assert_eq!(cfg.price_for(name).as_ref(), Some(&opus), "{name}");
+    }
+    assert!(cfg.price_for("claude-haiku-4-5-20251001").is_some(), "dated Claude id");
+    assert!(cfg.price_for("gemini-4-argon-medium").is_some(), "agy effort suffix");
+    assert!(cfg.price_for("opencode-go/deepseek-v4-pro").is_some());
+    assert_eq!(cfg.price_for("opencode/beam-free"), Some(Price::FREE));
+    assert_eq!(cfg.price_for("openrouter/google/gemma-4-31b-it:free"), Some(Price::FREE));
+    assert_eq!(cfg.price_for("codex-auto-review"), None, "no known price → unknown, not guessed");
+    assert_eq!(cfg.price_for("nvidia-kimi/moonshotai/kimi-k3.1-pro"), None);
+    assert_eq!(model_id_candidates("anthropic/claude-haiku-4-5-20251001")[..3], ["anthropic/claude-haiku-4-5-20251001", "anthropic/claude-haiku-4-5", "claude-haiku-4-5-20251001"]);
+}
+
+#[test]
+fn user_price_overrides_builtin() -> anyhow::Result<()> {
+    let mut cfg = Config::builtin();
+    cfg.models.insert(
+        "claude-opus-5-5".into(),
+        agmag::config::ModelCfg { provider: "claude".into(), context_window: None, price: Some(Price { input: 9.0, cache_read: 9.0, cache_write: 9.0, output: 9.0 }) },
+    );
+    assert_eq!(cfg.price_for("claude-opus-5-5-high").map(|p| p.input), Some(9.0));
+    Ok(())
+}
+
+#[test]
+fn cost_totals_and_value_labels() {
+    use agmag::report::{cost_totals, value_label, CostRow};
+    let row = |key: &str, out: u64, value: Option<f64>, unpriced: u64| CostRow {
+        key: key.into(),
+        usage: Usage { output: out, ..Default::default() },
+        billing: None,
+        cost_usd: None,
+        value_usd: value,
+        unpriced_tokens: unpriced,
+    };
+    let rows = [row("a", 100, Some(1.5), 0), row("b", 50, None, 50), row("c", 10, Some(0.25), 0)];
+    let sum = cost_totals(&rows);
+    assert_eq!((sum.key.as_str(), sum.usage.output, sum.value_usd, sum.unpriced_tokens), ("SUM", 160, Some(1.75), 50));
+    assert_eq!(value_label(sum.value_usd, sum.unpriced_tokens), "≥ $1.75");
+    assert_eq!(value_label(Some(1.75), 0), "$1.75");
+    assert_eq!(value_label(None, 50), "?");
+    assert_eq!(cost_totals(&[]).value_usd, None);
 }

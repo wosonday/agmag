@@ -5,7 +5,7 @@ use comfy_table::{presets::UTF8_FULL_CONDENSED, Attribute, Cell, CellAlignment, 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::actions::KINDS;
+use crate::actions::{kind_to_english, KINDS, KINDS_EN};
 use crate::config::Config;
 use crate::policy::{budget_value, enabled, session_context_pct};
 use crate::report::{quota, spark_bar, usage_summary, QuotaRow, UsageBucket, UsageSummary};
@@ -33,6 +33,16 @@ pub struct TermView {
     pub app: String,
     pub status: String,
     pub task: String,
+    /// Model of the linked session ("" when unknown), without an effort suffix.
+    pub model: String,
+    /// Reasoning effort / variant (`high`, `medium`, ...); "" when unknown.
+    pub effort: String,
+    /// Working directory: terminal cwd, else the linked session's cwd.
+    pub cwd: String,
+    /// herdr location like `hc ls` shows it (`agmag / agm-ceo`); "" when unknown.
+    pub place: String,
+    /// Latest message sent or received by this terminal: (English kind, sent_by_this_terminal).
+    pub last_msg: Option<(String, bool)>,
     /// None when the terminal is not linked to a log session (unknown, not 0).
     pub tokens: Option<u64>,
     pub context_pct: Option<f64>,
@@ -64,17 +74,30 @@ pub struct Snapshot {
 pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     let mut terminals = Vec::new();
     for t in store.terminals(true)? {
-        let (tokens, ctx) = match t.session {
+        let (tokens, ctx, model, effort, session_cwd) = match t.session {
             Some(sid) => {
-                let n: i64 = store.conn().query_row(
-                    "SELECT COALESCE(SUM(input_uncached + cache_read + cache_write + output), 0) FROM usage WHERE session = ?1",
+                let (n, model, effort, cwd): (i64, Option<String>, Option<String>, Option<String>) = store.conn().query_row(
+                    "SELECT (SELECT COALESCE(SUM(input_uncached + cache_read + cache_write + output), 0) FROM usage WHERE session = ?1),
+                            model, effort, cwd FROM sessions WHERE id = ?1",
                     [sid],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )?;
-                (Some(n.max(0) as u64), session_context_pct(store, cfg, sid)?)
+                (Some(n.max(0) as u64), session_context_pct(store, cfg, sid)?, model, effort, cwd)
             }
-            None => (None, None),
+            None => (None, None, None, None, None),
         };
+        let (model, effort) = split_effort(model.as_deref().unwrap_or(""), effort.as_deref());
+        // Messages address terminals by address or by name, so match both.
+        let name = t.name.as_deref().filter(|n| !n.is_empty()).unwrap_or(&t.address);
+        let last_msg = store
+            .conn()
+            .query_row(
+                "SELECT kind, from_t IN (?1, ?2) FROM messages
+                 WHERE from_t IN (?1, ?2) OR to_t IN (?1, ?2) ORDER BY id DESC LIMIT 1",
+                [&t.address, name],
+                |r| Ok((kind_to_english(&r.get::<_, String>(0)?).to_string(), r.get::<_, bool>(1)?)),
+            )
+            .ok();
         let mut status = match (t.status.as_deref(), t.kind.as_deref()) {
             (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
             (Some("blocked"), None) => "BLOCKED".into(),
@@ -90,6 +113,11 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
             app: t.app.unwrap_or_else(|| "?".into()),
             status,
             task: t.task.unwrap_or_default(),
+            model,
+            effort,
+            place: t.labels.get("where").cloned().unwrap_or_default(),
+            cwd: t.cwd.or(session_cwd).unwrap_or_default(),
+            last_msg,
             tokens,
             context_pct: ctx,
             handoff_state: t.handoff_state,
@@ -193,7 +221,7 @@ fn terminals_table(width: usize) -> Table {
         .enforce_styling()
         .set_width(width.saturating_sub(1) as u16);
     t.set_header(
-        ["t", "name", "app", "status", "task", "tokens", "ctx"]
+        ["name", "agent", "model", "effort", "where", "task", "tokens", "ctx", "last msg", "status"]
             .into_iter()
             .map(|h| Cell::new(h).fg(Color::Cyan).add_attribute(Attribute::Bold)),
     );
@@ -212,22 +240,73 @@ fn app_cell(app: &str) -> Cell {
     }
 }
 
+fn status_color(status: &str) -> Color {
+    if status.starts_with("BLOCKED") {
+        Color::Red
+    } else if status.contains("[HANDED OFF]") {
+        Color::Yellow
+    } else if status == "working" || status == "running" {
+        Color::Green
+    } else if status == "idle" || status == "done" {
+        Color::Cyan
+    } else if status == "exited" || status == "-" {
+        Color::DarkGrey
+    } else {
+        Color::White
+    }
+}
+
 fn status_cell(status: &str) -> Cell {
     let clean = sanitize_one_line(status);
-    let c = Cell::new(&clean);
-    if clean.starts_with("BLOCKED") {
-        c.fg(Color::Red).add_attribute(Attribute::Bold)
-    } else if clean.contains("[HANDED OFF]") {
-        c.fg(Color::Yellow)
-    } else if clean == "working" || clean == "running" {
-        c.fg(Color::Green).add_attribute(Attribute::Bold)
-    } else if clean == "idle" || clean == "done" {
-        c.fg(Color::Cyan)
-    } else if clean == "exited" || clean == "-" {
-        c.fg(Color::DarkGrey)
-    } else {
-        c.fg(Color::White)
+    let bold = clean.starts_with("BLOCKED") || clean == "working" || clean == "running";
+    let c = Cell::new(&clean).fg(status_color(&clean));
+    if bold { c.add_attribute(Attribute::Bold) } else { c }
+}
+
+/// Effort levels seen in Codex, Claude Code, OpenCode variants and agy model names.
+use crate::config::EFFORT_LEVELS as EFFORTS;
+
+/// Splits `model` / `effort` for display. agy encodes the level in the model name (`gemini-4-argon-high`),
+/// so a known level suffix becomes the effort when the log reported none.
+pub fn split_effort(model: &str, effort: Option<&str>) -> (String, String) {
+    if let Some(e) = effort.filter(|e| !e.is_empty()) {
+        return (model.to_string(), e.to_string());
     }
+    match model.rsplit_once('-') {
+        Some((base, level)) if EFFORTS.contains(&level) && !base.is_empty() => (base.to_string(), level.to_string()),
+        _ => (model.to_string(), String::new()),
+    }
+}
+
+fn effort_cell(effort: &str) -> Cell {
+    let clean = sanitize_one_line(effort);
+    let c = Cell::new(if clean.is_empty() { "-" } else { &clean });
+    match clean.as_str() {
+        "" => c.fg(Color::DarkGrey),
+        "xhigh" | "max" => c.fg(Color::Magenta).add_attribute(Attribute::Bold),
+        "high" => c.fg(Color::Magenta),
+        "medium" => c.fg(Color::Yellow),
+        _ => c.fg(Color::Green),
+    }
+}
+
+/// Width of the terminal name in the TERMINALS table (after the `● ` dot); longer names end with `…`.
+const NAME_CELLS: usize = 12;
+
+/// Width of the `where` cell; longer locations end with `…`.
+const WHERE_CELLS: usize = 24;
+
+/// `where` cell: herdr's `workspace / tab` (as in `hc ls`), else the working folder name.
+pub fn where_label(place: &str, cwd: &str) -> String {
+    let place = sanitize_one_line(place);
+    if place.trim().is_empty() { folder_name(cwd) } else { place.trim().to_string() }
+}
+
+/// Working folder only: the last path component (`D:\Project\agmag\.wt\login-1` → `login-1`), any separator.
+pub fn folder_name(path: &str) -> String {
+    let clean = sanitize_one_line(path);
+    let trimmed = clean.trim_end_matches(['/', '\\']);
+    trimmed.rsplit(['/', '\\']).next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
 }
 
 fn ctx_cell(ctx: Option<f64>) -> Cell {
@@ -259,17 +338,31 @@ fn inbox_source_badge(source: &str) -> String {
     }
 }
 
-fn msg_kind_badge(kind: &str) -> String {
-    let clean = sanitize_one_line(kind);
-    let tag = format!("[{clean}]");
-    match clean.as_str() {
-        "GIAO" => paint(BRIGHT_CYAN, &tag),
-        "BÁO CÁO" => paint(BRIGHT_GREEN, &tag),
-        "ĐẠT" => paint(BOLD_GREEN, &tag),
-        "HỎI" => paint(BRIGHT_YELLOW, &tag),
-        "LỖI" | "CHẶN" | "CHƯA ĐẠT" => paint(BRIGHT_RED, &tag),
-        _ => paint(WHITE, &tag),
+/// One color scheme for message kinds (badge in RECENT MESSAGES and `last msg` cell): ANSI code, table color, bold.
+fn kind_style(english: &str) -> (&'static str, Color, bool) {
+    match english {
+        "ASSIGN" => (BRIGHT_CYAN, Color::Cyan, false),
+        "REPORT" => (BRIGHT_GREEN, Color::Green, false),
+        "PASS" => (BOLD_GREEN, Color::Green, true),
+        "QUESTION" => (BRIGHT_YELLOW, Color::Yellow, false),
+        "BLOCKED" => (BOLD_RED, Color::Red, true),
+        "ERROR" | "FAIL" => (BRIGHT_RED, Color::Red, false),
+        _ => (WHITE, Color::White, false),
     }
+}
+
+fn msg_kind_badge(kind: &str) -> String {
+    let clean = sanitize_one_line(kind_to_english(kind));
+    paint(kind_style(&clean).0, &format!("[{clean}]"))
+}
+
+/// `→ REPORT`: this terminal sent it; `← ASSIGN`: it received it.
+fn last_msg_cell(last: Option<&(String, bool)>) -> Cell {
+    let Some((kind, sent)) = last else { return Cell::new("-").fg(Color::DarkGrey) };
+    let clean = sanitize_one_line(kind);
+    let (_, color, bold) = kind_style(&clean);
+    let c = Cell::new(format!("{} {clean}", if *sent { "→" } else { "←" })).fg(color);
+    if bold { c.add_attribute(Attribute::Bold) } else { c }
 }
 
 fn wrap_styled_items(items: &[(usize, String)], sep: &str, sep_plain_len: usize, indent: usize, max_width: usize) -> Vec<String> {
@@ -384,22 +477,13 @@ fn render_footer(width: usize) -> String {
         }
     };
     let sep = paint(GRAY, " · ");
-    let items: Vec<(usize, String)> = [
-        ("r", "<#> <reply>"),
-        ("d", "<#> (done)"),
-        ("s", "<t> <TYPE> <msg>"),
-        ("c", "[1,2|all] (cleanup)"),
-        ("i", "<t>"),
-        ("k", "<t>"),
-        ("p", "on|off"),
-        ("q", ""),
-    ]
-    .into_iter()
-    .map(|(k, args)| {
-        let plain_len = k.chars().count() + if args.is_empty() { 0 } else { 1 + args.chars().count() };
-        (plain_len, cmd(k, args))
-    })
-    .collect();
+    let items: Vec<(usize, String)> = TUI_COMMANDS
+        .iter()
+        .map(|(k, _, args)| {
+            let plain_len = k.chars().count() + if args.is_empty() { 0 } else { 1 + args.chars().count() };
+            (plain_len, cmd(k, args))
+        })
+        .collect();
     let lines = wrap_styled_items(&items, &sep, 3, 5, width.saturating_sub(1));
     let rule = paint(GRAY, &"─".repeat(width.saturating_sub(1)));
     let mut out = format!("{rule}\n");
@@ -407,275 +491,427 @@ fn render_footer(width: usize) -> String {
         let prefix = if idx == 0 { paint(GRAY, "cmd:") } else { "    ".into() };
         out += &format!("{prefix} {l}\n");
     }
+    // Message types for `send`, one styled item each so they wrap instead of being clipped at narrow widths.
+    let kinds: Vec<(usize, String)> = KINDS_EN.iter().map(|(en, _)| (en.len(), paint(BOLD_CYAN, en))).collect();
+    for (idx, l) in wrap_styled_items(&kinds, " ", 1, 11, width.saturating_sub(1)).into_iter().enumerate() {
+        let prefix = if idx == 0 { paint(GRAY, "     TYPE:") } else { " ".repeat(10) };
+        out += &format!("{prefix} {l}\n");
+    }
     out
 }
 
-/// Full-screen ANSI text render (includes section headers and command bar).
+/// Dashboard sections, in display order. `agm tui` shows at most [`MAX_VIEW`] of them at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Quota,
+    Usage,
+    Terminals,
+    Budgets,
+    Inbox,
+    Messages,
+}
+
+/// Most sections chosen together with `view` (RECENT MESSAGES is pinned on top of that and never counts).
+pub const MAX_VIEW: usize = 3;
+
+impl Section {
+    pub const ALL: [Section; 6] =
+        [Section::Quota, Section::Usage, Section::Terminals, Section::Budgets, Section::Inbox, Section::Messages];
+    /// Sections `view` can pick; RECENT MESSAGES is always shown, just above the command bar.
+    pub const SELECTABLE: [Section; 5] =
+        [Section::Quota, Section::Usage, Section::Terminals, Section::Budgets, Section::Inbox];
+    pub const DEFAULT: [Section; 3] = [Section::Quota, Section::Terminals, Section::Inbox];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Section::Quota => "quota",
+            Section::Usage => "usage",
+            Section::Terminals => "terminals",
+            Section::Budgets => "budgets",
+            Section::Inbox => "inbox",
+            Section::Messages => "messages",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Section> {
+        Section::SELECTABLE.into_iter().find(|s| s.name().eq_ignore_ascii_case(name))
+    }
+
+    pub fn names() -> String {
+        Section::SELECTABLE.map(Section::name).join("|")
+    }
+}
+
+/// Parses `view` arguments: 1..=MAX_VIEW distinct section names (any order; shown in display order), or `default`.
+pub fn parse_view(args: &str) -> std::result::Result<Vec<Section>, String> {
+    let words: Vec<&str> = args.split([' ', ',']).filter(|w| !w.is_empty()).collect();
+    if words.len() == 1 && words[0].eq_ignore_ascii_case("default") {
+        return Ok(Section::DEFAULT.to_vec());
+    }
+    if words.is_empty() || words.len() > MAX_VIEW {
+        return Err(format!("usage: view <1-{MAX_VIEW} of {}> | view default", Section::names()));
+    }
+    let mut picked = Vec::new();
+    for w in words {
+        if w.eq_ignore_ascii_case(Section::Messages.name()) {
+            return Err(format!("RECENT MESSAGES is always shown; choose up to {MAX_VIEW} of {}", Section::names()));
+        }
+        let Some(sec) = Section::from_name(w) else {
+            return Err(format!("unknown section '{}'; choose from {}", sanitize_one_line(w), Section::names()));
+        };
+        if !picked.contains(&sec) {
+            picked.push(sec);
+        }
+    }
+    Ok(Section::ALL.into_iter().filter(|s| picked.contains(s)).collect())
+}
+
+/// Full-screen ANSI text render of every section (CLI/tests). The TUI uses [`render_view`].
 pub fn render(s: &Snapshot, width: usize) -> String {
+    render_view(s, width, &Section::ALL, None)
+}
+
+/// Header + the chosen sections + RECENT MESSAGES (always, last) + command bar. With `height`, section bodies are
+/// shortened (never the header or command bar) so the frame fits and the pane never scrolls; [`FRAME_RESERVE`]
+/// lines stay free for the note and prompt.
+pub fn render_view(s: &Snapshot, width: usize, sections: &[Section], height: Option<usize>) -> String {
     let max_w = width.saturating_sub(1);
-    let mut out = render_header(s, width);
-
-    // Hạn mức hiển thị theo phần CÒN LẠI (giảm dần từ 100%, như Codex `/status` và agy `/usage`).
-    out += &section("◈", "PLAN QUOTA (left)", width);
-    if s.quota.is_empty() {
-        for l in wrap_plain_words("(no quota data — run `agm scan`; Claude needs `agm hook install`)", "  ", "  ", max_w) {
-            out += &format!("{}\n", paint(GRAY, &l));
-        }
+    let header = render_header(s, width);
+    let footer = render_footer(width);
+    let shown = sections.iter().copied().filter(|sec| *sec != Section::Messages).chain([Section::Messages]);
+    let mut blocks: Vec<Vec<String>> =
+        shown.map(|sec| render_section(s, sec, width).lines().map(String::from).collect()).collect();
+    if let Some(h) = height {
+        let fixed = header.lines().count() + footer.lines().count() + FRAME_RESERVE;
+        fit_blocks(&mut blocks, h.saturating_sub(fixed));
     }
-    for q in &s.quota {
-        let win = if q.window_minutes % 1440 == 0 {
-            format!("{}d", q.window_minutes / 1440)
-        } else {
-            format!("{}h", q.window_minutes / 60)
-        };
-        let reset = if q.reset_passed {
-            paint(BRIGHT_GREEN, "reset ready")
-        } else {
-            let left = q.resets_at_s - s.now_s;
-            paint(CYAN, &format!("resets in {}h{:02}m", left / 3600, left % 3600 / 60))
-        };
-        // 10 cột: đủ cho `agy-gemini` / `agy-argon` mà không bị cắt.
-        let prov = one_line(&q.provider, 10);
-        if q.left_percent.is_finite() {
-            // Màu vẫn theo mức đã dùng (còn ít → đỏ); thanh và con số theo phần còn lại.
-            let col = pct_color(100.0 - q.left_percent);
-            let pct_str = paint(col, &format!("{:>3.0}% left", q.left_percent));
-            out += &format!(
-                "  {} {}  {} {pct_str}  {reset}\n",
-                paint(WHITE, &pad_cells(&prov, 10)),
-                paint(CYAN, &format!("{:>3}", win)),
-                colored_bar(q.left_percent, col),
-            );
-        } else {
-            out += &format!(
-                "  {} {}  {} {}  {reset}\n",
-                paint(WHITE, &pad_cells(&prov, 10)),
-                paint(CYAN, &format!("{:>3}", win)),
-                paint(GRAY, "··········"),
-                paint(GRAY, "   ?"),
-            );
-        }
+    let mut out = header;
+    for line in blocks.iter().flatten() {
+        out.push_str(line);
+        out.push('\n');
     }
-
-    out += &section("▪", &format!("USAGE ({})", s.usage_summary.offset_label), width);
-    let fmt_bucket = |label: &str, b: &UsageBucket| -> (usize, String) {
-        let tok = tokens(b.usage.total());
-        let usd_plain = b.api_usd.map(|u| format!(" (${u:.2})")).unwrap_or_default();
-        let usd_styled = if usd_plain.is_empty() {
-            String::new()
-        } else {
-            paint(BRIGHT_GREEN, &usd_plain)
-        };
-        let plain_len = label.chars().count() + 1 + tok.chars().count() + usd_plain.chars().count();
-        (plain_len, format!("{} {}{usd_styled}", paint(CYAN, label), paint(WHITE, &tok)))
-    };
-    let sep = paint(GRAY, " │ ");
-    let bucket_items = [
-        fmt_bucket("24h", &s.usage_summary.last_24h),
-        fmt_bucket("Today", &s.usage_summary.today),
-        fmt_bucket("This month", &s.usage_summary.this_month),
-    ];
-    for line in wrap_styled_items(&bucket_items, &sep, 3, 2, max_w) {
-        out += &format!("  {line}\n");
-    }
-
-    let max_m = s.usage_summary.recent_months.iter().map(|m| m.usage.total()).max().unwrap_or(0);
-    let cross_year = s
-        .usage_summary
-        .recent_months
-        .first()
-        .zip(s.usage_summary.recent_months.last())
-        .is_some_and(|(a, b)| a.key.get(..4) != b.key.get(..4));
-    let month_pairs: Vec<(usize, String)> = s
-        .usage_summary
-        .recent_months
-        .iter()
-        .enumerate()
-        .map(|(idx, m)| {
-            let ym = m.key.split('-').collect::<Vec<_>>();
-            let lbl = match ym.as_slice() {
-                [y, mo] if cross_year && y.len() == 4 && y.bytes().all(|b| b.is_ascii_digit()) => {
-                    format!("{}'{}", sanitize_one_line(month_abbr(mo)), &y[2..])
-                }
-                [_, mo] => sanitize_one_line(month_abbr(mo)),
-                _ => sanitize_one_line(&m.key),
-            };
-            let val = m.usage.total();
-            let tok = tokens(val);
-            let bar_ch = spark_bar(val, max_m, false).to_string();
-            let is_peak = max_m > 0 && val == max_m;
-            let is_latest = idx + 1 == s.usage_summary.recent_months.len();
-            let plain_len = format!("{lbl} {bar_ch} {tok}").chars().count();
-            let styled = format!(
-                "{} {} {}",
-                if is_latest { paint(WHITE, &lbl) } else { paint(GRAY, &lbl) },
-                paint(if is_peak { BRIGHT_GREEN } else { BRIGHT_CYAN }, &bar_ch),
-                if is_latest { paint(WHITE, &tok) } else { tok },
-            );
-            (plain_len, styled)
-        })
-        .collect();
-    for line in wrap_styled_items(&month_pairs, &sep, 3, 2, max_w) {
-        out += &format!("  {line}\n");
-    }
-    if s.usage_summary.incomplete_coverage {
-        let msg = format!(
-            "! incomplete 4-month coverage — run `agm scan --since {}`",
-            s.usage_summary.four_months_start_day
-        );
-        for l in wrap_plain_words(&msg, "  ", "    ", max_w) {
-            out += &format!("{}\n", paint(BRIGHT_YELLOW, &l));
-        }
-    }
-
-    out += &section("▸", "TERMINALS", width);
-    for (old, new, cwd) in &s.live_rotation_pairs {
-        let msg = format!(
-            "! WARNING: {} (handed off) and {} are both running in {} — avoid conflicting edits; type 'c' to clean up",
-            sanitize_one_line(old),
-            sanitize_one_line(new),
-            sanitize_one_line(cwd),
-        );
-        for l in wrap_plain_words(&msg, "  ", "    ", max_w) {
-            out += &format!("{BOLD_RED}{l}{RESET}\n");
-        }
-    }
-    if s.terminals.is_empty() {
-        out += &format!("  {}\n", paint(GRAY, "(no active terminals)"));
-    } else {
-        let mut t = terminals_table(width);
-        for v in &s.terminals {
-            let addr = sanitize_one_line(&v.address);
-            let addr_cell = if v.status.starts_with("BLOCKED") {
-                Cell::new(addr).fg(Color::Red).add_attribute(Attribute::Bold)
-            } else {
-                Cell::new(addr).fg(Color::White)
-            };
-            let name_clean = sanitize_one_line(&v.name);
-            let name_cell = if name_clean.is_empty() {
-                Cell::new("-").fg(Color::DarkGrey)
-            } else {
-                Cell::new(name_clean).fg(Color::White)
-            };
-            let task_clean = sanitize_one_line(&v.task);
-            let task_cell = if task_clean.is_empty() {
-                Cell::new("-").fg(Color::DarkGrey)
-            } else {
-                Cell::new(task_clean).fg(Color::Cyan)
-            };
-            let tok_cell = match v.tokens {
-                Some(n) => Cell::new(tokens(n)).fg(Color::White),
-                None => Cell::new("?").fg(Color::DarkGrey),
-            }
-            .set_alignment(CellAlignment::Right);
-            t.add_row(vec![
-                addr_cell,
-                name_cell,
-                app_cell(&v.app),
-                status_cell(&v.status),
-                task_cell,
-                tok_cell,
-                ctx_cell(v.context_pct),
-            ]);
-        }
-        out += &format!("{t}\n");
-    }
-
-    out += &section("◆", "BUDGETS", width);
-    if s.budgets.is_empty() {
-        for l in wrap_plain_words("(none set — agm budget set task:<ID> --soft … --hard …)", "  ", "  ", max_w) {
-            out += &format!("{}\n", paint(GRAY, &l));
-        }
-    }
-    let scope_w = if width >= 76 { 24 } else { 14 };
-    for b in &s.budgets {
-        let pct = b
-            .value
-            .filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0)
-            .map(|v| v / b.hard * 100.0);
-        let (bar_col, flag) = match b.value.filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0) {
-            Some(v) if v >= b.hard => (BRIGHT_RED, paint(BOLD_RED, " HARD")),
-            Some(v) if b.soft.is_finite() && v >= b.soft => (BRIGHT_YELLOW, paint(BRIGHT_YELLOW, " soft")),
-            _ => (BRIGHT_GREEN, String::new()),
-        };
-        // Missing or non-finite value → "?" (never render a fake 0%). Percent budgets keep decimals.
-        let num = |v: f64| if b.unit == "tokens" { tokens(v.max(0.0) as u64) } else { format!("{v:.1}") };
-        let bar_str = pct.map(|p| colored_bar(p, bar_col)).unwrap_or_else(|| paint(GRAY, "··········"));
-        let pct_str = match pct {
-            Some(p) if p > 999.0 => paint(bar_col, ">999%"),
-            Some(p) => paint(bar_col, &format!("{p:>3.0}%")),
-            None => paint(GRAY, "   ?"),
-        };
-        let scope_padded = pad_cells(&one_line(&b.scope, scope_w), scope_w);
-        let val_str = b.value.filter(|v| v.is_finite()).map(num).unwrap_or_else(|| "?".into());
-        let hard_str = if b.hard.is_finite() { num(b.hard) } else { "?".into() };
-        let unit = sanitize_one_line(&b.unit);
-        out += &format!(
-            "  {} {bar_str} {pct_str}  {val_str} / {hard_str} {}{flag}\n",
-            paint(WHITE, &scope_padded),
-            paint(GRAY, &unit),
-        );
-    }
-
-    let inbox_icon = if s.inbox.is_empty() { "○" } else { "●" };
-    out += &section(inbox_icon, "INBOX", width);
-    if s.inbox.is_empty() {
-        out += &format!("  {}\n", paint(GRAY, "(empty)"));
-    }
-    for i in &s.inbox {
-        let term = one_line(i.terminal.as_deref().unwrap_or("-"), max_w / 5);
-        let src = one_line(&i.source, max_w / 5);
-        let prefix_len = 2 + format!("#{}", i.id).width() + 1 + src.width() + 2 + 1 + term.width() + 3;
-        let max_text = max_w.saturating_sub(prefix_len).min(200);
-        out += &format!(
-            "  {} {} {} {} {}\n",
-            paint(BOLD_YELLOW, &format!("#{}", i.id)),
-            inbox_source_badge(&src),
-            paint(WHITE, &term),
-            paint(GRAY, "—"),
-            one_line(&i.text, max_text),
-        );
-    }
-
-    out += &section("»", "RECENT MESSAGES", width);
-    if s.messages.is_empty() {
-        out += &format!("  {}\n", paint(GRAY, "(no messages)"));
-    }
-    for m in &s.messages {
-        let from = one_line(&m.from, max_w / 6);
-        let to = one_line(&m.to, max_w / 6);
-        let kind = one_line(&m.kind, max_w / 6);
-        let status = one_line(&m.status, max_w / 6);
-        let st_col = match status.as_str() {
-            "delivered" | "sent" => BRIGHT_GREEN,
-            "failed" => BRIGHT_RED,
-            "queued" => BRIGHT_YELLOW,
-            _ => GRAY,
-        };
-        let fixed_len = 2
-            + from.width()
-            + 3
-            + to.width()
-            + 2
-            + kind.width()
-            + 2
-            + 2
-            + 2
-            + status.width()
-            + 2;
-        let max_text = max_w.saturating_sub(fixed_len).min(60);
-        out += &format!(
-            "  {} {} {}  {}  {}  {}\n",
-            paint(CYAN, &from),
-            paint(GRAY, "→"),
-            paint(WHITE, &to),
-            msg_kind_badge(&kind),
-            one_line(&m.text, max_text),
-            paint(st_col, &format!("({status})")),
-        );
-    }
-    out += &render_footer(width);
+    out += &footer;
     out.lines().map(|line| format!("{}\n", bounded_styled_line(line, max_w))).collect()
+}
+
+/// Lines below the command bar that `agm tui` writes itself (note + `agm>` prompt).
+const FRAME_RESERVE: usize = 2;
+
+/// Shrinks blocks to `budget` lines total. Small blocks keep every line; large ones share the rest evenly and end
+/// with a "… N more lines" marker. Each block keeps at least its title line.
+fn fit_blocks(blocks: &mut [Vec<String>], budget: usize) {
+    let total: usize = blocks.iter().map(Vec::len).sum();
+    if total <= budget || blocks.is_empty() {
+        return;
+    }
+    let mut alloc = vec![0usize; blocks.len()];
+    let mut left = budget;
+    let mut open: Vec<usize> = (0..blocks.len()).collect();
+    // Water-filling: blocks smaller than the fair share are kept whole; their unused share goes to the others.
+    while !open.is_empty() {
+        let share = left / open.len();
+        let (small, big): (Vec<usize>, Vec<usize>) = open.iter().partition(|&&i| blocks[i].len() <= share);
+        if small.is_empty() {
+            for (k, &i) in big.iter().enumerate() {
+                alloc[i] = share + usize::from(k < left % big.len());
+            }
+            break;
+        }
+        for &i in &small {
+            alloc[i] = blocks[i].len();
+            left -= blocks[i].len();
+        }
+        open = big;
+    }
+    for (block, keep) in blocks.iter_mut().zip(alloc) {
+        if block.len() <= keep {
+            continue;
+        }
+        let keep = keep.max(2);
+        let hidden = block.len() - (keep - 1);
+        block.truncate(keep - 1);
+        block.push(paint(GRAY, &format!("  … {hidden} more lines (widen the pane or `view` fewer sections)")));
+    }
+}
+
+fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
+    let max_w = width.saturating_sub(1);
+    let mut out = String::new();
+    match sec {
+        Section::Quota => {
+        // Hạn mức hiển thị theo phần CÒN LẠI (giảm dần từ 100%, như Codex `/status` và agy `/usage`).
+        out += &section("◈", "PLAN QUOTA (left)", width);
+        if s.quota.is_empty() {
+            for l in wrap_plain_words("(no quota data — run `agm scan`; Claude needs `agm hook install`)", "  ", "  ", max_w) {
+                out += &format!("{}\n", paint(GRAY, &l));
+            }
+        }
+        for q in &s.quota {
+            let win = if q.window_minutes % 1440 == 0 {
+                format!("{}d", q.window_minutes / 1440)
+            } else {
+                format!("{}h", q.window_minutes / 60)
+            };
+            let reset = if q.reset_passed {
+                paint(BRIGHT_GREEN, "reset ready")
+            } else {
+                let left = q.resets_at_s - s.now_s;
+                paint(CYAN, &format!("resets in {}h{:02}m", left / 3600, left % 3600 / 60))
+            };
+            // 10 cột: đủ cho `agy-gemini` / `agy-argon` mà không bị cắt.
+            let prov = one_line(&q.provider, 10);
+            if q.left_percent.is_finite() {
+                // Màu vẫn theo mức đã dùng (còn ít → đỏ); thanh và con số theo phần còn lại.
+                let col = pct_color(100.0 - q.left_percent);
+                let pct_str = paint(col, &format!("{:>3.0}% left", q.left_percent));
+                out += &format!(
+                    "  {} {}  {} {pct_str}  {reset}\n",
+                    paint(WHITE, &pad_cells(&prov, 10)),
+                    paint(CYAN, &format!("{:>3}", win)),
+                    colored_bar(q.left_percent, col),
+                );
+            } else {
+                out += &format!(
+                    "  {} {}  {} {}  {reset}\n",
+                    paint(WHITE, &pad_cells(&prov, 10)),
+                    paint(CYAN, &format!("{:>3}", win)),
+                    paint(GRAY, "··········"),
+                    paint(GRAY, "   ?"),
+                );
+            }
+        }
+        }
+        Section::Usage => {
+        out += &section("▪", &format!("USAGE ({})", s.usage_summary.offset_label), width);
+        let fmt_bucket = |label: &str, b: &UsageBucket| -> (usize, String) {
+            let tok = tokens(b.usage.total());
+            // Worth at list API prices (same figure as `agm cost`); hidden when nothing in the window has a price.
+            let priced = b.usage.total() > b.unpriced_tokens;
+            let usd_plain = if priced {
+                format!(" ({})", crate::report::value_label(Some(b.value_usd), b.unpriced_tokens))
+            } else {
+                String::new()
+            };
+            let usd_styled = if usd_plain.is_empty() {
+                String::new()
+            } else {
+                paint(BRIGHT_GREEN, &usd_plain)
+            };
+            let plain_len = label.chars().count() + 1 + tok.chars().count() + usd_plain.chars().count();
+            (plain_len, format!("{} {}{usd_styled}", paint(CYAN, label), paint(WHITE, &tok)))
+        };
+        let sep = paint(GRAY, " │ ");
+        let bucket_items = [
+            fmt_bucket("24h", &s.usage_summary.last_24h),
+            fmt_bucket("Today", &s.usage_summary.today),
+            fmt_bucket("This month", &s.usage_summary.this_month),
+        ];
+        for line in wrap_styled_items(&bucket_items, &sep, 3, 2, max_w) {
+            out += &format!("  {line}\n");
+        }
+
+        let max_m = s.usage_summary.recent_months.iter().map(|m| m.usage.total()).max().unwrap_or(0);
+        let cross_year = s
+            .usage_summary
+            .recent_months
+            .first()
+            .zip(s.usage_summary.recent_months.last())
+            .is_some_and(|(a, b)| a.key.get(..4) != b.key.get(..4));
+        let month_pairs: Vec<(usize, String)> = s
+            .usage_summary
+            .recent_months
+            .iter()
+            .enumerate()
+            .map(|(idx, m)| {
+                let ym = m.key.split('-').collect::<Vec<_>>();
+                let lbl = match ym.as_slice() {
+                    [y, mo] if cross_year && y.len() == 4 && y.bytes().all(|b| b.is_ascii_digit()) => {
+                        format!("{}'{}", sanitize_one_line(month_abbr(mo)), &y[2..])
+                    }
+                    [_, mo] => sanitize_one_line(month_abbr(mo)),
+                    _ => sanitize_one_line(&m.key),
+                };
+                let val = m.usage.total();
+                let tok = tokens(val);
+                let bar_ch = spark_bar(val, max_m, false).to_string();
+                let is_peak = max_m > 0 && val == max_m;
+                let is_latest = idx + 1 == s.usage_summary.recent_months.len();
+                let plain_len = format!("{lbl} {bar_ch} {tok}").chars().count();
+                let styled = format!(
+                    "{} {} {}",
+                    if is_latest { paint(WHITE, &lbl) } else { paint(GRAY, &lbl) },
+                    paint(if is_peak { BRIGHT_GREEN } else { BRIGHT_CYAN }, &bar_ch),
+                    if is_latest { paint(WHITE, &tok) } else { tok },
+                );
+                (plain_len, styled)
+            })
+            .collect();
+        for line in wrap_styled_items(&month_pairs, &sep, 3, 2, max_w) {
+            out += &format!("  {line}\n");
+        }
+        if s.usage_summary.incomplete_coverage {
+            let msg = format!(
+                "! incomplete 4-month coverage — run `agm scan --since {}`",
+                s.usage_summary.four_months_start_day
+            );
+            for l in wrap_plain_words(&msg, "  ", "    ", max_w) {
+                out += &format!("{}\n", paint(BRIGHT_YELLOW, &l));
+            }
+        }
+        }
+        Section::Terminals => {
+        out += &section("▸", "TERMINALS", width);
+        for (old, new, cwd) in &s.live_rotation_pairs {
+            let msg = format!(
+                "! WARNING: {} (handed off) and {} are both running in {} — avoid conflicting edits; type 'cleanup' to clean up",
+                sanitize_one_line(old),
+                sanitize_one_line(new),
+                sanitize_one_line(cwd),
+            );
+            for l in wrap_plain_words(&msg, "  ", "    ", max_w) {
+                out += &format!("{BOLD_RED}{l}{RESET}\n");
+            }
+        }
+        if s.terminals.is_empty() {
+            out += &format!("  {}\n", paint(GRAY, "(no active terminals)"));
+        } else {
+            let mut t = terminals_table(width);
+            for v in &s.terminals {
+                // Like `hc`: a colored dot for the state, then the terminal name (address when unnamed).
+                let name_clean = sanitize_one_line(&v.name);
+                let label = if name_clean.is_empty() { sanitize_one_line(&v.address) } else { name_clean };
+                let name_cell = Cell::new(format!("● {}", one_line(&label, NAME_CELLS))).fg(status_color(&v.status));
+                let name_cell = if v.status.starts_with("BLOCKED") { name_cell.add_attribute(Attribute::Bold) } else { name_cell };
+                let dash_or = |text: &str, color: Color| {
+                    let clean = sanitize_one_line(text);
+                    if clean.is_empty() { Cell::new("-").fg(Color::DarkGrey) } else { Cell::new(clean).fg(color) }
+                };
+                let task_clean = sanitize_one_line(&v.task);
+                let task_cell = if task_clean.is_empty() {
+                    Cell::new("-").fg(Color::DarkGrey)
+                } else {
+                    Cell::new(task_clean).fg(Color::Cyan)
+                };
+                let tok_cell = match v.tokens {
+                    Some(n) => Cell::new(tokens(n)).fg(Color::White),
+                    None => Cell::new("?").fg(Color::DarkGrey),
+                }
+                .set_alignment(CellAlignment::Right);
+                t.add_row(vec![
+                    name_cell,
+                    app_cell(&v.app),
+                    dash_or(&v.model, Color::White),
+                    effort_cell(&v.effort),
+                    dash_or(&one_line(&where_label(&v.place, &v.cwd), WHERE_CELLS), Color::DarkGrey),
+                    task_cell,
+                    tok_cell,
+                    ctx_cell(v.context_pct),
+                    last_msg_cell(v.last_msg.as_ref()),
+                    status_cell(&v.status),
+                ]);
+            }
+            out += &format!("{t}\n");
+        }
+        }
+        Section::Budgets => {
+        out += &section("◆", "BUDGETS", width);
+        if s.budgets.is_empty() {
+            for l in wrap_plain_words("(none set — agm budget set task:<ID> --soft … --hard …)", "  ", "  ", max_w) {
+                out += &format!("{}\n", paint(GRAY, &l));
+            }
+        }
+        let scope_w = if width >= 76 { 24 } else { 14 };
+        for b in &s.budgets {
+            let pct = b
+                .value
+                .filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0)
+                .map(|v| v / b.hard * 100.0);
+            let (bar_col, flag) = match b.value.filter(|v| v.is_finite() && b.hard.is_finite() && b.hard > 0.0) {
+                Some(v) if v >= b.hard => (BRIGHT_RED, paint(BOLD_RED, " HARD")),
+                Some(v) if b.soft.is_finite() && v >= b.soft => (BRIGHT_YELLOW, paint(BRIGHT_YELLOW, " soft")),
+                _ => (BRIGHT_GREEN, String::new()),
+            };
+            // Missing or non-finite value → "?" (never render a fake 0%). Percent budgets keep decimals.
+            let num = |v: f64| if b.unit == "tokens" { tokens(v.max(0.0) as u64) } else { format!("{v:.1}") };
+            let bar_str = pct.map(|p| colored_bar(p, bar_col)).unwrap_or_else(|| paint(GRAY, "··········"));
+            let pct_str = match pct {
+                Some(p) if p > 999.0 => paint(bar_col, ">999%"),
+                Some(p) => paint(bar_col, &format!("{p:>3.0}%")),
+                None => paint(GRAY, "   ?"),
+            };
+            let scope_padded = pad_cells(&one_line(&b.scope, scope_w), scope_w);
+            let val_str = b.value.filter(|v| v.is_finite()).map(num).unwrap_or_else(|| "?".into());
+            let hard_str = if b.hard.is_finite() { num(b.hard) } else { "?".into() };
+            let unit = sanitize_one_line(&b.unit);
+            out += &format!(
+                "  {} {bar_str} {pct_str}  {val_str} / {hard_str} {}{flag}\n",
+                paint(WHITE, &scope_padded),
+                paint(GRAY, &unit),
+            );
+        }
+        }
+        Section::Inbox => {
+        let inbox_icon = if s.inbox.is_empty() { "○" } else { "●" };
+        out += &section(inbox_icon, "INBOX", width);
+        if s.inbox.is_empty() {
+            out += &format!("  {}\n", paint(GRAY, "(empty)"));
+        }
+        for i in &s.inbox {
+            let term = one_line(i.terminal.as_deref().unwrap_or("-"), max_w / 5);
+            let src = one_line(&i.source, max_w / 5);
+            let prefix_len = 2 + format!("#{}", i.id).width() + 1 + src.width() + 2 + 1 + term.width() + 3;
+            let max_text = max_w.saturating_sub(prefix_len).min(200);
+            out += &format!(
+                "  {} {} {} {} {}\n",
+                paint(BOLD_YELLOW, &format!("#{}", i.id)),
+                inbox_source_badge(&src),
+                paint(WHITE, &term),
+                paint(GRAY, "—"),
+                one_line(&i.text, max_text),
+            );
+        }
+        }
+        Section::Messages => {
+        out += &section("»", "RECENT MESSAGES", width);
+        if s.messages.is_empty() {
+            out += &format!("  {}\n", paint(GRAY, "(no messages)"));
+        }
+        for m in &s.messages {
+            let from = one_line(&m.from, max_w / 6);
+            let to = one_line(&m.to, max_w / 6);
+            let kind = one_line(&m.kind, max_w / 6);
+            let status = one_line(&m.status, max_w / 6);
+            let st_col = match status.as_str() {
+                "delivered" | "sent" => BRIGHT_GREEN,
+                "failed" => BRIGHT_RED,
+                "queued" => BRIGHT_YELLOW,
+                _ => GRAY,
+            };
+            let fixed_len = 2
+                + from.width()
+                + 3
+                + to.width()
+                + 2
+                + kind.width()
+                + 2
+                + 2
+                + 2
+                + status.width()
+                + 2;
+            let max_text = max_w.saturating_sub(fixed_len).min(60);
+            out += &format!(
+                "  {} {} {}  {}  {}  {}\n",
+                paint(CYAN, &from),
+                paint(GRAY, "→"),
+                paint(WHITE, &to),
+                msg_kind_badge(&kind),
+                one_line(&m.text, max_text),
+                paint(st_col, &format!("({status})")),
+            );
+        }
+        }
+    }
+    out
 }
 
 /// Strip ANSI CSI/OSC/escape sequences and replace newlines/control chars with spaces.
@@ -798,47 +1034,90 @@ pub enum TuiCmd {
     Interrupt(String),
     Kill(String),
     Policy(bool),
+    /// `view` alone shows the current choice; with arguments, the sections to display.
+    View(Option<Vec<Section>>),
+}
+
+/// TUI commands: full name shown in the `cmd:` bar, single-letter alias still accepted.
+pub const TUI_COMMANDS: [(&str, &str, &str); 9] = [
+    ("reply", "r", "<#> <text>"),
+    ("done", "d", "<#>"),
+    ("send", "s", "<terminal> <TYPE> <message>"),
+    ("cleanup", "c", "[1,2|all]"),
+    ("interrupt", "i", "<terminal>"),
+    ("kill", "k", "<terminal>"),
+    ("policy", "p", "on|off"),
+    ("view", "v", "<up to 3 sections>"),
+    ("quit", "q", ""),
+];
+
+fn english_kinds() -> String {
+    KINDS_EN.iter().map(|(en, _)| *en).collect::<Vec<_>>().join("|")
+}
+
+fn usage(name: &str) -> String {
+    let args = TUI_COMMANDS.iter().find(|(n, _, _)| *n == name).map_or("", |(_, _, a)| *a);
+    let args = if name == "send" { format!("<terminal> <{}> <message>", english_kinds()) } else { args.to_string() };
+    format!("usage: {name} {args}").trim_end().to_string()
+}
+
+/// Splits `<TYPE> <message>` after `send <terminal>`. Returns the stored code and the untouched message text.
+/// English types are one word, any case; the legacy Vietnamese codes (incl. `BÁO CÁO`, `CHƯA ĐẠT`) stay accepted.
+fn split_kind(after: &str) -> Option<(&'static str, &str)> {
+    let (word, text) = after.split_once(' ').unwrap_or((after, ""));
+    if let Some(kind) = crate::actions::kind_from_english(word) {
+        return Some((kind, text));
+    }
+    let kind = KINDS
+        .iter()
+        .filter(|k| after.strip_prefix(**k).is_some_and(|r| r.is_empty() || r.starts_with(' ')))
+        .max_by_key(|k| k.len())?;
+    Some((kind, &after[kind.len()..]))
 }
 
 pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
     let line = line.trim();
     let (head, rest) = line.split_once(' ').map_or((line, ""), |(h, r)| (h, r.trim()));
-    Ok(match head {
-        "" => TuiCmd::Refresh,
-        "q" => TuiCmd::Quit,
-        "r" => {
+    let Some((name, _, _)) = TUI_COMMANDS.iter().find(|(name, alias, _)| head == *name || head == *alias) else {
+        if head.is_empty() {
+            return Ok(TuiCmd::Refresh);
+        }
+        return Err(format!("unknown command '{line}' (commands: {})", TUI_COMMANDS.map(|c| c.0).join(", ")));
+    };
+    Ok(match *name {
+        "quit" => TuiCmd::Quit,
+        "reply" => {
             let (id, text) = rest.split_once(' ').unwrap_or((rest, ""));
-            let Ok(id) = id.parse() else { return Err("usage: r <id> <reply>".into()) };
+            let Ok(id) = id.parse() else { return Err(usage("reply")) };
             if text.trim().is_empty() {
                 return Err("missing reply text".into());
             }
             TuiCmd::Reply(id, text.trim().into())
         }
-        "d" => match rest.parse() {
+        "done" => match rest.parse() {
             Ok(id) => TuiCmd::Done(id),
-            Err(_) => return Err("usage: d <id>".into()),
+            Err(_) => return Err(usage("done")),
         },
-        "s" => {
+        "send" => {
             let (target, after) = rest.split_once(' ').unwrap_or((rest, ""));
-            let after = after.trim_start();
-            // Kinds may contain two words (BÁO CÁO, CHƯA ĐẠT); require a space boundary right after the kind.
-            let Some(kind) = KINDS
-                .iter()
-                .filter(|k| after.strip_prefix(**k).is_some_and(|r| r.starts_with(' ')))
-                .max_by_key(|k| k.len())
-            else {
-                return Err(format!("usage: s <terminal> <{}> <message>", KINDS.join("|")));
+            if target.is_empty() {
+                return Err(format!("missing target terminal; {}", usage("send")));
+            }
+            let Some((kind, text)) = split_kind(after.trim_start()) else {
+                return Err(format!("unknown message type; {}", usage("send")));
             };
-            let text = after[kind.len()..].trim();
-            if target.is_empty() || text.is_empty() {
-                return Err("usage: s <terminal> <TYPE> <message>".into());
+            let text = text.trim();
+            if text.is_empty() {
+                return Err(format!("missing message text; {}", usage("send")));
             }
             TuiCmd::Send(target.into(), kind.to_string(), text.into())
         }
-        "c" => TuiCmd::Cleanup((!rest.is_empty()).then(|| rest.to_string())),
-        "i" if !rest.is_empty() => TuiCmd::Interrupt(rest.into()),
-        "k" if !rest.is_empty() => TuiCmd::Kill(rest.into()),
-        "p" if rest == "on" || rest == "off" => TuiCmd::Policy(rest == "on"),
-        _ => return Err(format!("unknown command '{line}'")),
+        "cleanup" => TuiCmd::Cleanup((!rest.is_empty()).then(|| rest.to_string())),
+        "interrupt" if !rest.is_empty() => TuiCmd::Interrupt(rest.into()),
+        "kill" if !rest.is_empty() => TuiCmd::Kill(rest.into()),
+        "policy" if rest == "on" || rest == "off" => TuiCmd::Policy(rest == "on"),
+        "view" if rest.is_empty() => TuiCmd::View(None),
+        "view" => TuiCmd::View(Some(parse_view(rest)?)),
+        other => return Err(usage(other)),
     })
 }

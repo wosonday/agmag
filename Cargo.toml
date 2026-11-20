@@ -17,6 +17,13 @@ walkdir = "2.5.0"
 unicode-width = "0.2.3"
 unicode-segmentation = "1.13.3"
 
+# Pane size for `agm tui` (both crates are already in the lock file through other dependencies).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_Console"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
+
 [dev-dependencies]
 tempfile = "3.27.0"
 

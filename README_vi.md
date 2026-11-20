@@ -68,9 +68,9 @@ agm cost --summary # 24h / hôm nay / tháng này + biểu đồ 4 tháng
 Ví dụ `agm quota`:
 
 ```
-gói     cửa sổ  còn lại
-codex   5h      █████████░  86%   còn 4h38m
-codex   7d      █░░░░░░░░░  7%    còn 115h41m
+plan    window  left
+codex   5h      █████████░  86%   in 4h38m
+codex   7d      █░░░░░░░░░  7%    in 115h41m
 ```
 
 Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọc phần mới. Muốn có số liệu cũ hơn cho thống kê tháng: `agm scan --since 2026-08-01` (hoặc để `agm tui` tự backfill).
@@ -123,13 +123,13 @@ agm tui
   24h 125k │ Today 480k │ This month 4.2M
   Aug ▂ 1.1M │ Sep ▄ 2.3M │ Oct ▆ 3.4M │ Nov █ 4.2M
 ── ▸ TERMINALS ───────────────────────────────────────────────────
-┌─────┬─────────────┬─────────────┬────────────────────┬─────────┬────────┬─────┐
-│ t   │ name        │ app         │ status             │ task    │ tokens │ ctx │
-╞═════╪═════════════╪═════════════╪════════════════════╪═════════╪════════╪═════╡
-│ t1q │ -           │ codex       │ working            │ -       │  21.2M │ 58% │
-│ t3  │ -           │ claude-code │ idle [HANDED OFF]  │ -       │   1.4M │ 71% │
-│ t5  │ w-login-7-1 │ opencode    │ BLOCKED (question) │ login-7 │   340k │ 50% │
-└─────┴─────────────┴─────────────┴────────────────────┴─────────┴────────┴─────┘
+┌───────────────┬─────────────┬─────────────────────────────┬────────┬─────────┬─────────┬────────┬─────┬────────────┬────────────────────┐
+│ name          │ agent       │ model                       │ effort │ where   │ task    │ tokens │ ctx │ last msg   │ status             │
+╞═══════════════╪═════════════╪═════════════════════════════╪════════╪═════════╪═════════╪════════╪═════╪════════════╪════════════════════╡
+│ ● t1q         │ codex       │ gpt-6.1-sol                 │ high   │ app / 1 │ -       │  21.2M │ 58% │ ← ASSIGN   │ working            │
+│ ● t3          │ claude-code │ claude-opus-5-5             │ max    │ app / 2 │ -       │   1.4M │ 71% │ → REPORT   │ idle [HANDED OFF]  │
+│ ● w-login-7-1 │ opencode    │ opencode-go/deepseek-v4-pro │ high   │ app / 3 │ login-7 │   340k │ 50% │ → QUESTION │ BLOCKED (question) │
+└───────────────┴─────────────┴─────────────────────────────┴────────┴─────────┴─────────┴────────┴─────┴────────────┴────────────────────┘
 ── ◆ BUDGETS ─────────────────────────────────────────────────────
   task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens soft
 ── ● INBOX ───────────────────────────────────────────────────────
@@ -137,22 +137,29 @@ agm tui
 ── » RECENT MESSAGES ─────────────────────────────────────────────
   (no messages)
 ──────────────────────────────────────────────────────────────────
-cmd: r <#> <reply> · d <#> (done) · s <t> <TYPE> <msg> · c [1,2|all] (cleanup) · i <t> · k <t> · p on|off · q
+cmd: reply <#> <text> · done <#> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
+     interrupt <terminal> · kill <terminal> · policy on|off · view <up to 3 sections> · quit
+     TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
 
 Lệnh trong TUI (gõ rồi Enter):
 
 | Lệnh | Việc |
 |---|---|
-| `r 1 có` | Trả lời mục 1 của hộp thư (gõ vào terminal liên quan) |
-| `d 1` | Đóng mục 1 (không gõ gì vào terminal nào) |
-| `s t5 GIAO làm tiếp` | Gửi tin có ghi lại |
-| `c` · `c 1,2` · `c all` | Liệt kê / chọn phiên đã bàn giao để dọn (phải xác nhận `y`) |
-| `i t5` · `k t5` | Ngắt / dừng (cả hai đều phải gõ thêm `y` xác nhận) |
-| `p off` | Tắt mọi hành động tự động |
-| `q` | Thoát |
+| `reply 1 có` | Trả lời mục 1 của hộp thư (gõ vào terminal liên quan) |
+| `done 1` | Đóng mục 1 (không gõ gì vào terminal nào) |
+| `send t5 REPORT All tests passed` | Gửi tin có ghi lại |
+| `cleanup` · `cleanup 1,2` · `cleanup all` | Liệt kê / chọn phiên đã bàn giao để dọn (phải xác nhận `y`) |
+| `interrupt t5` · `kill t5` | Ngắt / dừng (cả hai đều phải gõ thêm `y` xác nhận) |
+| `policy off` | Tắt mọi hành động tự động |
+| `view` · `view terminals inbox` · `view default` | Xem bố cục hiện tại / chọn tối đa 3 bảng (`quota`, `usage`, `terminals`, `budgets`, `inbox`); được nhớ cho lần mở sau. RECENT MESSAGES luôn hiện và không tính vào 3 bảng |
+| `quit` | Thoát |
 
-Tên, đường dẫn và tin nhắn dài được rút gọn theo bề rộng cấu hình (`COLUMNS`, mặc định 110, giới hạn 60–200); đặt `COLUMNS` khớp với pane. Unicode được đo theo số cột terminal, không cắt giữa một cụm ký tự; chuỗi điều khiển terminal trong dữ liệu được loại bỏ. Việc rút gọn chỉ ảnh hưởng hiển thị, không đổi tin nhắn đã lưu hay đích thao tác.
+Mỗi lệnh vẫn nhận chữ cái đầu làm phím tắt (`r`, `d`, `s`, `c`, `i`, `k`, `p`, `q`). Loại tin cho `send`: `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` (không phân biệt hoa/thường). Mã tiếng Việt cũ (`GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`) vẫn dùng được trong TUI; tin vẫn được lưu và chuyển đi với mã tiếng Việt, `agm send --type` không đổi.
+
+Cột TERMINALS: chấm `●` tô màu theo trạng thái (xanh lá working, xanh ngọc idle/done, đỏ blocked, vàng đã bàn giao, xám đã thoát), sau đó là tên terminal, rút gọn còn 12 ký tự (không có tên thì hiện địa chỉ; lệnh nhận cả hai). `agent` là CLI, `model`/`effort` lấy từ log phiên đã ghép (Codex `effort`, Claude Code `effort`, variant của OpenCode, hậu tố tên model agy như `-high`), `where` là vị trí trong herdr giống `hc ls` (`MATHY-AI / 1`, `agmag / agm-ceo`); không có thì hiện tên thư mục làm việc. `last msg` là tin gần nhất liên quan tới terminal, ghi bằng tiếng Anh: `→ REPORT` là terminal đã gửi báo cáo, `← ASSIGN` là terminal vừa nhận việc. Màu giống RECENT MESSAGES (xanh ngọc ASSIGN, xanh lá REPORT/PASS, vàng QUESTION, đỏ ERROR/FAIL, đỏ đậm BLOCKED).
+
+Bảng điều khiển in đầy đủ mọi dòng (không cắt theo chiều cao pane); lướt chuột lên để xem phần trên. Mỗi lần vẽ lại sẽ xoá màn hình và lịch sử cuộn trước, nên không có khung cũ bị in lặp; và chỉ vẽ lại khi dữ liệu thay đổi hoặc sau khi bạn gõ lệnh, để lúc đang lướt lên đọc không bị kéo xuống mỗi lần làm mới. Chỉ hiện tối đa 3 bảng tự chọn (mặc định `quota terminals inbox`) cùng RECENT MESSAGES luôn ghim ngay trên thanh lệnh. Bề rộng pane được tự nhận; `COLUMNS` dùng để ghi đè (giới hạn 60–200). Tên, đường dẫn và tin nhắn dài được rút gọn theo bề rộng đó. Unicode được đo theo số cột terminal, không cắt giữa một cụm ký tự; chuỗi điều khiển terminal trong dữ liệu được loại bỏ. Việc rút gọn chỉ ảnh hưởng hiển thị, không đổi tin nhắn đã lưu hay đích thao tác.
 
 TUI hiển thị bằng tiếng Anh có màu sắc ANSI, cảnh báo **đỏ** khi phiên đã bàn giao và phiên kế nhiệm cùng chạy trên một thư mục, và tự backfill các tháng còn thiếu cho thống kê. TUI chỉ mở được bởi **bạn** ở terminal (agent không dùng được).
 
@@ -198,7 +205,7 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 |---|---|
 | `agm quota [--refresh]` | Hạn mức gói còn lại theo cửa sổ thời gian (`--refresh`: đọc ngay hạn mức agy, khoảng 3 giây) |
 | `agm ls [--days N]` | Các phiên: nguồn, model, token, % ngữ cảnh, cảnh báo |
-| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Tổng token; tóm tắt 24h/hôm nay/tháng này + bar chart 4 tháng theo giờ máy; USD chỉ cho model trả theo API có khai giá |
+| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Tổng token, có hàng **SUM** in đậm; tóm tắt 24h/hôm nay/tháng này + bar chart 4 tháng theo giờ máy. **USD** = token × giá API niêm yết của từng model, tính cho mọi model (kể cả gói tháng, như số tiền nếu dùng qua API); `≥ $x` khi có token chưa biết giá, `?` khi không token nào có giá. Cột `billed (API)` trong `--summary` là tiền thực trả của model tính theo API |
 | `agm log <session> [--limit N] [--full]` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc, chỉ Codex/Claude) |
 | `agm scan [--days N \| --since YYYY-MM-DD]` | Quét log Codex/Claude/agy/OpenCode ngay (các lệnh xem tự quét) |
 | `agm daemon [--interval 10] [--replay <tệp>]` | Chạy nền: sự kiện hc, quét log, ghép terminal↔phiên, ngân sách, xoay vòng (`--replay`: nạp sự kiện từ tệp để gỡ lỗi) |
@@ -228,6 +235,14 @@ agm cost --summary              # bảng 24h / Hôm nay / Tháng này + bar char
 agm cost --by month             # tổng theo tháng
 agm cost --window today --by source
 agm scan --since 2026-08-01     # backfill log cũ (TUI tự làm việc này cho các tháng còn thiếu)
+```
+
+**Bảng giá.** Giá niêm yết dựng sẵn nằm ở `assets/prices.toml` (chụp ngày 2026-11-20 từ giá API công khai của nhà cung cấp; bậc cơ bản, không tính phụ phí ngữ cảnh dài). Tên dạng `provider/id` của OpenCode, id có hậu tố ngày và hậu tố effort của agy (`-high`) được tự khớp; id kết thúc bằng `-free` tính $0. Ghi đè hoặc thêm model trong `~/.agmag/providers.toml`:
+
+```toml
+[models."codex-auto-review"]
+provider = "codex"
+price = { input = 2.0, output = 10.0, cache_read = 0.1, cache_write = 2.5 }   # USD / 1M tokens
 ```
 
 - Số tháng thống kê/backfill do `stats_months` trong `providers.toml` quyết định (mặc định 4 tháng dương lịch gần nhất).
@@ -269,11 +284,11 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # vượ
 
 ```toml
 [providers.codex]
-billing = "subscription"        # gói tháng: đo bằng % hạn mức, không quy ra USD
+billing = "subscription"        # gói tháng: đo bằng % hạn mức; USD chỉ là giá trị theo bảng giá, không phải tiền trả
 [providers.claude]
 billing = "subscription"
 [providers.openrouter]
-billing = "api"                 # trả theo token: agm cost tính USD nếu model có giá
+billing = "api"                 # trả theo token: USD này là tiền thực trả (cột `billed (API)`)
 
 [models."gpt-6.1-sol"]
 provider = "codex"              # OpenCode dùng openai/gpt-6.1-sol cũng tiêu hạn mức ChatGPT

@@ -15,7 +15,7 @@ pub struct Store {
 }
 
 /// `PRAGMA user_version` mà mã này tạo ra.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
@@ -87,6 +87,11 @@ impl Store {
                 }
                 conn.execute_batch(include_str!("schema_v3.sql"))?;
                 conn.execute_batch("PRAGMA user_version = 3;")?;
+            }
+            if version < 4 {
+                // v4: reasoning effort / variant of the session's model, shown in `agm tui`.
+                Self::add_column_if_missing(&conn, "sessions", "effort", "TEXT")?;
+                conn.execute_batch("PRAGMA user_version = 4;")?;
             }
             Ok(())
         };
@@ -177,6 +182,11 @@ impl Store {
             "UPDATE sessions SET model=?2 WHERE id=?1",
             params![sid, model],
         )?;
+        Ok(())
+    }
+
+    pub fn set_effort(&self, sid: i64, effort: &str) -> Result<()> {
+        self.conn.execute("UPDATE sessions SET effort=?2 WHERE id=?1", params![sid, effort])?;
         Ok(())
     }
 

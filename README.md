@@ -16,7 +16,7 @@ It also lets you intervene in a controlled way: assign work with worker-count an
 
 > Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 >
-> The CLI output and message types are in **Vietnamese** (`agm tui` is in English); examples below are shown verbatim with translations where useful.
+> Tables and command output are in **English**. Message types stored by `agm send` are still the Vietnamese codes listed below; `agm tui` also accepts their English names.
 
 ---
 
@@ -67,12 +67,12 @@ agm cost           # token totals by model  (--by day | month | source | cwd, --
 agm cost --summary # 24h / today / this month + 4-month chart
 ```
 
-Example `agm quota` (columns: plan, window, used; `còn` = time left):
+Example `agm quota` (columns: plan, window, % left, time until reset):
 
 ```
-gói     cửa sổ  còn lại
-codex   5h      █████████░  86%   còn 4h38m
-codex   7d      █░░░░░░░░░  7%    còn 115h41m
+plan    window  left
+codex   5h      █████████░  86%   in 4h38m
+codex   7d      █░░░░░░░░░  7%    in 115h41m
 ```
 
 The first run is a bit slow (it reads the last 7 days of logs); after that only new data is read. For older data in the monthly statistics: `agm scan --since 2026-08-01` (or let `agm tui` backfill automatically).
@@ -125,13 +125,13 @@ agm tui
   24h 125k │ Today 480k │ This month 4.2M
   Aug ▂ 1.1M │ Sep ▄ 2.3M │ Oct ▆ 3.4M │ Nov █ 4.2M
 ── ▸ TERMINALS ───────────────────────────────────────────────────
-┌─────┬─────────────┬─────────────┬────────────────────┬─────────┬────────┬─────┐
-│ t   │ name        │ app         │ status             │ task    │ tokens │ ctx │
-╞═════╪═════════════╪═════════════╪════════════════════╪═════════╪════════╪═════╡
-│ t1q │ -           │ codex       │ working            │ -       │  21.2M │ 58% │
-│ t3  │ -           │ claude-code │ idle [HANDED OFF]  │ -       │   1.4M │ 71% │
-│ t5  │ w-login-7-1 │ opencode    │ BLOCKED (question) │ login-7 │   340k │ 50% │
-└─────┴─────────────┴─────────────┴────────────────────┴─────────┴────────┴─────┘
+┌───────────────┬─────────────┬─────────────────────────────┬────────┬─────────┬─────────┬────────┬─────┬────────────┬────────────────────┐
+│ name          │ agent       │ model                       │ effort │ where   │ task    │ tokens │ ctx │ last msg   │ status             │
+╞═══════════════╪═════════════╪═════════════════════════════╪════════╪═════════╪═════════╪════════╪═════╪════════════╪════════════════════╡
+│ ● t1q         │ codex       │ gpt-6.1-sol                 │ high   │ app / 1 │ -       │  21.2M │ 58% │ ← ASSIGN   │ working            │
+│ ● t3          │ claude-code │ claude-opus-5-5             │ max    │ app / 2 │ -       │   1.4M │ 71% │ → REPORT   │ idle [HANDED OFF]  │
+│ ● w-login-7-1 │ opencode    │ opencode-go/deepseek-v4-pro │ high   │ app / 3 │ login-7 │   340k │ 50% │ → QUESTION │ BLOCKED (question) │
+└───────────────┴─────────────┴─────────────────────────────┴────────┴─────────┴─────────┴────────┴─────┴────────────┴────────────────────┘
 ── ◆ BUDGETS ─────────────────────────────────────────────────────
   task:login-7             █░░░░░░░░░  11%  340k / 3.0M tokens soft
 ── ● INBOX ───────────────────────────────────────────────────────
@@ -139,22 +139,29 @@ agm tui
 ── » RECENT MESSAGES ─────────────────────────────────────────────
   (no messages)
 ──────────────────────────────────────────────────────────────────
-cmd: r <#> <reply> · d <#> (done) · s <t> <TYPE> <msg> · c [1,2|all] (cleanup) · i <t> · k <t> · p on|off · q
+cmd: reply <#> <text> · done <#> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
+     interrupt <terminal> · kill <terminal> · policy on|off · view <up to 3 sections> · quit
+     TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
 
 TUI commands (type, then Enter):
 
 | Command | Action |
 |---|---|
-| `r 1 yes` | Reply to inbox item 1 (typed into the related terminal) |
-| `d 1` | Dismiss item 1 (types nothing anywhere) |
-| `s t5 GIAO continue` | Send a recorded message |
-| `c` · `c 1,2` · `c all` | List / select handed-off sessions to clean up (requires `y` confirmation) |
-| `i t5` · `k t5` | Interrupt / kill (both require an extra `y` confirmation) |
-| `p off` | Disable all automatic actions |
-| `q` | Quit |
+| `reply 1 yes` | Reply to inbox item 1 (typed into the related terminal) |
+| `done 1` | Dismiss item 1 (types nothing anywhere) |
+| `send t5 REPORT All tests passed` | Send a recorded message |
+| `cleanup` · `cleanup 1,2` · `cleanup all` | List / select handed-off sessions to clean up (requires `y` confirmation) |
+| `interrupt t5` · `kill t5` | Interrupt / kill (both require an extra `y` confirmation) |
+| `policy off` | Disable all automatic actions |
+| `view` · `view terminals inbox` · `view default` | Show the current view / pick up to 3 sections (`quota`, `usage`, `terminals`, `budgets`, `inbox`); remembered across restarts. RECENT MESSAGES is always shown and does not count |
+| `quit` | Quit |
 
-Long names, paths and messages are shortened to the configured display width (`COLUMNS`, default 110, clamped to 60–200); set `COLUMNS` to match your pane. Unicode text is measured in terminal cells without splitting graphemes; embedded terminal control sequences are stripped. Truncation affects display only, not stored messages or action targets.
+Each command also accepts its first letter as a shortcut (`r`, `d`, `s`, `c`, `i`, `k`, `p`, `q`). Message types for `send`: `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` (any letter case). The legacy Vietnamese types (`GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`) still work in the TUI; messages are stored and forwarded with the Vietnamese code, and `agm send --type` is unchanged.
+
+TERMINALS columns: `●` is colored by state (green working, cyan idle/done, red blocked, yellow handed off, gray exited) followed by the terminal name, shortened to 12 characters (address when unnamed; commands accept either). `agent` is the CLI, `model`/`effort` come from the linked session log (Codex `effort`, Claude Code `effort`, OpenCode variant, agy model suffix such as `-high`), and `where` is herdr's location as `hc ls` shows it (`MATHY-AI / 1`, `agmag / agm-ceo`), falling back to the working folder name. `last msg` is the latest message involving the terminal, in English: `→ REPORT` means it sent a report, `← ASSIGN` means it received an assignment. Colors match RECENT MESSAGES (cyan ASSIGN, green REPORT/PASS, yellow QUESTION, red ERROR/FAIL, bold red BLOCKED).
+
+The dashboard prints every row (nothing is cut to the pane height); scroll up with the mouse to see the top. Each repaint clears the screen and the scrollback first, so older frames never pile up, and it only repaints when something changed or after you type a command, so scrolling up to read is not interrupted on every refresh. It shows at most 3 chosen sections (default `quota terminals inbox`) plus RECENT MESSAGES, always pinned just above the command bar. The pane width is detected automatically; `COLUMNS` overrides it (clamped to 60–200). Long names, paths and messages are shortened to that width. Unicode text is measured in terminal cells without splitting graphemes; embedded terminal control sequences are stripped. Truncation affects display only, not stored messages or action targets.
 
 The TUI shows a **red** warning when a handed-off session and its successor are both running in the same directory, and backfills missing months for the statistics automatically. Only **you** can open the TUI from a terminal (agents can't).
 
@@ -202,7 +209,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 |---|---|
 | `agm quota [--refresh]` | Subscription quota left per time window (`--refresh`: read agy quota now, ~3 s) |
 | `agm ls [--days N]` | Sessions: source, model, tokens, % context, warnings |
-| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Token totals; 24h/today/this-month summary + 4-month bar chart in local time; USD only for API-billed models with a declared price |
+| `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Token totals with a bold **SUM** row; 24h/today/this-month summary + 4-month bar chart in local time. **USD** = tokens × each model's list API price for every model (subscriptions included, as what the usage would cost on the API); `≥ $x` when some tokens have no known price, `?` when none do. `billed (API)` in `--summary` is what API-billed models actually cost |
 | `agm log <session> [--limit N] [--full]` | Turn summaries (`--full`: raw log lines, Codex/Claude only) |
 | `agm scan [--days N \| --since YYYY-MM-DD]` | Scan Codex/Claude/agy/OpenCode logs now (view commands scan automatically) |
 | `agm daemon [--interval 10] [--replay <file>]` | Background: hc events, log scanning, terminal↔session matching, budgets, rotation (`--replay`: load events from a file, for debugging) |
@@ -232,6 +239,14 @@ agm cost --summary              # 24h / Today / This month table + 4-month bar c
 agm cost --by month             # totals per month
 agm cost --window today --by source
 agm scan --since 2026-08-01     # backfill older logs (the TUI does this for missing months)
+```
+
+**Prices.** Built-in list prices live in `assets/prices.toml` (snapshot 2026-11-20 from the providers' public API prices; base tier, no long-context surcharge). OpenCode `provider/id`, dated ids and agy effort suffixes (`-high`) are matched automatically; ids ending in `-free` cost $0. Override or add a model in `~/.agmag/providers.toml`:
+
+```toml
+[models."codex-auto-review"]
+provider = "codex"
+price = { input = 2.0, output = 10.0, cache_read = 0.1, cache_write = 2.5 }   # USD / 1M tokens
 ```
 
 - The number of months for statistics/backfill is set by `stats_months` in `providers.toml` (default: the last 4 calendar months).
@@ -273,11 +288,11 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # hard l
 
 ```toml
 [providers.codex]
-billing = "subscription"        # subscription: measured as % quota, not converted to USD
+billing = "subscription"        # subscription: % quota; USD shown only as list-price value, never billed
 [providers.claude]
 billing = "subscription"
 [providers.openrouter]
-billing = "api"                 # pay per token: agm cost computes USD if the model has a price
+billing = "api"                 # pay per token: this USD is actually billed (shown as `billed (API)`)
 
 [models."gpt-6.1-sol"]
 provider = "codex"              # OpenCode using openai/gpt-6.1-sol also consumes ChatGPT quota

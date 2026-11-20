@@ -100,6 +100,8 @@ pub struct TurnSummary {
 pub enum ParseEvent {
     Meta(SessionMeta),
     Model(String),
+    /// Reasoning effort / variant of the session's model (`high`, `medium`, ...).
+    Effort(String),
     Usage(UsageRecord),
     Quota(QuotaSnapshot),
     Context(ContextSnapshot),

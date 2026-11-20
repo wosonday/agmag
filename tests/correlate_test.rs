@@ -113,3 +113,58 @@ fn link_all_skips_rotation_successor_and_codex_tag_links_across_worktrees() -> a
     assert_eq!(store.terminal("t99")?.unwrap().session, Some(right));
     Ok(())
 }
+
+fn linked(store: &Store, addr: &str) -> Option<i64> {
+    store.terminal(addr).unwrap().unwrap().session
+}
+
+/// OpenCode TUI opened long before its first prompt still gets linked (the 10-minute window is for Codex/Claude).
+#[test]
+fn opencode_session_started_long_after_terminal_links() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let minute = 60_000;
+    term(&store, "t3m", "opencode", r"D:\SWAT-model\SpySWAT", 1_000_000);
+    let sid = session(&store, Source::OpenCode, "opencode://late", "D:/SWAT-model/SpySWAT", 1_000_000 + 36 * minute);
+    assert_eq!(link_all(&store)?, 1);
+    assert_eq!(linked(&store, "t3m"), Some(sid));
+    // Codex keeps the strict window.
+    term(&store, "t9", "codex", r"D:\x", 1_000_000);
+    session(&store, Source::Codex, "codex://late", r"D:\x", 1_000_000 + 36 * minute);
+    assert_eq!(link_all(&store)?, 0);
+    assert_eq!(linked(&store, "t9"), None);
+    Ok(())
+}
+
+/// `/new` in the same OpenCode terminal: an automatic link follows the newest session; manual links never move.
+#[test]
+fn opencode_auto_link_follows_newer_session_but_manual_link_stays() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    term(&store, "t46", "opencode", r"D:\Project\agmag", 1_000_000);
+    let first = session(&store, Source::OpenCode, "opencode://first", "D:/Project/agmag", 1_010_000);
+    link_all(&store)?;
+    assert_eq!(linked(&store, "t46"), Some(first));
+    let second = session(&store, Source::OpenCode, "opencode://second", "D:/Project/agmag", 2_000_000);
+    assert_eq!(link_all(&store)?, 1);
+    assert_eq!(linked(&store, "t46"), Some(second));
+    assert_eq!(link_all(&store)?, 0, "stable once on the newest session");
+
+    term(&store, "t47", "opencode", r"D:\Project\other", 1_000_000);
+    let pinned = session(&store, Source::OpenCode, "opencode://pinned", "D:/Project/other", 1_010_000);
+    store.link_terminal("t47", pinned, "manual")?;
+    session(&store, Source::OpenCode, "opencode://newer", "D:/Project/other", 3_000_000);
+    link_all(&store)?;
+    assert_eq!(linked(&store, "t47"), Some(pinned));
+    Ok(())
+}
+
+/// Two OpenCode terminals in one folder both want the newest session → ambiguous, left for `agm link`.
+#[test]
+fn two_opencode_terminals_same_folder_stay_unlinked() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    term(&store, "ta", "opencode", r"D:\shared", 1_000_000);
+    term(&store, "tb", "opencode", r"D:\shared", 1_100_000);
+    session(&store, Source::OpenCode, "opencode://s", "D:/shared", 2_000_000);
+    assert_eq!(link_all(&store)?, 0);
+    assert_eq!((linked(&store, "ta"), linked(&store, "tb")), (None, None));
+    Ok(())
+}

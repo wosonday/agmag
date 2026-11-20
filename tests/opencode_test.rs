@@ -52,7 +52,7 @@ fn opencode_usage_normalized() -> anyhow::Result<()> {
         [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
     )?;
-    assert_eq!(row, ("opencode://ses_a".into(), r"D:\Dự án\wt".into(), "gpt-6.1-sol".into(), 191, 45440, 3, 404, 12));
+    assert_eq!(row, ("opencode://ses_a".into(), r"D:\Dự án\wt".into(), "openai/gpt-6.1-sol".into(), 191, 45440, 3, 404, 12));
     // Ngữ cảnh = input + cache đọc + cache ghi của lượt cuối.
     assert_eq!(count(&store, "SELECT ctx_used FROM sessions"), 191 + 45440 + 3);
     Ok(())
@@ -127,5 +127,48 @@ fn opencode_same_millisecond_message_not_skipped() -> anyhow::Result<()> {
     ingest_opencode(&store, &db)?;
     assert_eq!(count(&store, "SELECT SUM(output) FROM usage"), 414);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM turns"), 2);
+    Ok(())
+}
+
+/// Model mới (Go, NVIDIA, ...) không cần khai báo trước: lưu đủ `providerID/id` để phân biệt nguồn tính phí.
+#[test]
+fn opencode_model_keeps_provider_prefix() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let db = tmp.path().join("opencode.db");
+    let c = make_db(&db);
+    let go = ASSISTANT.replace(r#""id":"gpt-6.1-sol","providerID":"openai""#, r#""id":"deepseek-v4-pro","providerID":"opencode-go""#);
+    let nv = ASSISTANT.replace(r#""id":"gpt-6.1-sol","providerID":"openai""#, r#""id":"moonshotai/kimi-k3.1-pro","providerID":"nvidia-kimi""#);
+    let bare = ASSISTANT.replace(r#","providerID":"openai""#, "");
+    add(&c, "msg_go", 1, "assistant", 2000, &go);
+    add(&c, "msg_nv", 2, "assistant", 2001, &nv);
+    add(&c, "msg_bare", 3, "assistant", 2002, &bare);
+    let store = Store::open_in_memory()?;
+    ingest_opencode(&store, &db)?;
+    let models: Vec<String> = store
+        .conn()
+        .prepare("SELECT model FROM usage ORDER BY ts_ms")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    assert_eq!(models, ["opencode-go/deepseek-v4-pro", "nvidia-kimi/moonshotai/kimi-k3.1-pro", "gpt-6.1-sol"]);
+    assert_eq!(store.conn().query_row("SELECT model FROM sessions", [], |r| r.get::<_, String>(0))?, "gpt-6.1-sol");
+    Ok(())
+}
+
+/// CSDL agm cũ đã lưu model trần (không provider) → lần quét đầu sau nâng cấp nạp lại toàn bộ, đúng một lần.
+#[test]
+fn opencode_legacy_bare_models_are_rescanned_once() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let db = tmp.path().join("opencode.db");
+    let c = make_db(&db);
+    add(&c, "msg_a", 2, "assistant", 2000, ASSISTANT);
+    let store = Store::open_in_memory()?;
+    ingest_opencode(&store, &db)?;
+    // Giả lập dữ liệu do bản agm cũ ghi: model trần và chưa có cờ phiên bản khóa model.
+    store.conn().execute_batch("UPDATE usage SET model = 'gpt-6.1-sol'; DELETE FROM settings WHERE key = 'opencode_model_key';")?;
+    assert_eq!(ingest_opencode(&store, &db)?.lines, 1);
+    assert_eq!(store.conn().query_row("SELECT model FROM usage", [], |r| r.get::<_, String>(0))?, "openai/gpt-6.1-sol");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM usage"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM turns"), 1);
+    assert_eq!(ingest_opencode(&store, &db)?.lines, 0);
     Ok(())
 }

@@ -141,10 +141,14 @@ pub fn app_from_argv(argv: &[String]) -> Option<String> {
 pub fn terminal_row_from(v: &Value) -> TerminalRow {
     let str_of = |k: &str| v[k].as_str().map(String::from);
     let argv: Vec<String> = v["argv"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-    let labels: BTreeMap<String, String> = v["labels"]
+    let mut labels: BTreeMap<String, String> = v["labels"]
         .as_object()
         .map(|o| o.iter().filter_map(|(k, x)| x.as_str().map(|x| (k.clone(), x.to_string()))).collect())
         .unwrap_or_default();
+    // herdr's location ("workspace / tab"): a label in snapshots/events, a top-level field in `hc ls`.
+    if let Some(place) = v["where"].as_str().filter(|w| !w.trim().is_empty()) {
+        labels.entry("where".into()).or_insert_with(|| place.to_string());
+    }
     // `hc ls` cho `status` là chuỗi + `agent`; `hc get`/sự kiện cho `status` là đối tượng.
     let reported_app = v["status"]["app"].as_str().filter(|a| !a.trim().is_empty()).map(String::from).or_else(|| {
         v["agent"].as_str().and_then(|a| app_from_argv(&[a.to_string()]))

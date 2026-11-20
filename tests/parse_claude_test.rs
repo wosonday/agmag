@@ -243,3 +243,16 @@ fn real_fixture_smoke() {
     assert_eq!(errors, 0);
     assert!(usages >= 1);
 }
+
+#[test]
+fn assistant_effort_emitted_once_per_change() {
+    let mut parser = parser_for(Source::Claude);
+    let line = |effort: &str, id: &str| {
+        format!(r#"{{"type":"assistant","timestamp":"2026-11-20T02:11:33.160Z","effort":"{effort}","message":{{"id":"{id}","model":"claude-opus-5-5","usage":{{"input_tokens":1,"output_tokens":1}},"content":[]}}}}"#)
+    };
+    let count = |evs: Vec<ParseEvent>| evs.iter().filter(|e| matches!(e, ParseEvent::Effort(_))).count();
+    let first = events(parser.parse_line(&line("high", "m1"), 0).unwrap());
+    assert!(first.contains(&ParseEvent::Effort("high".into())));
+    assert_eq!(count(events(parser.parse_line(&line("high", "m2"), 1).unwrap())), 0);
+    assert!(events(parser.parse_line(&line("medium", "m3"), 2).unwrap()).contains(&ParseEvent::Effort("medium".into())));
+}

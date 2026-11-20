@@ -62,6 +62,9 @@ pub struct DiskStats {
     pub write_bytes_per_s: Option<f64>,
     /// Other mount points showing the very same volume (e.g. one cloud drive under several letters).
     pub also_mounted_at: Vec<String>,
+    /// Real volume identifier (Windows: `\\?\Volume{GUID}\`, Unix: device id). Not exposed in JSON.
+    #[serde(skip_serializing)]
+    pub volume_id: Option<String>,
 }
 
 impl DiskStats {
@@ -82,7 +85,13 @@ impl DiskStats {
             read_bytes_per_s: None,
             write_bytes_per_s: None,
             also_mounted_at: Vec::new(),
+            volume_id: None,
         }
+    }
+
+    pub fn with_volume_id(mut self, id: impl Into<String>) -> Self {
+        self.volume_id = Some(id.into());
+        self
     }
 
     pub fn used_bytes(&self) -> u64 {
@@ -257,17 +266,14 @@ pub fn attribute(procs: &[ProcInfo], logical_cores: usize, cpu_ready: bool) -> V
 }
 
 /// Sorts by mount point and folds duplicates into the first one: the same mount listed twice, or several mounts
-/// with identical file system, size and free bytes (one volume under several drive letters — two real disks never
-/// match to the byte). Counting such a volume once keeps the header from reporting the same drive three times.
+/// that identify as the same real volume. Counting such a volume once keeps the header from reporting the same
+/// drive multiple times.
 pub fn merge_disks(mut disks: Vec<DiskStats>) -> Vec<DiskStats> {
     disks.sort_by(|a, b| a.mount.cmp(&b.mount));
     let mut out: Vec<DiskStats> = Vec::new();
     for d in disks {
         let same = |x: &DiskStats| {
-            x.mount == d.mount
-                || (x.file_system == d.file_system
-                    && x.total_bytes == d.total_bytes
-                    && x.available_bytes == d.available_bytes)
+            x.mount == d.mount || (x.volume_id.is_some() && x.volume_id == d.volume_id)
         };
         match out.iter_mut().find(|x| same(x)) {
             Some(first) if first.mount != d.mount => first.also_mounted_at.push(d.mount),
@@ -276,6 +282,38 @@ pub fn merge_disks(mut disks: Vec<DiskStats>) -> Vec<DiskStats> {
         }
     }
     out
+}
+
+/// Returns the real volume identifier for a mount point, or `None` if it cannot be determined.
+/// Windows: `\\?\Volume{GUID}\` via `GetVolumeNameForVolumeMountPointW`. Unix: device id.
+#[cfg(windows)]
+pub fn volume_id(mount: &str) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeNameForVolumeMountPointW;
+    let mut wide: Vec<u16> = mount.encode_utf16().collect();
+    if !wide.ends_with(&[0]) {
+        wide.push(0);
+    }
+    // Buffer: MAX GUID path is 49 chars including terminator; use 64 for margin.
+    let mut buf = [0u16; 64];
+    let ok = unsafe {
+        GetVolumeNameForVolumeMountPointW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
+    };
+    if ok == 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    Some(String::from_utf16_lossy(&buf[..len]))
+}
+
+#[cfg(unix)]
+pub fn volume_id(mount: &str) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(mount).ok().map(|m| m.dev().to_string())
+}
+
+#[cfg(not(any(windows, unix)))]
+pub fn volume_id(_mount: &str) -> Option<String> {
+    None
 }
 
 /// Virtual / pseudo file systems that are not real storage.
@@ -409,6 +447,7 @@ impl SysSampler {
                 d.available_space(),
                 d.is_removable(),
             );
+            s.volume_id = volume_id(&mount);
             let io = d.usage();
             s.read_bytes_per_s = rate(io.read_bytes);
             s.write_bytes_per_s = rate(io.written_bytes);

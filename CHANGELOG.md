@@ -6,6 +6,10 @@
 
 - **Theo dõi tài nguyên máy** `agm sys`: CPU % kèm tải **từng nhân** (lưới trong `agm sys`, một dòng biểu đồ cột trong TUI; JSON `per_core_percent`), RAM/swap, từng ổ đĩa (dung lượng đã dùng/còn trống, tốc độ đọc/ghi) và phần RAM/CPU do **cây tiến trình** của từng agent chiếm (`claude-code`, `codex`, `opencode`, `agy`, app desktop tách riêng `*-app`), hàng **Σ SUM**; báo cáo có màu, biểu tượng, thanh tỉ lệ RAM theo màu từng agent và dòng đánh giá tải `OK / BUSY / HIGH LOAD` (cảnh báo ổ đầy từ 90%); `--json` cho agent, `NO_COLOR=1` để in không màu. Số liệu đo trực tiếp (crate `sysinfo`), không ghi vào CSDL. `agm tui`: thanh tiêu đề luôn có `cpu · ram · ổ đầy nhất` tô màu theo tải; bảng mới `system` chọn qua `view`.
 
+### Sửa lỗi
+
+- `agm sys`: gộp ổ đĩa theo định danh volume thật (Windows: GUID volume, Unix: device id) thay vì so sánh dung lượng; không còn gộp nhầm hoặc bỏ sót các ổ cùng kích thước/free.
+
 ## [0.3.0] - 2026-11-20
 
 ### Thay đổi

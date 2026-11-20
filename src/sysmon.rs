@@ -63,7 +63,7 @@ pub struct DiskStats {
     /// Other mount points showing the very same volume (e.g. one cloud drive under several letters).
     pub also_mounted_at: Vec<String>,
     /// Real volume identifier (Windows: `\\?\Volume{GUID}\`, Unix: device id). Not exposed in JSON.
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub volume_id: Option<String>,
 }
 
@@ -289,10 +289,13 @@ pub fn merge_disks(mut disks: Vec<DiskStats>) -> Vec<DiskStats> {
 #[cfg(windows)]
 pub fn volume_id(mount: &str) -> Option<String> {
     use windows_sys::Win32::Storage::FileSystem::GetVolumeNameForVolumeMountPointW;
+    // The API requires a trailing backslash (`C:\`, `C:\mnt\folder\`); add one if missing.
+    let mount = mount.trim_end_matches('\0');
     let mut wide: Vec<u16> = mount.encode_utf16().collect();
-    if !wide.ends_with(&[0]) {
-        wide.push(0);
+    if !mount.ends_with(['\\', '/']) {
+        wide.push(u16::from(b'\\'));
     }
+    wide.push(0);
     // Buffer: MAX GUID path is 49 chars including terminator; use 64 for margin.
     let mut buf = [0u16; 64];
     let ok = unsafe {

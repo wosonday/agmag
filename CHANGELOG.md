@@ -6,6 +6,10 @@
 
 - `agm cost`: hàng **SUM** được tách khỏi các dòng dữ liệu bằng vạch kẻ đôi (như vạch dưới tiêu đề) cho dễ nhìn.
 
+### Sửa lỗi
+
+- `agm sys` (Windows): mount không có `\` ở cuối (vd thư mục mount) vẫn nhận đúng định danh volume, thay vì coi là không rõ; thêm test khóa việc định danh volume không bao giờ lọt vào JSON.
+
 ## [0.3.1] - 2026-11-20
 
 ### Thêm mới

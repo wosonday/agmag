@@ -229,6 +229,22 @@ fn volume_id_reads_windows_guid_path() {
 
     // Non-existent mount / garbage path should return None, not panic.
     assert!(volume_id("not-a-mount").is_none());
+
+    // The API needs a trailing backslash; a mount given without one resolves to the same volume.
+    assert_eq!(volume_id("C:"), Some(s));
+}
+
+#[test]
+fn volume_id_never_reaches_json() {
+    let mut s = sample_stats();
+    s.disks = s
+        .disks
+        .into_iter()
+        .map(|d| d.with_volume_id("vol-secret"))
+        .collect();
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(!json.contains("volume_id"), "{json}");
+    assert!(!json.contains("vol-secret"), "{json}");
 }
 
 fn sample_stats() -> SysStats {

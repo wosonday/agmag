@@ -13,7 +13,7 @@
 - [x] (1) Parse: percent = phần đã dùng; 300/10080/43200; kẹp 0–100; null/thiếu/meter lạ → không ghi, không giả 0%/100%
 - [x] (2) Fetch: hạn chót chung mọi bước, kill cả cây, không join luồng đọc khi quá hạn, test treo có biên dư
 - [x] (3) Bảng + TUI: nhãn 5h/7d/mo, limited đỏ, stale, dòng stale không hiện như số tươi, 60/110 cột
-- [ ] (4) Stale opencode-go theo usage `opencode-go/*`
+- [x] (4) Stale opencode-go theo usage `opencode-go/*`
 - [ ] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
 - [ ] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
 - [ ] (7) Docs/decision khớp mã
@@ -53,6 +53,15 @@
 
 **Phát hiện 3.1 — mức: nhỏ.** `src/main.rs:911-922`: nhánh stale của bảng CLI `continue` **trước** khi tính `limited` (`:929`), nên một dòng vừa `stale` vừa `limited: true` **không** hiện nhãn `limited` đỏ trên `agm quota`. TUI (`src/dashboard.rs:852`) vẫn chèn `limited_tag` vào cả dòng stale → hai chế độ hiển thị không nhất quán, và yêu cầu "khi `limited: true` thì thêm nhãn `limited`" không được thỏa mãn đầy đủ ở CLI. Dữ liệu stale đã bị coi như "không có số tươi", nên không chặn.
 - Cách tái hiện: gieo `QuotaRow { provider: "opencode-go", window_minutes: 300, stale: true, limited: true, ... }`, chạy `agm quota` (không `--json`) → dòng đó chỉ có `stale · seen … ago`; chạy `agm tui` → cùng dòng có thêm `limited` đỏ. Có thể gọi hàm `quota_table` trong unit test của `src/main.rs` để so sánh chuỗi.
+
+### (4) Stale `opencode-go` theo usage `opencode-go/*` — ĐẠT (1 phát hiện nhỏ)
+
+- `src/report.rs:761` nhận diện provider `opencode-go`, `:762` đưa vào nhánh xét usage mới; `:795-798` — `source == "opencode" && model.starts_with("opencode-go/")`, tức **mọi** biến thể `opencode-go/*` (kể cả `*-free`) đều cùng gói, đúng quy ước dự phòng trong decision `.agents/decisions/opencode-go-quota.md:39` và task `:31`.
+- Cùng dùngcondition tuổi `quota_stale_min` (`src/report.rs:745-748`) như các provider khác, và `quota_with_config` truyền `stale`/`observed_age_s` ra dòng hiển thị (`:728-729`).
+- Test `tests/report_test.rs:699-788`: quota cũ 61 phút → stale; quota tươi nhưng có usage `opencode-go/gpt-5.4` sau `observed_ms` → stale; usage `openai/gpt-6.1-sol` (gói khác) → **không** stale. Đã chạy xanh.
+
+**Phát hiện 4.1 — mức: nhỏ.** `tests/report_test.rs:737` chỉ dùng model `opencode-go/gpt-5.4`; chưa có ca test nào dùng biến thể `opencode-go/*-free` dù decision `:39` nêu rõ "mọi `opencode-go/*` được coi là cùng gói". Code dùng `starts_with` nên hành vi đúng, chỉ thiếu test bảo vệ quy ước này.
+- Cách tái hiện: thêm/sửa ca trong `opencode_go_quota_stale_by_age_and_new_usage`, đổi model thành `opencode-go/deepseek-v4-pro-free` — vẫn phải ra `stale == true`; hiện chưa có ca này trong diff.
 
 ## KẾT LUẬN
 

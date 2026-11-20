@@ -16,7 +16,7 @@
 - [x] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
 - [x] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
 - [x] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
-- [ ] (7) Docs: README.md, README_vi.md, CHANGELOG `[Unreleased]`
+- [x] (7) Docs: README.md, README_vi.md, CHANGELOG `[Unreleased]`
 - [ ] (8) `cargo test --offline` + `cargo clippy --offline --all-targets -- -D warnings`
 
 ## Phát hiện
@@ -82,6 +82,14 @@
 - **`src/dashboard.rs` — mở rộng, không xóa logic.** Các dòng bị xóa trong toàn file chỉ là: `let items = [...]` → `let mut items = vec![...]` trong `render_header` (`:569-577`), `ALL: [Section; 6]` → `[Section; 7]` và `SELECTABLE: [Section; 5]` → `[Section; 6]` để thêm `System` (`:1036-1053`). `Section::DEFAULT` giữ nguyên `[Quota, Terminals, Inbox]` (`:1054`), khớp test `tests/sysmon_test.rs:400`. Không có hunk nào gần code `quota`/`opencode-go`.
 - **Test xác nhận luồng cũ:** `cargo test --offline --test dashboard_test --bin agm` → `render_opencode_go_quota_labels_limited_and_stale_fit_60_110 ... ok`, `render_stale_quota_line_fits_60_and_110 ... ok`, `view_command_picks_up_to_three_sections ... ok`, `plan_quota_shows_percent_left ... ok`; bin `agm` 5/5, dashboard 25/25. Cộng `sysmon_test` 9/9 → tổng 39 test nhắm mục này đạt.
 - **Đối chiếu `feat/sysmon-orig` (`9de7b5c`, gốc từ `a7ce50f`)**: `git diff feat/sysmon-orig HEAD -- src/sysmon.rs` chỉ là **thay đổi định dạng `cargo fmt`** (gộp/tách dòng, sắp xếp import `MINIMUM_CPU_UPDATE_INTERVAL`) — không khác biệt ngữ nghĩa. Tên 12 hàm test trong `tests/sysmon_test.rs` **giống hệt** hai nhánh; tập hàm sys-specific trong `dashboard.rs` (`render_sys_report`, `render_system`, `machine_lines`, `core_grid_lines`, `core_spark_line`, `disk_lines`, `agent_lines`, `system_summary`, `system_verdict`) **giống hệt**. Không thấy phần nào bị rơi khi apply lại lên `main` `0385149`.
+
+### (7) Docs — ĐẠT (1 phát hiện nhỏ)
+
+- **CHANGELOG** (`CHANGELOG.md:3-8`): mục `### Thêm mới` nằm dưới `## [Unreleased]`, **trên** `## [0.3.0] - 2026-11-20` đúng brief. Nội dung mô tả đúng mã: per-core (lưới trong `agm sys`, spark trong TUI, `per_core_percent` trong JSON), RAM/swap, đĩa + tốc độ đọc/ghi, cây tiến trình theo agent (`claude-code`, `codex`, `opencode`, `agy`, `*-app`), `Σ SUM`, ba mức `OK/BUSY/HIGH LOAD`, cảnh báo đĩa ≥90%, `--json`, `NO_COLOR=1`, header và `view system`, không ghi CSDL. Kiểm byte: `CHANGELOG.md` có **63 LF / 0 CRLF** — đúng yêu cầu "CHANGELOG về LF" trong brief.
+- **README.md / README_vi.md** đối xứng nhau, đều có: dòng `agm sys` trong danh sách lệnh (`:68`/`:66`), ví dụ header TUI thêm `cpu 23% ram 57% C: 71%` (`:122`/`:120`), `system` trong danh mục `view` (`:159`/`:157`), bản mô tả `agm sys` + `agm tui` (`:218-219`/`:214-215`), và ghi chú giới hạn nhận diện agent theo tên tiến trình (`:359`/`:355`). Các chi tiết đối chiếu được với mã: ngưỡng `BUSY ≥ 60%` / `HIGH LOAD ≥ 85%` (`src/dashboard.rs:645-650`), cảnh báo đĩa 90%, `1 GB = 1024³` (`src/sysmon.rs:144-159`), 1 core = 100% rồi chia cho số core (`src/sysmon.rs:241-248`), busiest core + idle count (`src/dashboard.rs:707-725`).
+
+**Phát hiện 7.1 — mức: nhỏ.** `README.md:218` và `README_vi.md:214` ghi `agm sys` "Takes ~0.7 s" / "Mất khoảng 0,7 giây" — con số này chỉ là tổng hai `sleep` (`src/sysmon.rs:320` 200 ms + `:432` 500 ms), **chưa gồm chi phí quét bảng tiến trình**. Đo thực tế `target/debug/agm.exe sys --json` ba lần liên tiếp trên máy này: **1275 / 1270 / 1235 ms** (xem mục 3). Docs nên nói "~0.7–1.3 s tùy số tiến trình" hoặc bỏ con số cụ thể. Không chặn.
+- Cách tái hiện: chạy `agm sys --json` với StopWatch như mục 3; so với chuỗi "~0.7 s" trong README.
 
 _(các mục còn lại sẽ điền dần)_
 

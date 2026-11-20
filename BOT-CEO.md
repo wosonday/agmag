@@ -1,6 +1,6 @@
 # BOT-CEO — Điều phối đa mảng (lane) và kinh phí AI
 
-Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (phiên bản 3.6) và [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md). Lấy ý tưởng từ mô hình `HARNESSING.md` + `BRANCHES.md` của dự án `MATHY-AI` (`/mnt/d/Project/MATHY-AI/`), chuẩn hóa lại để dùng chung cho mọi dự án chạy cùng **`agm` (`agmag` v0.2.0)**, **`hc` (`herdr-core`)**, **Antigravity CLI (`agy`)** và **GitHub Copilot**.
+Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (phiên bản 3.6) và [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md). Lấy ý tưởng từ mô hình `HARNESSING.md` + `BRANCHES.md` của dự án `MATHY-AI` (`/mnt/d/Project/MATHY-AI/`), chuẩn hóa lại để dùng chung cho mọi dự án chạy cùng **`agm` (`agmag` v0.3.0)**, **`hc` (`herdr-core`)**, **Antigravity CLI (`agy`)** và **GitHub Copilot**.
 
 > **Thứ tự ưu tiên tài liệu:** `AGENTS.md` / `CLAUDE.md` của dự án **>** `AGENTS-TUTORIAL.md` (quy tắc cứng & cổng phát hành) **>** `BOT-CEO.md` (mở rộng cơ chế đa lane & `BRANCHES.md`) **>** `HERDR-CORE-BOT.md` (hạ tầng `agm`/`hc`).
 
@@ -252,5 +252,5 @@ Làm đúng theo thứ tự Goal First -> Process Second -> Then Routines (Mục
 
 - Khung xác định mục tiêu `Automate Anything` (`goal + process + routines`): Lauren Tan (`poteto`)
 - Mô hình gốc đa lane + `BRANCHES.md` + khóa thư mục: `/mnt/d/Project/MATHY-AI/HARNESSING.md`, `/mnt/d/Project/MATHY-AI/BRANCHES.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CEO_BOT.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CAI_TIEN_HARNESS.md`
-- Bộ điều phối `agm` (`agmag` v0.2.0): `/mnt/d/Project/agmag/README_vi.md` (hoặc https://github.com/wosonday/agmag/)
+- Bộ điều phối `agm` (`agmag` v0.3.0): `/mnt/d/Project/agmag/README_vi.md` (hoặc https://github.com/wosonday/agmag/)
 - Tài liệu cùng bộ: [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md), [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md)

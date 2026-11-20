@@ -4,7 +4,7 @@ Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (mục 2.2, 3
 
 **Quản lý phiên bản Git giao cho GitHub Copilot** (`AGENTS-TUTORIAL.md` §3.3.1, [docs/COPILOT-GIT.md](docs/COPILOT-GIT.md)). `agm` và lớp wrapper worktree lo sinh/theo dõi/xoay vòng phiên và đo token; BOT-CEO (hoặc Codex ở dự án 1 luồng) quản lý đầu việc và bàn giao nhánh + SHA cuối (sau Review và bước cập nhật docs của Hydrogen Medium) + kết quả kiểm. Copilot tích hợp, revert và dọn worktree/nhánh đã tích hợp trong phạm vi được cho phép. Với MATHY-AI, tuân theo `docs/harness/GIT_BOT.md`.
 
-Phạm vi: (1) dùng **`agm` (`agmag` v0.2.0)** đứng trên `hc` (`herdr-core`) để chạy nền, giao việc, nhắn tin, kiểm soát ngân sách/xoay vòng, và các template cho từng vai; (2) quy tắc tin nhắn & hộp thư; (3) đồng bộ GitNexus khi worktree nằm ở `.wt/` trong dự án.
+Phạm vi: (1) dùng **`agm` (`agmag` v0.3.0)** đứng trên `hc` (`herdr-core`) để chạy nền, giao việc, nhắn tin, kiểm soát ngân sách/xoay vòng, và các template cho từng vai; (2) quy tắc tin nhắn & hộp thư; (3) đồng bộ GitNexus khi worktree nằm ở `.wt/` trong dự án.
 
 > **Mức tin cậy:**
 > - **Đã xác minh từ mã nguồn & nghiên cứu của `agmag` (`v0.2.0`, 2026-11-18/19):** kiến trúc lệnh `agm` (`daemon`, `tui`, `spawn`, `send`, `inbox`, `reply`, `done`, `ask`, `manage`, `rotate`, `cleanup`, `budget`, `policy`, `hook`, `ps`, `ls`, `cost`, `quota`, `log`, `scan`, `link`), sự kiện `hc events --json` (gồm `created`, `restarted`, `status`, `turn`, `title`, `labels`, `size`, `foreground`, `finished`, `lost`, `removed`), biến môi trường `HC_TERMINAL_ID`, và việc terminal của HERDR app có hiện trong `hc`.
@@ -21,7 +21,7 @@ Thay vì viết script bash tự bắt `hc events --json`, tự đếm `jq` và 
 | Thành phần | Đảm nhận | Lệnh chính |
 |---|---|---|
 | **`hc` (`herdr-core`)** | Chạy nền terminal, đọc màn hình, gõ phím, phát luồng sự kiện `hc events --json`, đặt `HC_TERMINAL_ID` | `hc run`, `hc read`, `hc attach`, `hc ls`, `hc events`, `hc server start\|status` |
-| **`agm` (`agmag` v0.2.0)** | Theo dõi `hc events`, đo token/hạn mức gói (Claude/Codex/OpenCode/`agy`), hộp thư người dùng, gửi tin có ghi sổ, giới hạn `max_workers` và ngân sách, xoay vòng thợ OpenCode & bàn giao phiên Claude/Codex, bảo vệ không tự kill Claude/Codex | `agm daemon`, `agm tui`, `agm spawn`, `agm send`, `agm inbox`, `agm reply`, `agm done`, `agm ask`, `agm manage`, `agm rotate`, `agm cleanup`, `agm budget`, `agm policy`, `agm hook` |
+| **`agm` (`agmag` v0.3.0)** | Theo dõi `hc events`, đo token/hạn mức gói (Claude/Codex/OpenCode/`agy`), hộp thư người dùng, gửi tin có ghi sổ, giới hạn `max_workers` và ngân sách, xoay vòng thợ OpenCode & bàn giao phiên Claude/Codex, bảo vệ không tự kill Claude/Codex | `agm daemon`, `agm tui`, `agm spawn`, `agm send`, `agm inbox`, `agm reply`, `agm done`, `agm ask`, `agm manage`, `agm rotate`, `agm cleanup`, `agm budget`, `agm policy`, `agm hook` |
 | **Wrapper worktree (tùy chọn)** | Tạo `git worktree`, kiểm tra `tier:` / `skills:` trong `.agents/tasks/<ID>.md`, chạy `gitnexus analyze`, rồi gọi `agm spawn`; tự nhặt `.agents/inbox/*.md` | `dispatch.sh` (hoặc PowerShell tương đương), `cleanup-wt.sh` |
 
 **Phân biệt ngân sách:** Claude CEO phân bổ kinh phí; [Go Console](https://opencode.ai/console/go) là nguồn kiểm hạn mức Go. `agm` đo token và thực thi các ngưỡng đã cấu hình, không thay CEO duyệt nguồn tính phí hoặc tự chặn theo hạn mức Go. `agm 0.2.0` trên môi trường kiểm ngày 2026-11-20 chưa có Go trong `agm quota`.
@@ -495,7 +495,7 @@ cd "$PROJECT_DIR" && flock /tmp/gitnexus.lock gitnexus analyze --index-only
 
 Làm theo thứ tự, ghi kết quả vào `.agents/decisions/bot-setup.md`:
 
-1. `agm --version` (`agm 0.2.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`, `gitnexus-sync`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
+1. `agm --version` (`agm 0.3.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`, `gitnexus-sync`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
 2. `agm hook install` (nếu dùng Claude Code) và mở `hc run --bg --no-parent --name agm-daemon agm daemon`; mở `agm tui` kiểm tra thấy các phiên đang chạy, hạn mức gói và không báo lỗi cấu hình `providers.toml`.
 3. Chạy thử `agm ask --model gemini-4-argon-medium "Trả lời OK"` và kiểm tra token hiện trong `agm cost --window today --by source`; kiểm tra tên slug của **Opus High** qua `agy models`.
 4. Kiểm thử tương tác qua `hc`: mở một phiên thử **Hydrogen Medium** (`docs-hydrogen`) và **Gemini Argon** (`argon-advisor`) trong worktree thử nghiệm, kiểm tra `agm send` đẩy lệnh vào đúng prompt và commit đúng phạm vi.
@@ -508,7 +508,7 @@ Làm theo thứ tự, ghi kết quả vào `.agents/decisions/bot-setup.md`:
 
 ## Nguồn tham khảo
 
-- `agmag` (`agm` v0.2.0): https://github.com/wosonday/agmag/ (`README_vi.md`, `CHANGELOG.md`, `src/main.rs`, `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `src/daemon.rs`, `assets/providers.default.toml`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
+- `agmag` (`agm` v0.3.0): https://github.com/wosonday/agmag/ (`README_vi.md`, `CHANGELOG.md`, `src/main.rs`, `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `src/daemon.rs`, `assets/providers.default.toml`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
 - herdr-core (`hc`, template, OSC 7501, `hc events`): https://github.com/herdrdev/herdr-core ; https://github.com/herdrdev/herdr-core/blob/master/docs/commands.md ; https://github.com/herdrdev/herdr-core/blob/master/docs/templates.md ; https://herdr.dev/app
 - GitNexus: https://github.com/abhigyanpatwari/GitNexus ; https://unpkg.com/gitnexus@latest/README.md
 - git worktree: `git help worktree`

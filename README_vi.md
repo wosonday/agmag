@@ -14,7 +14,7 @@
 
 Và cho bạn can thiệp có kiểm soát: giao việc có giới hạn số thợ và ngân sách, trả lời agent, dừng agent (Codex/Claude chỉ khi **bạn** ra lệnh), tự **xoay vòng** thợ OpenCode khi ngữ cảnh đầy, và **bàn giao sang phiên mới** cho Claude Code/Codex mà không bao giờ tự kill phiên cũ.
 
-> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime. Phiên bản hiện tại: **0.2.0** — xem [CHANGELOG.md](CHANGELOG.md).
+> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime. Phiên bản hiện tại: **0.3.0** — xem [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -44,7 +44,7 @@ Cần [Rust](https://rustup.rs) (có `cargo`).
 git clone <địa chỉ repo này> agmag
 cd agmag
 cargo install --path .          # chép agm.exe vào ~/.cargo/bin (đã có trong PATH)
-agm --version                   # agm 0.2.0
+agm --version                   # agm 0.3.0
 ```
 
 > `cargo build --release` **chỉ** tạo `target\release\agm.exe` — gõ `agm` sẽ báo "not recognized". Hãy dùng `cargo install --path .`.

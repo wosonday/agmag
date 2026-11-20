@@ -25,3 +25,14 @@
 - CHANGELOG.md: thêm mục ### Sửa lỗi trong [Unreleased].
 - Kiểm tra: cargo test --offline → PASS (toàn bộ suite; sysmon_test 10 passed, gồm merge_disks_uses_volume_identity và olume_id_reads_windows_guid_path).
 - cargo fmt -- src/sysmon.rs tests/sysmon_test.rs, cargo fmt --all -- --check → sạch. cargo clippy --offline --all-targets -- -D warnings → sạch.
+
+## Bước 3 - Chạy thật và kiểm tra cuối
+- Lệnh: cargo run --offline -- sys --json
+- Kết quả ổ đĩa (chỉ mount/fs/also_mounted_at, không ghi nhãn volume):
+  - C:\  fs=NTFS  also_mounted_at=[]
+  - D:\  fs=NTFS  also_mounted_at=[]
+  - G:\  fs=FAT32 also_mounted_at=[]
+  - H:\  fs=FAT32 also_mounted_at=[]
+  - I:\  fs=FAT32 also_mounted_at=[]
+- Đủ 5 ổ, cả 5 lso_mounted_at rỗng. JSON không có trường nhãn/email/volume_id.
+- cargo test --offline: PASS (all suites). cargo clippy --offline --all-targets -- -D warnings: PASS. cargo fmt --check: PASS.

@@ -9,10 +9,10 @@ Reviewer độc lập. Không sửa mã sản phẩm.
 - [x] (1) Quy tắc stale theo tuổi + usage mới cùng gói
 - [x] (2) policy::provider_percent coi stale như không có dữ liệu
 - [x] (3) src/codex_quota.rs (fetch, timeout, kill tree, lỗi, giả 0/100%, auth.json)
-- [ ] (4) Test treo FETCH_TIMEOUT=8s vs elapsed <= 8
-- [ ] (5) Bảng chữ 'agm quota' có hiện stale
-- [ ] (6) TUI 60/110 cột
-- [ ] cargo test --offline
+- [x] (4) Test treo FETCH_TIMEOUT=8s vs elapsed <= 8
+- [x] (5) Bảng chữ 'agm quota' có hiện stale
+- [x] (6) TUI 60/110 cột
+- [x] cargo test --offline
 
 ## Phát hiện — mục (1) quy tắc stale
 
@@ -49,6 +49,32 @@ Reviewer độc lập. Không sửa mã sản phẩm.
 | `src/codex_quota.rs:~108` (spawn), `:~205` (`taskkill ... .status()`) | nhỏ | Hai bước này nằm ngoài `deadline`: `Command::spawn()` và lời gọi `taskkill .status()` đồng bộ không có hạn chót. Trong điều kiện thường thì trả về ngay, nhưng về mặt lý thuyết vẫn là "đường chờ không có hạn chót chung". Tái hiện: thay `AGM_CODEX_BIN` bằng wrapper chặn ngay trong lúc spawn (khó dựng); chỉ là ghi chú độ bền, không chặn. |
 | `src/codex_quota.rs:40-50` | nhỏ | Biến `snap_val` được tính rồi `let _ = snap_val;` (dead code), trong khi `snap` mới là giá trị dùng. Gây nhầm khi đọc; clippy hiện không bắt. Nên xóa để rõ ràng. |
 
+## Phát hiện — mục (4) test treo / timeout
+
+| file:dòng | mức | phát hiện / cách tái hiện |
+|---|---|---|
+| `tests/codex_quota_test.rs:124`; `src/codex_quota.rs:103` | nên sửa | `FETCH_TIMEOUT = 8s`, test assert `elapsed.as_secs() <= 8` — tức chỉ chấp nhận `elapsed < 9.0s` nhờ phép làm tròn xuống của `as_secs()`. Thực đo: cả binary `codex_quota_test` chạy hết **8.33s** (test treo chiếm ~8.3s), tức `as_secs()==8` → vừa đậu, biên an toàn chỉ ~0.7s. `fetch_usage` hết hạn ở 8s rồi mới gọi `kill_tree` (`taskkill /T /F` khởi tạo tiến trình + `wait()`), nên trên máy tải cao / CI chậm, tổng thời gian có thể vượt 9.0s → `as_secs() >= 9` → test **chập chờn (flaky)**. **Cách tái hiện:** chạy lặp `cargo test --offline --test codex_quota_test` dưới tải CPU cao, hoặc giả lập độ trễ `taskkill`; quan sát elapsed tiệm 9s. **Đề xuất:** để biên rõ ràng — assert `elapsed < FETCH_TIMEOUT + Duration::from_secs(2)` (hoặc giảm `FETCH_TIMEOUT` xuống 5s rồi vẫn giữ ngưỡng 8s của tệp tác vụ). |
+
+Ghi chú thêm: requirements tệp tác vụ (dòng 55) nói "trả lỗi trong ≤ 8 s", nhưng assert hiện thực lại cho phép tới gần 9s; nên thống nhất lại con số.
+
+## Phát hiện — mục (5) bảng chữ `agm quota` (không `--json`)
+
+| file:dòng | mức | phát hiện / cách tái hiện |
+|---|---|---|
+| `src/main.rs:884-913` (`print_quota`), đặc biệt dòng `900-910`; yêu cầu tại `.agents/tasks/codex-quota-stale.md:21` | **nên sửa** (lệch yêu cầu rõ ràng) | Hàm `print_quota` dựng bảng từ `QuotaRow` nhưng **không đọc `r.stale` cũng không đọc `r.observed_age_s`** — vẫn in thanh `█/░` + `{:.0}%` + reset như cũ. Vì vậy chạy `agm quota` trong terminal (không `--json`) với dữ liệu cũ vẫn hiện con số "tươi" màu xanh, **không có nhãn `stale` / `seen … ago`**. Tệp tác vụ dòng 21 yêu cầu `agm quota` (bảng + `--json`) thêm stale; chỉ có `--json` (`src/main.rs:526-528` → serialize `QuotaRow`) và TUI là có. `.agents/log/codex-quota-stale.md:32` cũng đã tự ghi nhận đây là lệch. **Cách tái hiện:** dùng fixture 2 ngày tuổi (`tests/fixtures/codex/mini.jsonl`), chạy trong TTY thật: `AGM_HOME=<tạm> target/debug/agm quota` → bảng hiện `21%` không có chữ `stale`; còn `agm quota --json` thì có `"stale": true`. (Lưu ý: `src/main.rs:279` ép JSON khi stdout không phải terminal, nên chạy trong TTY hoặc gọi trực tiếp `print_quota` để thấy bảng.) Đề xuất: thêm cột/nhãn `stale · seen … ago` vào `print_quota` giống TUI. |
+
+→ Đây là điểm **lệch yêu cầu duy nhất ở mức nên sửa**; không phải lỗi logic stale.
+
+## Phát hiện — mục (6) TUI 60/110 cột
+
+**Đạt.** `src/dashboard.rs:840-849` in dòng stale với `stale · seen {age} ago` tô `GRAY` (`\x1b[90m`), không vẽ thanh/% tươi; độ dài ~51 ký tự nên vừa khung 60. Test `tests/dashboard_test.rs:403-451` (`render_stale_quota_line_fits_60_and_110`) kiểm cả 60 lẫn 110: có chữ `stale · seen 1d01h ago`, không có `% left`, có mã màu xám, và mọi dòng đều `< width`. Đã chạy test → đậu (xem mục test bên dưới). Không có phát hiện.
+
+## cargo test --offline
+
+Lệnh: `cargo test --offline` (chạy 2 lần; lần 2 gom tóm tắt).
+
+**Kết quả: 290 test đạt, 0 lỗi, 0 ignored, 0 filtered** (29 binary/doc-test, mọi dòng `test result: ok`). Trong đó `tests/codex_quota_test` = 5/5 (đã chạy 8.33s, khớp nhận định mục 4), `tests/dashboard_test`, `tests/report_test`, `tests/policy_test`, `tests/config_test`, `tests/cli_test` đều đậu. Không ghi vào `~/.agmag` thật (các test CLI dùng `AGM_HOME` tạm; lần thử ngoài cũng dùng thư mục temp `%TEMP%\agmag-review-quota2`).
+
 ## KẾT LUẬN
 
-CHƯA ĐẠT (đang hoàn thiện các mục 4/5/6).
+CHƯA ĐẠT (đang hoàn thiện phần cuối).

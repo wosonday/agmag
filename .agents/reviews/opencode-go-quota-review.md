@@ -15,7 +15,7 @@
 - [x] (3) Bảng + TUI: nhãn 5h/7d/mo, limited đỏ, stale, dòng stale không hiện như số tươi, 60/110 cột
 - [x] (4) Stale opencode-go theo usage `opencode-go/*`
 - [x] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
-- [ ] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
+- [x] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
 - [ ] (7) Docs/decision khớp mã
 - [ ] Chạy `cargo test --offline`
 
@@ -71,6 +71,19 @@
 
 **Phát hiện 5.1 — mức: nhỏ.** `tests/report_test.rs:804,818` gọi trực tiếp `provider_percent`, không có ca nào tạo `BudgetRow { scope: "provider:opencode-go:300", ... }` rồi gọi `budget_value` (đường mà CLI/TUI dùng). Logic `budget_value` đã generic và được test ở chỗ khác (`tests/policy_test.rs:170-188`), nên đây là khe hở bảo vệ, không phải lỗi mã.
 - Cách tái hiện: thêm test gieo quota `opencode-go:300` tươi 84% + `set_budget("provider:opencode-go:300")`, assert `budget_value(...) == Some(84.0)`; lặp lại sau 61 phút assert `None`. Hiện ca này chưa có.
+
+### (6) Định danh tài khoản trong diff — ĐẠT về bản chất (1 nên sửa, 1 nhỏ)
+
+Kiểm `git diff main 2913a4d` (diff sản phẩm, trước khi tôi thêm tệp review) bằng regex `org_|usageURL|workspace|"name"`:
+
+- `.agents/decisions/opencode-go-quota.md` — bản cũ chứa `workspace.id/name/usageURL` và URL Console đã bị **xoá** trong commit; bản mới (`:10-22`) chỉ còn `data.go.{rolling,weekly,monthly}` đã ẩn định danh. Task `.agents/tasks/opencode-go-quota.md:17` dùng chỗ giữ chỗ `workspace:{…}`. ✓
+- **Không có** ID org thật, tên workspace thật hay URL thật nào trong diff; giá trị nhạy cảm đều là `<redacted>` hoặc giả. Mã sản phẩm (`src/**`, `tests/**`) không đọc `auth.json`/bảng credential theo `src/opencode_quota.rs:115-199`.
+
+**Phát hiện 6.1 — mức: nên sửa.** `.agents/log/opencode-go-quota.md:144`: dòng "Reference" chép nguyên envelope API vào log đã commit, gồm đường dẫn local thật `C:\\Users\\thanh`, khoá `id: "org_<redacted>"`, `"name": "<redacted>"` và `"usageURL": "<redacted>"`. Giá trị đã redacted nên **không lộ định danh thật**, nhưng vẫn còn tiền tố `org_`, khoá `usageURL` và tên user máy — đúng vào các chuỗi mà yêu cầu (6) liệt kê. Nên thay toàn bộ envelope bằng `{"data":{"workspace":{…},"go":{…}}}` như task `:17` để sạch cả về mặt hình thức. Không chặn vì không có giá trị thật.
+- Cách tái hiện: `git diff main 2913a4d | Select-String 'org_|usageURL|Users\\\\'` → trúng dòng `.agents/log/opencode-go-quota.md:144`.
+
+**Phát hiện 6.2 — mức: nhỏ.** `tests/opencode_quota_test.rs:6`: fixture có `"id": "org_x", "name": "x"` — `org_x` là giá trị giả, trùng mẫu `org_...`. Parser bỏ qua `workspace` (`src/opencode_quota.rs:34-45`), nên không ảnh hưởng hành vi; chỉ là tàn dư hình thức.
+- Cách tái hiện: `git diff main 2913a4d -- tests/opencode_quota_test.rs | Select-String 'org_'` → trúng dòng 6. Có thể bỏ hẳn trường `workspace` trong fixture vì `parse_usage` không đọc nó.
 
 ## KẾT LUẬN
 

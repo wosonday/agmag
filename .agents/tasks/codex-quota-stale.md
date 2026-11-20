@@ -44,3 +44,17 @@ Lưu ý song song: `opencode-metrics` cũng sửa `src/policy.rs`, `src/config.r
 
 Xong: `agm send t4v --type "BÁO CÁO" --task codex-quota-stale "Xong: <SHA cuối>, xem .agents/log/codex-quota-stale.md"`.
 Bị chặn / cần quyết định: `agm send user --type HỎI --task codex-quota-stale "<câu hỏi ngắn>"`.
+
+## Phần còn lại (CEO, 2026-11-20 sau khi hai thợ free chạm giới hạn)
+
+Trạng thái: nhánh đã được dựng lại trên `main` `1465336` chỉ với phần sửa thật (`f09f974`; bản cũ giữ ở `fix/codex-quota-stale-wip`). `cargo test --offline` 289 đạt. Đã có: đánh dấu stale (`report.rs`, `policy.rs`, `dashboard.rs`), `src/codex_quota.rs` (`codex app-server` → `account/rateLimits/read`), poller trong daemon, `agm quota --refresh`. CEO chạy thật `AGM_HOME=<tạm> cargo run -- quota --refresh` → `codex` 7d `used 92%`, `stale: false` (khớp `/status`).
+
+Việc còn lại:
+1. Sửa lỗi clippy `consider using sort_by_key` trong `tests/codex_quota_test.rs`; `cargo clippy --offline --all-targets -- -D warnings` sạch.
+2. Viết `.agents/decisions/codex-quota-source.md` theo mẫu `agy-quota-usage.md`: lệnh/phương thức chính xác, thời gian, xác nhận 0 token (không tạo rollout mới trong `~/.codex/sessions`), JSON mẫu đã xóa định danh, ánh xạ cửa sổ, xử lý lỗi.
+3. Rà lại `src/codex_quota.rs`: mọi đường chờ (`app-server` khởi động, đọc phản hồi, thoát) có hạn chót chung và diệt cả cây tiến trình khi quá hạn — **cùng lớp lỗi đã chặn `opencode-metrics`** (xem `src/opencode_models.rs::load_with`, `kill_tree`). Thêm test fake binary treo giữ stdout → trả lỗi trong ≤ 8 s.
+4. README.md, README_vi.md (quota/TUI: stale, `--refresh` cho Codex, `[policy].quota_stale_min`, `codex_quota_poll_min`), CHANGELOG.md.
+5. Ghi `.agents/log/codex-quota-stale.md`; **commit sau mỗi mục** (tiền tố `codex-quota-stale:`).
+
+Không fmt cả cây (đã fmt); chỉ `cargo fmt` các tệp bạn sửa. Không ghi vào `~/.agmag` thật khi chạy thử: dùng `AGM_HOME` tạm.
+Báo cáo: `agm send user --type "BÁO CÁO" --task codex-quota-stale "Xong: <SHA>"`.

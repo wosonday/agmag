@@ -103,3 +103,27 @@ Tại thời điểm bắt đầu review, `git diff main HEAD --stat` có 7 tệ
 - `README.md` / `README_vi.md`: không đổi. Grep không thấy câu nào nói về gộp ổ / ổ ảo cần cập nhật (chỉ mô tả chung "mỗi ổ đĩa" ở `README.md:218`, `README_vi.md:214`), nên việc giữ nguyên là phù hợp với điều kiện "nếu có câu nói về gộp ổ/ổ ảo" của brief. ✅
 
 `nhỏ` (quy trình, không phải lỗi mã): hai tệp `.agents/tasks/*.md` nằm ngoài danh sách "Phạm vi tệp" của brief nhưng là artifact của khâu giao việc/review đã được commit riêng, không phải thay đổi sản phẩm của thợ.
+
+## 7. Chạy lại test / clippy — sạch; kết luận **ĐẠT**
+
+Lệnh và kết quả (chạy lại độc lập trên worktree này, ngày 2026-11-20):
+
+| Lệnh | Kết quả |
+|---|---|
+| `cargo test --offline` | `EXIT=0` — **309 test đạt, 0 lỗi, 0 ignored** (30 suites + doc-tests 0). Trong đó `sysmon_test`: 10 passed, 0 failed — gồm `merge_disks_uses_volume_identity` và `volume_id_reads_windows_guid_path` (chạy thật vì máy này là Windows) |
+| `cargo clippy --offline --all-targets -- -D warnings` | `EXIT=0` — `Finished dev profile`, không warning, không error |
+| `cargo fmt --all -- --check` (kiểm thêm) | `EXIT=0` — không khác biệt định dạng |
+
+Số liệu khớp với báo cáo của CEO (309 test) → không có sai lệch cần điều tra.
+
+## Tổng kết
+
+| Mức | Số lượng | Chi tiết |
+|---|---|---|
+| `chặn` | **0** | — |
+| `nên sửa` | **0** | — |
+| `nhỏ` | **4** | mục 1: mount thiếu `\` cuối → trả `None` an toàn, có thể chuẩn hóa thêm; mục 4: cân nhắc `#[serde(skip)]` nếu sau này derive `Deserialize`; mục 5: nên thêm test regression cho việc JSON không chứa `volume_id`; mục 6: hai tệp brief `.agents/tasks/*.md` là artifact quy trình |
+
+**Kết luận: ĐẠT.** Không có phát hiện mức `chặn`. Việc gộp ổ theo định danh volume thật được triển khai đúng 4 ca, FFI Windows đúng đơn vị/ký tự và fail-safe, Unix dùng `dev()` chuẩn, `volume_id` không lọt ra JSON và không có API đọc nhãn volume nào được gọi. Các điểm `nhỏ` chỉ là hardening/đề xuất cho tương lai.
+
+Đối tượng review: implementation HEAD `a4efcc2` (trước các commit review này), phạm vi `git diff main HEAD`.

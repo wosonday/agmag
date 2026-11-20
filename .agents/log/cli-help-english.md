@@ -18,3 +18,9 @@
 - Added cli_help_is_english_for_every_command (all current commands/subcommands from src/main.rs Cmd/BudgetCmd/HookCmd), cli_stop_help_preserves_user_confirmation_warning (kill, interrupt), cli_send_help_explains_existing_message_codes to 	ests/cli_test.rs.
 - cargo fmt -- tests/cli_test.rs
 - Result: cargo test --offline --test cli_test help -> 1 passed (cli_cleanup_help_documents_mandatory_confirmation_even_with_yes), 3 failed as expected (help still Vietnamese / missing English safety+code explanations).
+
+### Step 2: Translate clap help (GREEN)
+- Translated all clap bout/doc comments/arg help in src/main.rs (Cli, Cmd, BudgetCmd, HookCmd) to concise English matching current behavior. Kept protocol codes with English gloss and English aliases for send. Preserved safety warnings for kill/interrupt ("Codex/Claude and unknown apps still require a user to type y"). Did not change command/flag names, aliases, defaults, parsers, JSON keys, or runtime strings.
+- cargo fmt -- src/main.rs
+- Result: cargo test --offline --test cli_test help -> 4 passed (including the 3 new help tests).
+- Sample help: root lists all commands in English; send --help shows code gloss+aliases; kill --help shows confirmation warning; udget set --help shows English arg descriptions.

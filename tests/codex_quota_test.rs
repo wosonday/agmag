@@ -25,7 +25,7 @@ fn parse_rate_limits_two_windows() {
         .iter()
         .map(|w| (w.window_minutes, w.used_percent))
         .collect();
-    wins.sort_by(|a, b| a.0.cmp(&b.0));
+    wins.sort_by_key(|w| w.0);
     assert_eq!(wins, [(300, 42.0), (10080, 16.0)]);
 }
 

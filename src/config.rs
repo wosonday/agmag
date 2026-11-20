@@ -63,6 +63,8 @@ pub struct Policy {
     pub link_timeout_min: u64,
     /// Số tháng dương lịch gần nhất cho thống kê & backfill mặc định.
     pub stats_months: u32,
+    /// Phút giữa hai lần daemon đọc hạn mức agy (`agy --print /usage`); 0 = tắt.
+    pub agy_quota_poll_min: u64,
 }
 
 impl Default for Policy {
@@ -75,6 +77,7 @@ impl Default for Policy {
             handoff_timeout_min: 10,
             link_timeout_min: 5,
             stats_months: 4,
+            agy_quota_poll_min: 15,
         }
     }
 }

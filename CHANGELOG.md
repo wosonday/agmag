@@ -9,8 +9,13 @@
 - Bàn giao phiên Claude/Codex chỉ hoàn tất khi đọc được trạng thái sống mới nhất; lỗi đọc không còn dựa vào trạng thái `done` đã lưu.
 - Hạn mức gói hiển thị theo **phần còn lại** (giảm dần từ 100%, như Codex `/status` và agy `/usage`) trong `agm quota`, TUI (`PLAN QUOTA (left)`) và statusline Claude (`5h 76% left`). JSON của `agm quota` giữ `used_percent` và thêm `left_percent`. Ngưỡng `agm budget set provider:…` vẫn tính theo % **đã dùng**.
 
+### Thêm mới
+
+- Hạn mức gói của agy: ba provider `agy-gemini`, `agy-3p` (Claude/GPT qua agy, tách khỏi hạn mức Claude Code) và `agy-argon`, đọc qua `agy --print /usage` (không tốn token). Daemon đọc trên luồng riêng mỗi `[policy].agy_quota_poll_min` phút (mặc định 15, `0` = tắt); `agm quota --refresh` đọc ngay. Dùng được cho ngân sách, vd `agm budget set provider:agy-gemini:10080 --soft 80 --hard 95`.
+
 ### Sửa lỗi
 
+- `agm send` gửi được cho agent đang ở trạng thái `done` (vừa xong lượt, không làm việc). Trước đây `hc send --if idle` luôn từ chối trường hợp này; agent đang `working`/`blocked` vẫn không bị gõ chen.
 - Cửa sổ hạn mức đã reset mà chưa có số liệu mới: không còn hiển thị số cũ, và ngân sách `provider:` không còn báo động theo số cũ (vd 96% đã dùng trước khi reset).
 
 ## [0.2.0] - 2026-11-19

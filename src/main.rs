@@ -59,8 +59,12 @@ enum Cmd {
         #[arg(long)]
         summary: bool,
     },
-    /// Hạn mức gói theo cửa sổ thời gian
-    Quota,
+    /// Hạn mức gói theo cửa sổ thời gian (hiển thị phần còn lại)
+    Quota {
+        /// Đọc ngay hạn mức agy (`agy --print /usage`, khoảng 3 giây) trước khi in
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Các lượt hội thoại của một phiên (tiền tố session id)
     Log {
         session: String,
@@ -275,7 +279,7 @@ fn run(cli: Cli) -> Result<()> {
             let default_since = now - SCAN_DAYS * DAY_MS;
             Some(if need_backfill { target_since.min(default_since) } else { default_since })
         }
-        Cmd::Quota | Cmd::Log { .. } => Some(now - SCAN_DAYS * DAY_MS),
+        Cmd::Quota { .. } | Cmd::Log { .. } => Some(now - SCAN_DAYS * DAY_MS),
         _ => None,
     };
     let stats = if let Some(since_ms) = scan_since_ms {
@@ -293,7 +297,16 @@ fn run(cli: Cli) -> Result<()> {
             emit(json, &serde_json::json!({ "applied": n }), || println!("Đã nạp {n} sự kiện."))
         }
         Cmd::Daemon { interval, replay: None } => {
-            ops::daemon_loop(&store, &cfg()?, interval, |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ()))
+            let cfg = cfg()?;
+            // Hạn mức agy: gọi `agy --print /usage` thưa và trên luồng riêng; lỗi chỉ cảnh báo.
+            let mut agy_quota = agmag::agy_quota::AgyQuotaPoller::new(
+                cfg.policy.agy_quota_poll_min,
+                std::sync::Arc::new(agmag::agy_quota::fetch_usage),
+            );
+            ops::daemon_loop(&store, &cfg, interval, |s| {
+                scan(s, now_ms() - SCAN_DAYS * DAY_MS)?;
+                agy_quota.tick(s, now_ms())
+            })
         }
         Cmd::Ps { all } => {
             let rows = store.terminals(!all)?;
@@ -372,7 +385,15 @@ fn run(cli: Cli) -> Result<()> {
                 emit(json, &rows, || print_cost(&rows, by))
             }
         }
-        Cmd::Quota => {
+        Cmd::Quota { refresh } => {
+            if refresh {
+                // Lỗi agy (chưa cài, mất mạng, chưa đăng nhập) không chặn việc in hạn mức Codex/Claude.
+                match agmag::agy_quota::fetch_usage().and_then(|out| agmag::agy_quota::record_usage(&store, &out, now)) {
+                    Ok(p) if p.unknown > 0 => eprintln!("agm: bỏ qua {} bucket hạn mức agy không nhận ra", p.unknown),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("agm: không đọc được hạn mức agy: {e:#}"),
+                }
+            }
             let rows = report::quota(&store, now / 1000)?;
             emit(json, &rows, || print_quota(&rows, now / 1000))
         }

@@ -1,7 +1,8 @@
 # agy quota qua `agy --print /usage --output-format json` — đánh giá trước khi mở task
 
 Ngày: 2026-11-19. Người viết: Claude Code (t1s), trả lời câu hỏi của agy t41.
-Trạng thái: đề xuất, chưa có task, chưa sửa mã.
+Trạng thái: **đã cài đặt 2026-11-20** (`src/agy_quota.rs`, `agm quota --refresh`, daemon đọc theo `[policy].agy_quota_poll_min`).
+Phát hiện khi chạy thật: khi đã hết hạn mức tuần, bucket 5h có `disabled: true`, không có `reset_time` ("the 5-hour limit does not currently apply") → bỏ qua có chủ đích, không đếm là unknown.
 
 ## 1. Kết quả chạy thử thật (1 lần, trong `%TEMP%\agy-usage-probe`)
 

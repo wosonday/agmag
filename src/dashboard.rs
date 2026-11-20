@@ -434,21 +434,22 @@ pub fn render(s: &Snapshot, width: usize) -> String {
             let left = q.resets_at_s - s.now_s;
             paint(CYAN, &format!("resets in {}h{:02}m", left / 3600, left % 3600 / 60))
         };
-        let prov = one_line(&q.provider, 8);
+        // 10 cột: đủ cho `agy-gemini` / `agy-argon` mà không bị cắt.
+        let prov = one_line(&q.provider, 10);
         if q.left_percent.is_finite() {
             // Màu vẫn theo mức đã dùng (còn ít → đỏ); thanh và con số theo phần còn lại.
             let col = pct_color(100.0 - q.left_percent);
             let pct_str = paint(col, &format!("{:>3.0}% left", q.left_percent));
             out += &format!(
                 "  {} {}  {} {pct_str}  {reset}\n",
-                paint(WHITE, &pad_cells(&prov, 8)),
+                paint(WHITE, &pad_cells(&prov, 10)),
                 paint(CYAN, &format!("{:>3}", win)),
                 colored_bar(q.left_percent, col),
             );
         } else {
             out += &format!(
                 "  {} {}  {} {}  {reset}\n",
-                paint(WHITE, &pad_cells(&prov, 8)),
+                paint(WHITE, &pad_cells(&prov, 10)),
                 paint(CYAN, &format!("{:>3}", win)),
                 paint(GRAY, "··········"),
                 paint(GRAY, "   ?"),

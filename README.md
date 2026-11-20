@@ -96,7 +96,7 @@ The first run is a bit slow (it reads the last 7 days of logs); after that only 
 | **Claude Code** | Optional. For **5h/7d subscription quota %** (and to use `agm manage`), run `agm hook install` **once** (applies to every Claude session) | Claude Code's bottom status line: `Opus 5.5 · ctx 34% · 5h 76% left · 7d 59% left`; and every `agm` command |
 | **Codex** | Nothing (quota is already in Codex's logs) | `agm quota / ls / tui` |
 | **OpenCode** | Nothing (agm reads `opencode.db`, read-only) | `agm ls / cost / tui` |
-| **agy (Gemini)** | Nothing. agm reads `transcript.jsonl` of every interactive `antigravity-cli` session and `conversation_summaries.db` (read-only, for the working directory); `agm ask` is recorded separately and never double-counted | `agm ls / cost / tui` |
+| **agy (Gemini)** | Nothing. agm reads `transcript.jsonl` of every interactive `antigravity-cli` session and `conversation_summaries.db` (read-only, for the working directory); `agm ask` is recorded separately and never double-counted. **Plan quota** (Gemini / Claude-GPT via agy / Argon) is read by the daemon every 15 min via `agy --print /usage` (no tokens), or now with `agm quota --refresh` | `agm ls / cost / quota / tui` |
 
 > `agm hook install` adds a `statusLine` to `~/.claude/settings.json`. If you already have your own statusLine, it refuses and does not overwrite it — call `agm hook statusline` from your own script instead.
 
@@ -200,7 +200,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 
 | Command | Purpose |
 |---|---|
-| `agm quota` | Subscription quota per time window |
+| `agm quota [--refresh]` | Subscription quota left per time window (`--refresh`: read agy quota now, ~3 s) |
 | `agm ls [--days N]` | Sessions: source, model, tokens, % context, warnings |
 | `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Token totals; 24h/today/this-month summary + 4-month bar chart in local time; USD only for API-billed models with a declared price |
 | `agm log <session> [--limit N] [--full]` | Turn summaries (`--full`: raw log lines, Codex/Claude only) |
@@ -297,6 +297,7 @@ ctx_rotate = 70                 # % context: rotate session
 handoff_timeout_min = 10
 link_timeout_min = 5
 stats_months = 4                # number of recent calendar months for statistics & backfill
+agy_quota_poll_min = 15         # minutes between agy quota reads (`agy --print /usage`); 0 = off
 ```
 
 Models without a declared price or context window show `?` — agm never invents a 0.

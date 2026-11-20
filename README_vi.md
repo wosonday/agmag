@@ -94,7 +94,7 @@ Lần đầu hơi chậm (đọc log 7 ngày gần nhất); sau đó chỉ đọ
 | **Claude Code** | Không bắt buộc. Muốn có **% hạn mức gói 5h/7d** (và để dùng `agm manage`) thì chạy **một lần** `agm hook install` (áp dụng cho mọi session Claude) | Thanh trạng thái dưới cùng của Claude Code: `Opus 5.5 · ctx 34% · 5h 76% left · 7d 59% left`; và mọi lệnh `agm` |
 | **Codex** | Không gì cả (hạn mức gói có sẵn trong log Codex) | `agm quota / ls / tui` |
 | **OpenCode** | Không gì cả (agm đọc `opencode.db`, chỉ đọc) | `agm ls / cost / tui` |
-| **agy (Gemini)** | Không gì cả. agm đọc `transcript.jsonl` của mọi phiên tương tác `antigravity-cli` và `conversation_summaries.db` (chỉ đọc, để biết thư mục làm việc); `agm ask` được ghi riêng và không bị đếm trùng | `agm ls / cost / tui` |
+| **agy (Gemini)** | Không gì cả. agm đọc `transcript.jsonl` của mọi phiên tương tác `antigravity-cli` và `conversation_summaries.db` (chỉ đọc, để biết thư mục làm việc); `agm ask` được ghi riêng và không bị đếm trùng. **Hạn mức gói** (Gemini / Claude-GPT qua agy / Argon) do daemon đọc 15 phút một lần qua `agy --print /usage` (không tốn token), hoặc đọc ngay bằng `agm quota --refresh` | `agm ls / cost / quota / tui` |
 
 > `agm hook install` thêm `statusLine` vào `~/.claude/settings.json`. Nếu bạn đã có statusLine riêng, lệnh từ chối và không ghi đè — gọi `agm hook statusline` từ script của bạn.
 
@@ -196,7 +196,7 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 
 | Lệnh | Việc |
 |---|---|
-| `agm quota` | Hạn mức gói theo cửa sổ thời gian |
+| `agm quota [--refresh]` | Hạn mức gói còn lại theo cửa sổ thời gian (`--refresh`: đọc ngay hạn mức agy, khoảng 3 giây) |
 | `agm ls [--days N]` | Các phiên: nguồn, model, token, % ngữ cảnh, cảnh báo |
 | `agm cost [--by model\|day\|month\|source\|cwd] [--days N \| --window 24h\|today\|month\|4months] [--summary]` | Tổng token; tóm tắt 24h/hôm nay/tháng này + bar chart 4 tháng theo giờ máy; USD chỉ cho model trả theo API có khai giá |
 | `agm log <session> [--limit N] [--full]` | Tóm tắt lượt hội thoại (`--full`: dòng log gốc, chỉ Codex/Claude) |
@@ -293,6 +293,7 @@ ctx_rotate = 70                 # % ngữ cảnh: xoay vòng phiên
 handoff_timeout_min = 10
 link_timeout_min = 5
 stats_months = 4                # số tháng dương lịch gần nhất cho thống kê & backfill
+agy_quota_poll_min = 15         # phút giữa hai lần đọc hạn mức agy (`agy --print /usage`); 0 = tắt
 ```
 
 Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.

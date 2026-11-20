@@ -84,6 +84,7 @@ ctx_rotate = 70                 # % ngữ cảnh: bắt đầu xoay vòng
 handoff_timeout_min = 10
 link_timeout_min = 5
 stats_months = 4
+agy_quota_poll_min = 15         # đọc hạn mức agy (agy-gemini / agy-3p / agy-argon); 0 = tắt
 ```
 
 Thiết lập ngân sách (tùy chọn, `agm daemon` kiểm mỗi chu kỳ):

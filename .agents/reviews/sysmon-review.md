@@ -17,7 +17,7 @@
 - [x] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
 - [x] (6) Ghép với `main`: `quota`, `view` mặc định, `opencode-go` rows; đối chiếu `feat/sysmon-orig`
 - [x] (7) Docs: README.md, README_vi.md, CHANGELOG `[Unreleased]`
-- [ ] (8) `cargo test --offline` + `cargo clippy --offline --all-targets -- -D warnings`
+- [x] (8) `cargo test --offline` + `cargo clippy --offline --all-targets -- -D warnings`
 
 ## Phát hiện
 
@@ -91,8 +91,23 @@
 **Phát hiện 7.1 — mức: nhỏ.** `README.md:218` và `README_vi.md:214` ghi `agm sys` "Takes ~0.7 s" / "Mất khoảng 0,7 giây" — con số này chỉ là tổng hai `sleep` (`src/sysmon.rs:320` 200 ms + `:432` 500 ms), **chưa gồm chi phí quét bảng tiến trình**. Đo thực tế `target/debug/agm.exe sys --json` ba lần liên tiếp trên máy này: **1275 / 1270 / 1235 ms** (xem mục 3). Docs nên nói "~0.7–1.3 s tùy số tiến trình" hoặc bỏ con số cụ thể. Không chặn.
 - Cách tái hiện: chạy `agm sys --json` với StopWatch như mục 3; so với chuỗi "~0.7 s" trong README.
 
-_(các mục còn lại sẽ điền dần)_
+### (8) Chạy lại kiểm tra — ĐẠT (0 phát hiện)
+
+- `cargo test --offline` → **308 đạt / 0 lỗi / 0 ignored**, `EXIT=0` (đúng số CEO đã báo trong brief). Có 31 nhóm kết quả (từ 0 đến 27 test/nhóm); cộng dồn 308.
+- `cargo clippy --offline --all-targets -- -D warnings` → `Finished dev profile ...`, **EXIT=0**, không cảnh báo nào.
+- `cargo fmt --all -- --check` → **EXIT=0** (kiểm thêm ngoài yêu cầu).
+- Không chạy `agm tui` (cần TTY) theo quy tắc; một test CLI trong `cli_test` in thông báo "agm tui is only available to a human at an interactive terminal" rồi vẫn `ok`.
 
 ## Kết luận
 
-_(chưa xác định)_
+**ĐẠT.** Tổng: **0 chặn / 1 nên sửa / 6 nhỏ**.
+
+| Mức | Số | Phát hiện |
+|---|---|---|
+| chặn | 0 | — |
+| nên sửa | 1 | 2.1 — `merge_disks` gộp nhầm hai đĩa vật lý cùng fs/kích thước/free (`src/sysmon.rs:262-279`) |
+| nhỏ | 6 | 1.1 `syn 2.x` trùng major với `syn 3.x` (`Cargo.lock:623`); 2.2 `agent_of` khớp cmd `/opencode/` gây nhãn nhầm (`src/sysmon.rs:185`); 3.1 quét toàn bộ tiến trình mỗi frame TUI (~45 ms, `src/tui.rs:232`); 3.2 `SysSampler::new()` chặn khởi động TUI ~689 ms (`src/tui.rs:220`); 4.1 `pane_width()` clamp tối thiểu 60 cột (`src/tui.rs:89`); 7.1 docs ghi `~0.7 s` nhưng đo thực tế ~1.25 s (`README.md:218`, `README_vi.md:214`) |
+
+Căn cứ: không có phát hiện `chặn`; phát hiện `nên sửa` duy nhất chỉ sai số đếm/hiển thị đĩa, không mất dữ liệu, không ảnh hưởng CSDL hay các lệnh cũ — có thể làm sau theo đúng định nghĩa **ĐẠT** trong task. Mã build offline sạch, 308 test đạt, clippy `-D warnings` sạch, fmt sạch, ghép `main` không phá `quota`/`view` mặc định/`opencode-go`.
+
+> Không sửa mã sản phẩm trong suốt review. Các chương trình Rust dùng để đo/đối chiếu được tạo và chạy ngoài repo (`$env:TEMP/opencode/`), không nằm trong diff.

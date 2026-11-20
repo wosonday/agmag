@@ -82,3 +82,24 @@ Logic nằm ở `src/sysmon.rs:271-285`:
 - Không có test nào dùng dữ liệu thật lộ nhãn volume; test chỉ dùng mount giả lập và chuỗi `vol-*` tự đặt.
 
 `nhỏ` (đề xuất, không chặn): chưa có test unit khẳng định `serde_json::to_string(&SysStats{...})` không chứa khóa `volume_id` (grep `tests/*.rs` không thấy). Việc này đang được CEO xác nhận bằng chạy thật `agm sys --json` (mục 4), nhưng một test regression nhỏ sẽ khóa chặt thuộc tính riêng tư này về sau.
+
+## 6. Phạm vi tệp / Docs — đúng; một ghi chú quy trình
+
+Tại thời điểm bắt đầu review, `git diff main HEAD --stat` có 7 tệp:
+
+| Tệp | Trạng thái | Đánh giá |
+|---|---|---|
+| `src/sysmon.rs` | đổi | được phép |
+| `tests/sysmon_test.rs` | đổi | được phép |
+| `Cargo.toml` | đổi 1 dòng | được phép — **chỉ** thêm `"Win32_Storage_FileSystem"` vào feature của `windows-sys` có sẵn, không thêm crate |
+| `CHANGELOG.md` | đổi | được phép |
+| `.agents/log/sysmon-disk-identity.md` | mới | được phép; nội dung chỉ ghi `mount` / fs / `also_mounted_at`, không có nhãn volume hay email |
+| `.agents/tasks/sysmon-disk-identity.md` | mới | tệp brief của quy trình (commit `f77f19b`), không phải mã sản phẩm |
+| `.agents/tasks/sysmon-disk-identity-review.md` | mới | tệp brief review (commit `a4efcc2`), không phải mã sản phẩm |
+
+- `Cargo.lock`: `git diff main HEAD -- Cargo.lock` → **rỗng**. Thêm feature cho crate có sẵn không làm đổi lock file, đúng brief.
+- Không đụng `src/store/**` hay module khác; `git diff main HEAD --name-only` xác nhận chỉ các tệp trên (cộng thêm tệp review này do reviewer tạo theo quy tắc review).
+- `CHANGELOG.md:3-11`: nằm đúng `## [Unreleased]` → `### Sửa lỗi` (dòng 9) với đúng **một** dòng mô tả (dòng 11), trước `## [0.3.0]`. ✅
+- `README.md` / `README_vi.md`: không đổi. Grep không thấy câu nào nói về gộp ổ / ổ ảo cần cập nhật (chỉ mô tả chung "mỗi ổ đĩa" ở `README.md:218`, `README_vi.md:214`), nên việc giữ nguyên là phù hợp với điều kiện "nếu có câu nói về gộp ổ/ổ ảo" của brief. ✅
+
+`nhỏ` (quy trình, không phải lỗi mã): hai tệp `.agents/tasks/*.md` nằm ngoài danh sách "Phạm vi tệp" của brief nhưng là artifact của khâu giao việc/review đã được commit riêng, không phải thay đổi sản phẩm của thợ.

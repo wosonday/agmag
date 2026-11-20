@@ -14,7 +14,7 @@
 - [x] (2) Fetch: hạn chót chung mọi bước, kill cả cây, không join luồng đọc khi quá hạn, test treo có biên dư
 - [x] (3) Bảng + TUI: nhãn 5h/7d/mo, limited đỏ, stale, dòng stale không hiện như số tươi, 60/110 cột
 - [x] (4) Stale opencode-go theo usage `opencode-go/*`
-- [ ] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
+- [x] (5) Ngân sách `provider:opencode-go:300`, stale = không có dữ liệu
 - [ ] (6) Không có định danh tài khoản (org_..., tên workspace, usageURL) trong tệp diff
 - [ ] (7) Docs/decision khớp mã
 - [ ] Chạy `cargo test --offline`
@@ -62,6 +62,15 @@
 
 **Phát hiện 4.1 — mức: nhỏ.** `tests/report_test.rs:737` chỉ dùng model `opencode-go/gpt-5.4`; chưa có ca test nào dùng biến thể `opencode-go/*-free` dù decision `:39` nêu rõ "mọi `opencode-go/*` được coi là cùng gói". Code dùng `starts_with` nên hành vi đúng, chỉ thiếu test bảo vệ quy ước này.
 - Cách tái hiện: thêm/sửa ca trong `opencode_go_quota_stale_by_age_and_new_usage`, đổi model thành `opencode-go/deepseek-v4-pro-free` — vẫn phải ra `stale == true`; hiện chưa có ca này trong diff.
+
+### (5) Ngân sách `provider:opencode-go:300` / stale = không có dữ liệu — ĐẠT (1 phát hiện nhỏ)
+
+- `src/ops.rs:520-545`: `budget_set` chấp nhận mọi scope `provider:<tên>:<phút>` với tên không rỗng và phút parse được `u32` (`:523`) → `agm budget set provider:opencode-go:300 --soft 80 --hard 95` hợp lệ, `unit = "percent"`; không có whitelist provider. (Tệp `src/ops.rs` không đổi trong diff vì đã generic — phù hợp phạm vi task `:37`.)
+- `src/policy.rs:67-75`: `budget_value` tách `["provider", p, w]` → `provider_percent`. `src/policy.rs:32-58`: truy `quota` theo `(provider, window)`; `:50-52` — nếu `quota_is_stale(...)` thì trả `None` (**không có dữ liệu**, không chặn/nới giả); `:53-57` trả phần đã dùng còn hiệu lực (sau reset → 0). Dùng chung hàm stale với bảng/TUI nên nhất quán với mục (3),(4).
+- Test `tests/report_test.rs:790-824`: `provider_percent(..., "opencode-go", 300, now)` = `Some(84.0)` lúc tươi, `None` khi quota 61 phút (stale). `tests/policy_test.rs:170-188` phủ đường scope string `provider:codex:10080` qua `budget_value`. Đã chạy xanh.
+
+**Phát hiện 5.1 — mức: nhỏ.** `tests/report_test.rs:804,818` gọi trực tiếp `provider_percent`, không có ca nào tạo `BudgetRow { scope: "provider:opencode-go:300", ... }` rồi gọi `budget_value` (đường mà CLI/TUI dùng). Logic `budget_value` đã generic và được test ở chỗ khác (`tests/policy_test.rs:170-188`), nên đây là khe hở bảo vệ, không phải lỗi mã.
+- Cách tái hiện: thêm test gieo quota `opencode-go:300` tươi 84% + `set_budget("provider:opencode-go:300")`, assert `budget_value(...) == Some(84.0)`; lặp lại sau 61 phút assert `None`. Hiện ca này chưa có.
 
 ## KẾT LUẬN
 

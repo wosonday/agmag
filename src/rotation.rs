@@ -390,16 +390,19 @@ fn verify_and_respawn(
         "UPDATE rotations SET commit_sha = ?2 WHERE id = ?1",
         params![r.id, commit],
     )?;
-    let req = SpawnReq {
+    let mut req = SpawnReq {
         template,
         task: task.clone(),
         role: t.role.clone().unwrap_or_else(|| "worker".into()),
         name: None,
         cwd: t.cwd.clone(),
-        text: Some(resume_text(&task)),
+        text: vec![resume_text(&task)],
     };
     // Kiểm mọi điều kiện mở phiên mới TRƯỚC khi kill (không để thợ chết mà không có người thay).
     if let Err(e) = actions::spawn_precheck(store, cfg, &req, Some(&t.address)) {
+        return fail(store, r, &format!("không mở được phiên mới: {e:#}"), now);
+    }
+    if let Err(e) = actions::prepare_rotation_spawn(hc, &mut req) {
         return fail(store, r, &format!("không mở được phiên mới: {e:#}"), now);
     }
     if let Err(e) = actions::kill(

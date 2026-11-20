@@ -217,7 +217,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 | `agm ps [--all]` | herdr-core terminals known to agm |
 | `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Inbox; answer an agent's question; dismiss an item |
 | `agm send <target> --type <TYPE> [--task ID] <text>` | Send a recorded message; target `user` → inbox |
-| `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <task>` | Spawn an agent (`hc run --bg --outlive-parent`), checking `max_workers` and budgets |
+| `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <args…>` | Spawn an agent (`hc run --bg --outlive-parent`), keeping each argument after `--` intact; if `<template>` is an hc template, those arguments are joined into one task string. On Windows, when `hc run <template>` fails with `cannot start "sh"`, agm falls back to running the template's `command:` directly and sends the template body plus the task to the terminal. Checks `max_workers` and budgets |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Kill / interrupt — Codex, Claude, unknown apps: **you only**, always requires typing `y` (`--yes` doesn't apply) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Enable/disable rotation management for a hand-opened Claude Code or Codex session |
 | `agm rotate <t> [--yes]` | Rotate now: OpenCode worker (hand-off + kill + respawn) or a managed Claude/Codex session (hand-off + new session, old one is **not** killed) |

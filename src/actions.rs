@@ -221,7 +221,7 @@ pub struct SpawnReq {
     pub role: String,
     pub name: Option<String>,
     pub cwd: Option<String>,
-    pub text: Option<String>,
+    pub text: Vec<String>,
 }
 
 fn valid_name(s: &str) -> bool {
@@ -350,8 +350,20 @@ pub fn spawn_successor_precheck(
 /// Sinh agent qua `hc run --bg --outlive-parent` sau khi kiểm hạn mức. Trả địa chỉ terminal mới.
 pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64) -> Result<String> {
     let name = spawn_precheck(store, cfg, req, None)?;
+    let listed = hc
+        .templates()
+        .map(|ts| ts.iter().any(|t| t["name"].as_str() == Some(&req.template)))
+        .unwrap_or(false);
+    let on_disk = crate::hc::load_template(&req.template).is_ok();
+    let is_template = listed || on_disk;
     let mut argv = vec![req.template.clone()];
-    argv.extend(req.text.clone());
+    if is_template {
+        if !req.text.is_empty() {
+            argv.push(req.text.join(" "));
+        }
+    } else {
+        argv.extend(req.text.iter().cloned());
+    }
     let spec = RunSpec {
         argv,
         name: Some(name.clone()),
@@ -362,7 +374,22 @@ pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64)
         ]
         .into(),
     };
-    let res = hc.run(&spec);
+    let mut brief = None;
+    let res = match hc.run(&spec) {
+        Err(e) if cfg!(windows) && is_template && crate::hc::is_missing_sh(&e) => {
+            let template = crate::hc::load_template(&req.template)?;
+            let direct = RunSpec {
+                argv: template.argv,
+                ..spec.clone()
+            };
+            brief = Some((
+                format!("{}\n\n{}", template.body, req.text.join(" ")),
+                crate::hc::app_from_argv(&direct.argv),
+            ));
+            hc.run(&direct)
+        }
+        other => other,
+    };
     store.log_action(
         "agm",
         "spawn",
@@ -376,14 +403,106 @@ pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64)
     if row.address.is_empty() {
         bail!("hc run không trả địa chỉ terminal: {v}");
     }
-    row.template.get_or_insert(req.template.clone());
+    row.template = Some(req.template.clone());
     row.task.get_or_insert(req.task.clone());
     row.role.get_or_insert(req.role.clone());
     if row.created_ms == 0 {
         row.created_ms = now;
     }
     store.upsert_terminal(&row)?;
+    if let Some((brief, app)) = brief {
+        send_spawn_brief(store, hc, &row.address, &brief, app.as_deref(), now)?;
+    }
     Ok(row.address)
+}
+
+/// Verify a successor's brief transport before rotation is allowed to kill anything.
+/// Unknown programs fail closed; OpenCode accepts an explicit --prompt argument.
+pub fn prepare_rotation_spawn(hc: &dyn Hc, req: &mut SpawnReq) -> Result<()> {
+    let listed = hc
+        .templates()
+        .map(|ts| ts.iter().any(|t| t["name"].as_str() == Some(&req.template)))
+        .unwrap_or(false);
+    if listed {
+        if cfg!(windows) {
+            // `hc run <template>` cần đường dự phòng `sh` trên Windows, nên phải đọc được command:.
+            crate::hc::load_template(&req.template)?;
+        }
+        return Ok(());
+    }
+    // Đường dự phòng: template có trên đĩa và parse được command:.
+    if crate::hc::load_template(&req.template).is_ok() {
+        return Ok(());
+    }
+    if crate::hc::app_from_argv(std::slice::from_ref(&req.template)).as_deref() == Some("opencode")
+    {
+        req.text = vec!["--prompt".into(), req.text.join(" ")];
+        return Ok(());
+    }
+    bail!(
+        "không xác minh được template hoặc cách nhận brief của '{}'",
+        req.template
+    )
+}
+
+fn send_spawn_brief(
+    store: &Store,
+    hc: &dyn Hc,
+    address: &str,
+    brief: &str,
+    app: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut detail = "agent chưa sẵn sàng".to_string();
+    loop {
+        match hc.get(address) {
+            Ok(v)
+                if v["state"].as_str() == Some("live")
+                    && app.is_some_and(|a| v["status"]["app"].as_str() == Some(a))
+                    && matches!(v["status"]["state"].as_str(), Some("idle" | "done")) =>
+            {
+                match hc.send(
+                    address,
+                    brief,
+                    v["status"]["state"].as_str() != Some("done"),
+                    false,
+                ) {
+                    Ok(_) => {
+                        store.log_action(
+                            "agm",
+                            "spawn_brief",
+                            address,
+                            "đã gửi brief template",
+                            true,
+                            now,
+                        )?;
+                        return Ok(());
+                    }
+                    Err(e) => detail = format!("{e:#}"),
+                }
+            }
+            Ok(v) if v["state"].as_str() == Some("finished") => {
+                detail = "terminal đã kết thúc trước khi nhận brief".into();
+                break;
+            }
+            Err(e) => detail = format!("{e:#}"),
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    store.open_inbox(
+        Some(address),
+        "spawn",
+        Some("brief_failed"),
+        &format!("Chưa gửi được brief template: {detail}\n\n{brief}"),
+        now,
+    )?;
+    store.log_action("agm", "spawn_brief", address, &detail, false, now)?;
+    Ok(())
 }
 
 /// Kiểm quyền kill/ngắt theo quy tắc của người dùng; từ chối thì ghi nhật ký và chuyển đề nghị vào hộp thư.

@@ -213,7 +213,7 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 | `agm ps [--all]` | Terminal của herdr-core mà agm biết |
 | `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Hộp thư; trả lời câu hỏi của agent; đóng mục |
 | `agm send <đích> --type <LOẠI> [--task ID] <tin>` | Gửi tin có ghi lại; đích `user` → hộp thư |
-| `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <nhiệm vụ>` | Sinh agent (`hc run --bg --outlive-parent`) có kiểm `max_workers` và ngân sách |
+| `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <đối số…>` | Sinh agent (`hc run --bg --outlive-parent`), giữ nguyên từng đối số sau `--`; nếu `<template>` là template của hc, các đối số được gộp thành một chuỗi nhiệm vụ. Trên Windows, khi `hc run <template>` lỗi `cannot start "sh"`, agm dự phòng chạy thẳng `command:` của template và gửi thân template cùng nhiệm vụ vào terminal. Kiểm `max_workers` và ngân sách |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Dừng / ngắt — Codex, Claude, app chưa rõ: **chỉ bạn**, luôn phải gõ `y` (`--yes` không áp dụng) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay |
 | `agm rotate <t> [--yes]` | Xoay vòng ngay: OpenCode worker (bàn giao + dừng + sinh mới) hoặc Claude/Codex đã `manage` (bàn giao + mở mới, **không** dừng phiên cũ) |

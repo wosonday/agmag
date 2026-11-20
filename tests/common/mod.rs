@@ -17,6 +17,9 @@ pub struct FakeHc {
 }
 
 impl Hc for FakeHc {
+    fn templates(&self) -> Result<Vec<Value>> {
+        Ok(vec![json!({"name":"worker-mid", "command":"opencode"})])
+    }
     fn ls(&self, _all: bool) -> Result<Vec<Value>> {
         Ok(vec![])
     }

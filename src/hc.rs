@@ -9,6 +9,86 @@ use serde_json::Value;
 
 use crate::store::TerminalRow;
 
+#[derive(Debug, thiserror::Error)]
+#[error("hc {kind}: {message}")]
+pub struct HcFailure {
+    pub kind: String,
+    pub message: String,
+}
+
+pub fn is_missing_sh(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<HcFailure>().is_some_and(|e| {
+        e.kind == "spawn_failed"
+            && (e.message.contains("\"sh\"")
+                || e.message.contains("'sh'")
+                || e.message.contains("sh:"))
+    })
+}
+
+pub struct HcTemplate {
+    pub argv: Vec<String>,
+    pub body: String,
+}
+
+/// Read only: never rewrite the user's hc template.
+pub fn load_template(name: &str) -> Result<HcTemplate> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        bail!("tên template không an toàn: {name}");
+    }
+    let dir = if let Some(dir) = std::env::var_os("AGM_HC_TEMPLATES") {
+        std::path::PathBuf::from(dir)
+    } else if cfg!(windows) {
+        std::path::PathBuf::from(
+            std::env::var_os("APPDATA").context("thiếu APPDATA để tìm template hc")?,
+        )
+        .join("herdr-core")
+        .join("templates")
+    } else {
+        dirs::home_dir()
+            .context("không tìm thấy home")?
+            .join(".config")
+            .join("herdr-core")
+            .join("templates")
+    };
+    let path = dir.join(format!("{name}.md"));
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("đọc template {}", path.display()))?;
+    let normalized = raw.replace("\r\n", "\n");
+    let rest = normalized
+        .strip_prefix("---\n")
+        .context("template thiếu front matter")?;
+    let (front, body) = rest
+        .split_once("\n---")
+        .context("template thiếu dấu đóng front matter")?;
+    if !body.is_empty() && !body.starts_with('\n') {
+        bail!("dấu đóng front matter không hợp lệ");
+    }
+    let commands: Vec<&str> = front
+        .lines()
+        .filter_map(|l| l.strip_prefix("command:").map(str::trim))
+        .collect();
+    let [command] = commands.as_slice() else {
+        bail!("template cần đúng một command:")
+    };
+    if command.contains(['\'', '"', '|', '&', ';', '<', '>', '$', '`']) {
+        bail!(
+            "command: chứa dấu nháy hoặc ký tự shell; dự phòng chỉ hỗ trợ argv tách theo khoảng trắng"
+        );
+    }
+    let argv: Vec<String> = command.split_whitespace().map(String::from).collect();
+    if argv.is_empty() {
+        bail!("command: rỗng");
+    }
+    Ok(HcTemplate {
+        argv,
+        body: body.trim().to_string(),
+    })
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunSpec {
     /// Template hoặc lệnh (argv[0]) và các tham số.
@@ -19,6 +99,9 @@ pub struct RunSpec {
 }
 
 pub trait Hc {
+    fn templates(&self) -> Result<Vec<Value>> {
+        bail!("hc templates không được hỗ trợ")
+    }
     fn ls(&self, all: bool) -> Result<Vec<Value>>;
     fn get(&self, terminal: &str) -> Result<Value>;
     /// `if_idle`: chỉ gõ khi đích đang idle. `force`: gõ cả khi đích đang bị chặn (trả lời hộp thoại).
@@ -49,21 +132,27 @@ impl HcCli {
             .output()
             .with_context(|| format!("chạy {} {}", self.bin, args.join(" ")))?;
         let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
         let cmd = args.first().map_or("", String::as_str);
+        let v: Value =
+            serde_json::from_str(stdout.trim()).unwrap_or(Value::String(stdout.trim().to_string()));
+        let err_output: Value = serde_json::from_str(stderr.trim()).unwrap_or(Value::Null);
+        if let Some(err) = v.get("error").or_else(|| err_output.get("error")) {
+            return Err(HcFailure {
+                kind: err["kind"].as_str().unwrap_or("unknown").into(),
+                message: err["message"]
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| err.to_string()),
+            }
+            .into());
+        }
         if !out.status.success() {
             bail!(
                 "hc {cmd} lỗi ({}): {}{}",
                 out.status,
                 stdout.trim(),
                 String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-        let v: Value =
-            serde_json::from_str(stdout.trim()).unwrap_or(Value::String(stdout.trim().to_string()));
-        if let Some(err) = v.get("error") {
-            bail!(
-                "hc {cmd} lỗi: {}",
-                err["message"].as_str().unwrap_or(&err.to_string())
             );
         }
         Ok(v)
@@ -105,6 +194,14 @@ pub fn send_args(terminal: &str, text: &str, if_idle: bool, force: bool) -> Vec<
 }
 
 impl Hc for HcCli {
+    fn templates(&self) -> Result<Vec<Value>> {
+        let v = self.call(&[s("templates"), s("--json")])?;
+        v["templates"]
+            .as_array()
+            .cloned()
+            .context("hc templates không trả danh sách templates")
+    }
+
     fn ls(&self, all: bool) -> Result<Vec<Value>> {
         let mut args = vec![s("ls"), s("--json")];
         if all {

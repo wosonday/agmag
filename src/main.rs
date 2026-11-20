@@ -382,22 +382,19 @@ fn run(cli: Cli) -> Result<()> {
             name,
             cwd,
             text,
-        } => {
-            let text = (!text.is_empty()).then(|| text.join(" "));
-            ops::spawn(
-                &store,
-                &cfg()?,
-                &agmag::actions::SpawnReq {
-                    template,
-                    task,
-                    role,
-                    name,
-                    cwd,
-                    text,
-                },
-                now,
-            )
-        }
+        } => ops::spawn(
+            &store,
+            &cfg()?,
+            &agmag::actions::SpawnReq {
+                template,
+                task,
+                role,
+                name,
+                cwd,
+                text,
+            },
+            now,
+        ),
         Cmd::Kill { target, yes } => ops::stop(&store, &target, "kill", yes, now),
         Cmd::Interrupt { target, yes } => ops::stop(&store, &target, "interrupt", yes, now),
         Cmd::Rotate { target, yes } => ops::rotate(&store, &target, yes, now),

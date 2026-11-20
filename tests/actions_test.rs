@@ -169,7 +169,7 @@ fn spawn_sets_labels_name_and_records_terminal() -> Result<()> {
         task: "login-7".into(),
         role: "worker".into(),
         cwd: Some("D:\\w".into()),
-        text: Some("Đọc .agents/tasks/login-7.md".into()),
+        text: vec!["Đọc".into(), ".agents/tasks/login-7.md".into()],
         ..Default::default()
     };
     let addr = actions::spawn(&store, &hc, &Config::builtin(), &req, 1)?;
@@ -201,6 +201,28 @@ fn spawn_sets_labels_name_and_records_terminal() -> Result<()> {
         )
         .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn spawn_program_preserves_each_argument() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    let req = SpawnReq {
+        template: "python".into(),
+        task: "probe".into(),
+        role: "probe".into(),
+        text: vec![
+            "-c".into(),
+            "import sys;print(sys.argv)".into(),
+            "--prompt".into(),
+            "Bạn là thợ".into(),
+            "".into(),
+        ],
+        ..Default::default()
+    };
+    actions::spawn(&store, &hc, &Config::builtin(), &req, 1)?;
+    assert!(hc.calls.borrow()[0].starts_with("run [\"python\", \"-c\", \"import sys;print(sys.argv)\", \"--prompt\", \"Bạn là thợ\", \"\"]"));
     Ok(())
 }
 

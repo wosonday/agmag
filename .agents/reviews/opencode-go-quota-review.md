@@ -114,6 +114,26 @@ cargo test --offline
 
 Kết quả: **299 test passed, 0 failed, 0 ignored** (cộng 0 doc-test), mọi dòng `test result:` đều `ok`; `$LASTEXITCODE = 0`. Các test mới của task đều xanh: `opencode_quota_test` (5), `report_test::opencode_go_quota_stale_by_age_and_new_usage`, `report_test::opencode_go_budget_provider_window`, `dashboard_test::render_opencode_go_quota_labels_limited_and_stale_fit_60_110`, `src/main.rs::quota_table_marks_stale_rows_without_fresh_bar`. Không thêm/sửa dependency hay `Cargo.toml`.
 
+## Tóm tắt phát hiện
+
+| ID | Mức | Tệp:dòng | Tóm tắt |
+|---|---|---|---|
+| 1.1 | nhỏ | `src/opencode_quota.rs:36-38` | `data:null` trả `unknown = 0`, decision `:31` ghi "đếm unknown" |
+| 2.1 | **nên sửa** | `src/opencode_quota.rs:187-199` | `kill_tree` diệt cả cây chỉ trên Windows; Linux/macOS chỉ kill tiến trình con |
+| 2.2 | nhỏ | `src/opencode_quota.rs:162,170` | Thông báo "quá thời hạn sau 8 s" nhưng hạn chót là 5 s |
+| 3.1 | nhỏ | `src/main.rs:911-922` vs `src/dashboard.rs:852` | Dòng stale+limited: CLI bỏ nhãn `limited`, TUI giữ → không nhất quán |
+| 4.1 | nhỏ | `tests/report_test.rs:737` | Chưa có ca test cho biến thể `opencode-go/*-free` (code `starts_with` đã đúng) |
+| 5.1 | nhỏ | `tests/report_test.rs:804,818` | Chưa test `budget_value` với scope literal `provider:opencode-go:300` |
+| 6.1 | **nên sửa** | `.agents/log/opencode-go-quota.md:144` | Log commit giữ envelope API: đường dẫn `C:\Users\thanh`, `org_<redacted>`, `usageURL` (giá trị đã redacted, không lộ thật) |
+| 6.2 | nhỏ | `tests/opencode_quota_test.rs:6` | Fixture `"org_x"` trùng mẫu `org_...` (giả, parser bỏ qua) |
+| 7.1 | nhỏ | `README.md:99` | Ghi `5h/7d/30d`, quy ước/code là `5h/7d/mo` |
+
+**Không có phát hiện mức chặn.** Hai mục "nên sửa" (2.1, 6.1) đều không ảnh hưởng đúng đắn trên môi trường Windows của dự án và không lộ dữ liệu thật; các mục còn lại là nhỏ.
+
+Ghi chú quy trình: nội dung sản phẩm được review là commit `2913a4d` (`git diff main 2913a4d`). Các commit `opencode-go-quota-review:` sau đó chỉ thêm/cập nhật tệp review này; tôi **không sửa mã sản phẩm**, không fmt/clippy lại cây, dùng `AGM_HOME` tạm, không commit `.agents/.runtime/`.
+
 ## KẾT LUẬN
 
-_(chưa xác định)_
+**ĐẠT.**
+
+7/7 mục kiểm (parse, fetch, hiển thị/TUI, stale, ngân sách, định danh tài khoản, docs/decision) đều thỏa mãn yêu cầu về bản chất; `cargo test --offline` xanh 299/0. Đề nghị thợ xử lý các mục "nên sửa" (2.1, 6.1) và dọn các mục nhỏ trong PR tiếp theo, nhưng không chặn nghiệm thu nhánh này.

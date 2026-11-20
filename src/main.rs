@@ -809,8 +809,30 @@ fn print_cost(rows: &[report::CostRow], by: GroupBy) {
             col.set_cell_alignment(CellAlignment::Right);
         }
     }
-    println!("{t}");
+    println!("{}", separate_sum_row(&t.to_string()));
     println!("{USD_NOTE}");
+}
+
+/// Repeats the header rule (`╞═╪═╡`) just above the SUM row so the total stands apart from the data rows.
+/// Left unchanged when either line is missing (e.g. a style without a header rule).
+fn separate_sum_row(rendered: &str) -> String {
+    let lines: Vec<&str> = rendered.lines().collect();
+    let Some(rule) = lines.iter().find(|l| l.starts_with('╞')) else {
+        return rendered.to_string();
+    };
+    let Some(sum_at) = lines.iter().rposition(|l| {
+        strip_sgr(l)
+            .trim_start_matches('│')
+            .trim_start()
+            .starts_with("SUM")
+    }) else {
+        return rendered.to_string();
+    };
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len() + 1);
+    out.extend_from_slice(&lines[..sum_at]);
+    out.push(rule);
+    out.extend_from_slice(&lines[sum_at..]);
+    out.join("\n")
 }
 
 fn cost_target_since_ms(
@@ -1045,5 +1067,26 @@ mod tests {
             !fresh.contains("stale"),
             "hàng tươi không có nhãn stale: {fresh}"
         );
+    }
+
+    #[test]
+    fn sum_row_gets_its_own_rule() {
+        let mut t = table(&["model", "total"]);
+        t.add_row(vec!["m1", "1"]);
+        t.add_row(vec![
+            Cell::new("SUM").add_attribute(Attribute::Bold),
+            Cell::new("1"),
+        ]);
+        let out = separate_sum_row(&t.to_string());
+        let lines: Vec<&str> = out.lines().collect();
+        let rules: Vec<usize> = (0..lines.len())
+            .filter(|&i| lines[i].starts_with('╞'))
+            .collect();
+        assert_eq!(rules.len(), 2, "{out}");
+        assert!(strip_sgr(lines[rules[1] + 1]).contains("SUM"), "{out}");
+        assert!(strip_sgr(lines[rules[1] - 1]).contains("m1"), "{out}");
+        // No SUM row: unchanged.
+        let plain = table(&["a"]).to_string();
+        assert_eq!(separate_sum_row(&plain), plain);
     }
 }

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Thay đổi
+
+- `agm cost`: hàng **SUM** được tách khỏi các dòng dữ liệu bằng vạch kẻ đôi (như vạch dưới tiêu đề) cho dễ nhìn.
+
 ## [0.3.1] - 2026-11-20
 
 ### Thêm mới

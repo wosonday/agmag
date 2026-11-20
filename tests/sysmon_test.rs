@@ -3,7 +3,7 @@ use agmag::dashboard::{Section, parse_view, render_sys_report, render_view, snap
 use agmag::store::Store;
 use agmag::sysmon::{
     AgentLoad, CpuStats, DiskStats, MemStats, ProcInfo, SysStats, agent_of, attribute, human_bytes,
-    merge_disks, pct,
+    merge_disks, pct, volume_id,
 };
 
 const GB: u64 = 1024 * 1024 * 1024;
@@ -183,22 +183,52 @@ fn percentages_and_units() {
 }
 
 #[test]
-fn one_volume_under_several_letters_is_counted_once() {
-    let disks = vec![
-        DiskStats::new("I:\\", "FAT32", 474 * GB, 127 * GB, false),
-        DiskStats::new("C:\\", "NTFS", 474 * GB, 134 * GB, false),
+fn merge_disks_uses_volume_identity() {
+    // Two disks with identical fs/size/free but different volume ids: must stay separate.
+    let merged = merge_disks(vec![
+        DiskStats::new("G:\\", "FAT32", 474 * GB, 127 * GB, false).with_volume_id("vol-g"),
+        DiskStats::new("H:\\", "FAT32", 474 * GB, 127 * GB, false).with_volume_id("vol-h"),
+    ]);
+    let mounts: Vec<&str> = merged.iter().map(|d| d.mount.as_str()).collect();
+    assert_eq!(mounts, ["G:\\", "H:\\"]);
+    assert!(merged.iter().all(|d| d.also_mounted_at.is_empty()));
+
+    // Different mounts, same volume id: merged into one row (mount-sorted), also_mounted_at correct.
+    let merged = merge_disks(vec![
+        DiskStats::new("H:\\", "FAT32", 474 * GB, 127 * GB, false).with_volume_id("vol-shared"),
+        DiskStats::new("G:\\", "FAT32", 474 * GB, 127 * GB, false).with_volume_id("vol-shared"),
+    ]);
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].mount, "G:\\");
+    assert_eq!(merged[0].also_mounted_at, vec!["H:\\"]);
+
+    // Both volume_id None and identical stats: must NOT merge.
+    let merged = merge_disks(vec![
         DiskStats::new("G:\\", "FAT32", 474 * GB, 127 * GB, false),
         DiskStats::new("H:\\", "FAT32", 474 * GB, 127 * GB, false),
-        DiskStats::new("C:\\", "NTFS", 474 * GB, 134 * GB, false), // listed twice by the OS
-        // Same size and free space but another file system: a different volume, kept.
-        DiskStats::new("J:\\", "exFAT", 474 * GB, 127 * GB, true),
-    ];
-    let merged = merge_disks(disks);
-    let mounts: Vec<&str> = merged.iter().map(|d| d.mount.as_str()).collect();
-    assert_eq!(mounts, ["C:\\", "G:\\", "J:\\"]);
+    ]);
+    assert_eq!(merged.len(), 2);
+
+    // Same mount listed twice: one row. Empty list: empty.
+    let merged = merge_disks(vec![
+        DiskStats::new("C:\\", "NTFS", 474 * GB, 134 * GB, false).with_volume_id("vol-c"),
+        DiskStats::new("C:\\", "NTFS", 474 * GB, 134 * GB, false).with_volume_id("vol-c"),
+    ]);
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].mount, "C:\\");
     assert!(merged[0].also_mounted_at.is_empty());
-    assert_eq!(merged[1].also_mounted_at, ["H:\\", "I:\\"]);
     assert!(merge_disks(Vec::new()).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn volume_id_reads_windows_guid_path() {
+    let id = volume_id("C:\\");
+    let s = id.expect("C:\\ should have a volume id");
+    assert!(s.starts_with(r"\\?\Volume{"), "got: {s}");
+
+    // Non-existent mount / garbage path should return None, not panic.
+    assert!(volume_id("not-a-mount").is_none());
 }
 
 fn sample_stats() -> SysStats {

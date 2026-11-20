@@ -11,7 +11,7 @@
 ## Tiến độ kiểm
 
 - [x] (1) Phụ thuộc mới `sysinfo 0.40.4`: feature, số crate kéo thêm, trùng phiên bản lớn, build offline; đọc số liệu không cần crate (ghi nhận)
-- [ ] (2) Đúng số liệu: % CPU baseline, RAM/swap, `merge_disks`, tốc độ đọc/ghi, `attribute` theo cây tiến trình, `agent_of`
+- [x] (2) Đúng số liệu: % CPU baseline, RAM/swap, `merge_disks`, tốc độ đọc/ghi, `attribute` theo cây tiến trình, `agent_of`
 - [ ] (3) Chi phí/treo: refresh TUI, sleep chặn luồng, lệnh ngoài không hạn chót
 - [ ] (4) Hiển thị: `agm sys` (màu/NO_COLOR/--json), TUI header, bảng `system` qua `view`, 60/110 cột, 64 nhân, lọc CSI/OSC
 - [ ] (5) Không đụng CSDL: không migration, không ghi `~/.agmag`
@@ -31,6 +31,19 @@
 
 **Phát hiện 1.1 — mức: nhỏ.** `Cargo.lock:623`: `syn 2.0.119` trùng **major** với `syn 3.0.10` đã có. Chỉ là proc-macro build-time, không chặn.
 - Cách tái hiện: `git show main:Cargo.lock | Select-String 'name = "syn"' -Context 0,1` → `3.0.10`; `Select-String 'name = "syn"' Cargo.lock` → thêm `2.0.119`.
+
+### (2) Đúng số liệu — ĐẠT có điều kiện (1 nên sửa, 1 nhỏ)
+
+- **% CPU / baseline — đạt.** `src/sysmon.rs:315` lấy baseline CPU thứ nhất, `:317` baseline tiến trình thứ nhất, `:320` `sleep(MINIMUM_CPU_UPDATE_INTERVAL)` (200 ms), `:321` refresh tiến trình lần hai → `Process::cpu_usage()` có mốc so sánh thật (sysinfo ghi rõ "cần refresh **hai lần**", `common/system.rs:2044-2051`). `sample():342` refresh CPU, `:362`/`:368` lấy `global_cpu_usage()`/từng core. `:334-340` trả bản cũ nếu gọi lại trong vòng 200 ms và `cpu_ready=false` ở frame đầu → không có số 0% giả (test `tests/sysmon_test.rs:284-291` khẳng định `cpu n/a`).
+- **RAM/swap — đạt.** `:316`/`:344` `MemoryRefreshKind::everything()`, `:353-359` lấy `total/used memory` + `total/used swap`; `pct()` (`:140-142`) trả `None` khi total=0 và kẹp ≤100 → không bao giờ in RAM ảo.
+- **Tốc độ đọc/ghi — đạt.** sysinfo `DiskUsage` định nghĩa `read_bytes`/`written_bytes` là *"số byte kể từ lần refresh trước"* (`sysinfo-0.40.4/src/common/mod.rs:50-59`), không phải cumulative. Code refresh disk ở `:348`, đọc `io` ở `:412-414`, chia cho `secs` lấy từ `refreshed_at.elapsed()` đo ở `:334` = đúng khoảng giữa hai lần refresh; `:396` chặn mẫu <50 ms. (Đã đối chiếu mã nguồn sysinfo tại máy để loại trừ khả năng chia tổng tích lũy cho interval.)
+- **`attribute` theo cây — đạt, không đếm đôi.** `:213-257`: mỗi tiến trình đi ngược lên **agent gần nhất** rồi cộng đúng **một** lần vào agent đó (`:234-239`); `MAX_DEPTH=64` (`:209`), tự-loops bị loại (`:226`), pid reused (cha trẻ hơn con) bị loại (`:229-232`). Ca "opencode chạy dưới claude-code" nằm trong test `tests/sysmon_test.rs:114-141`: con thuộc `opencode`, cha/ancestor thuộc `claude-code`, tổng không chồng. CPU chia cho `logical_cores` (`:241-248`) đúng quy ước sysinfo "100 = một core" (`common/system.rs:2040-2044`).
+
+**Phát hiện 2.1 — mức: nên sửa.** `src/sysmon.rs:262-279` `merge_disks` gộp hai đĩa **vật lý khác nhau** nếu cùng `file_system` + `total_bytes` + `available_bytes` (`:268-271`). Comment `:260-261` cho rằng "two real disks never match to the byte" — **sai**: hai ổ cùng dung lượng, cùng định dạng, cùng mức đầy (vd hai SSD NTFS 1 TB mới cài, hoặc hai thành viên RAID/clone VM) có total/available **bằng đúng từng byte**. Hệ quả: DISKS section và header đếm thiếu một ổ, và ổ bị nuốt bị ghi nhầm thành `(also D:)` của ổ kia (`:273`). Test `tests/sysmon_test.rs:185-202` chỉ tránh được ca này bằng cách cho ổ thứ tư dùng `exFAT` (`:194`) — tức chính test thừa nhận cùng kích thước + cùng free + **cùng fs** sẽ bị gộp. Đây là lỗi hiển thị/đếm, không mất dữ liệu nên không chặn.
+- Cách tái hiện (đã chạy chương trình Rust độc lập copy nguyên hàm `merge_disks` vào `$env:TEMP`, không sửa repo): truyền `DiskStats { mount: "C:\\", fs: "NTFS", total: 1000GB, avail: 250GB }` và `DiskStats { mount: "D:\\", fs: "NTFS", total: 1000GB, avail: 250GB }` → kết quả `so dia sau merge = 1`, `mount=C:\ also_mounted_at=["D:"]`, dù là hai đĩa khác nhau. Hướng sửa gợi ý: gộp theo volume identity (số serial/UUID thiết bị) thay vì bộ ba fs+kích thước+free; nếu không có ID thì tối thiểu không gộp hai mount khác nhau khi có nhiều hơn một ổ cùng thông số.
+
+**Phát hiện 2.2 — mức: nhỏ.** `src/sysmon.rs:185` (`c.contains("/opencode/")`) và `:183` (`"@openai/codex"`) khớp trên toàn bộ cmd line đã lower-case. Một tiến trình `node` chạy script trong thư mục **có tên là `opencode`** nhưng không phải agent (vd `node D:/projects/opencode/server.js`) → cmd chứa `/opencode/` → bị gán nhãn `"opencode"`; tương tự `node -e "console.log('@openai/codex')"`. Test `tests/sysmon_test.rs:101-112` chỉ phủ MCP server và tên gần giống `claude-helper`, chưa có ca path/project trùng tên. Không chặn vì chỉ sai nhãn thống kê.
+- Cách tái hiện: `agent_of("node", None, "node D:/projects/opencode/server.js")` → `Some("opencode")` (kỳ vọng `None`); so sánh với ca `node @modelcontextprotocol/server-filesystem` đã trả `None`.
 
 _(các mục còn lại sẽ điền dần)_
 

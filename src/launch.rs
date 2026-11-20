@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -96,14 +96,22 @@ pub fn is_shell(exe: &str) -> bool {
         .iter()
         .find_map(|ext| base.strip_suffix(ext))
         .unwrap_or(&base);
-    matches!(base, "pwsh" | "powershell" | "cmd" | "bash" | "sh" | "zsh" | "fish" | "nu" | "wsl")
+    matches!(
+        base,
+        "pwsh" | "powershell" | "cmd" | "bash" | "sh" | "zsh" | "fish" | "nu" | "wsl"
+    )
 }
 
 /// Rút lệnh chạy agent thật từ `hc get` (`foreground.argv` trước, rồi `argv`); trả `None` nếu chỉ thấy shell.
 pub fn extract_launch_argv(hc_get: &Value, expected_app: &str) -> Option<Vec<String>> {
     for candidate in [&hc_get["foreground"]["argv"], &hc_get["argv"]] {
-        let Some(arr) = candidate.as_array() else { continue };
-        let argv: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let Some(arr) = candidate.as_array() else {
+            continue;
+        };
+        let argv: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
         let Some(first) = argv.first() else { continue };
         if is_shell(first) {
             continue;
@@ -124,7 +132,9 @@ pub fn parse_launch_spec(app: &str, raw_argv: &[String], cwd: &str) -> Result<La
         bail!("thiếu tệp thực thi");
     };
     if is_shell(exe) {
-        bail!("chỉ phát hiện shell '{exe}' — hãy truyền lệnh agent tường minh qua `-- {app} ...` hoặc `--cmd`");
+        bail!(
+            "chỉ phát hiện shell '{exe}' — hãy truyền lệnh agent tường minh qua `-- {app} ...` hoặc `--cmd`"
+        );
     }
     if app_from_argv(raw_argv).as_deref() != Some(app) {
         bail!("lệnh '{exe}' không khớp với app '{app}'");
@@ -157,7 +167,10 @@ pub fn build_successor_argv(spec: &LaunchSpec, prompt: &str) -> Vec<String> {
 pub fn check_claude_hook_installed(home_dir: &Path) -> Result<()> {
     let path = home_dir.join(".claude").join("settings.json");
     let text = std::fs::read_to_string(&path).with_context(|| {
-        format!("chưa thấy {} — chạy `agm hook install` trước khi bật quản lý Claude Code", path.display())
+        format!(
+            "chưa thấy {} — chạy `agm hook install` trước khi bật quản lý Claude Code",
+            path.display()
+        )
     })?;
     let v: Value = serde_json::from_str(&text)
         .with_context(|| format!("{} không phải JSON hợp lệ", path.display()))?;
@@ -180,22 +193,66 @@ fn split_eq(arg: &str) -> Option<(&str, &str)> {
 
 fn filter_codex(args: &[String]) -> Result<Vec<String>> {
     const SINGLE: &[&str] = &[
-        "-c", "--config", "-p", "--profile", "-m", "--model", "-s", "--sandbox",
-        "-a", "--ask-for-approval", "--add-dir", "--enable", "--disable",
-        "-i", "--image", "--local-provider", "--remote", "--remote-auth-token-env",
+        "-c",
+        "--config",
+        "-p",
+        "--profile",
+        "-m",
+        "--model",
+        "-s",
+        "--sandbox",
+        "-a",
+        "--ask-for-approval",
+        "--add-dir",
+        "--enable",
+        "--disable",
+        "-i",
+        "--image",
+        "--local-provider",
+        "--remote",
+        "--remote-auth-token-env",
         "--cyber-access-program",
     ];
     const STRIP_SINGLE: &[&str] = &["-C", "--cd"];
     const ZERO: &[&str] = &[
-        "--search", "--no-alt-screen", "--no-daemon", "--approve-for-me",
-        "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust",
-        "--oss", "--strict-config", "--worktree",
+        "--search",
+        "--no-alt-screen",
+        "--no-daemon",
+        "--approve-for-me",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--dangerously-bypass-hook-trust",
+        "--oss",
+        "--strict-config",
+        "--worktree",
     ];
     const BAD_SUBCMDS: &[&str] = &[
-        "exec", "e", "review", "login", "logout", "mcp", "plugin", "app-server",
-        "remote-control", "app", "completion", "update", "doctor", "sandbox", "debug",
-        "apply", "a", "queue", "archive", "delete", "migrate-rollouts", "migrate-nfs-db",
-        "unarchive", "cloud", "exec-server", "features", "help",
+        "exec",
+        "e",
+        "review",
+        "login",
+        "logout",
+        "mcp",
+        "plugin",
+        "app-server",
+        "remote-control",
+        "app",
+        "completion",
+        "update",
+        "doctor",
+        "sandbox",
+        "debug",
+        "apply",
+        "a",
+        "queue",
+        "archive",
+        "delete",
+        "migrate-rollouts",
+        "migrate-nfs-db",
+        "unarchive",
+        "cloud",
+        "exec-server",
+        "features",
+        "help",
     ];
 
     let mut out = Vec::new();
@@ -257,7 +314,9 @@ fn filter_codex(args: &[String]) -> Result<Vec<String>> {
             bail!("không thể quản lý xoay vòng cho subcommand không tương tác của Codex: '{a}'");
         }
         if saw_positional {
-            bail!("đối số vị trí nhập nhằng trong lệnh Codex: '{a}' — hãy truyền lệnh sạch qua `-- codex ...`");
+            bail!(
+                "đối số vị trí nhập nhằng trong lệnh Codex: '{a}' — hãy truyền lệnh sạch qua `-- codex ...`"
+            );
         }
         // Prompt cũ ở cuối lệnh: bỏ qua để phiên mới nhận prompt bàn giao.
         saw_positional = true;
@@ -268,26 +327,67 @@ fn filter_codex(args: &[String]) -> Result<Vec<String>> {
 
 fn filter_claude(args: &[String]) -> Result<Vec<String>> {
     const SINGLE: &[&str] = &[
-        "--model", "--permission-mode", "--agent", "--effort", "--fallback-model",
-        "--append-system-prompt", "--append-system-prompt-file", "--autocompact",
-        "--max-budget-usd", "-n", "--name", "--settings",
+        "--model",
+        "--permission-mode",
+        "--agent",
+        "--effort",
+        "--fallback-model",
+        "--append-system-prompt",
+        "--append-system-prompt-file",
+        "--autocompact",
+        "--max-budget-usd",
+        "-n",
+        "--name",
+        "--settings",
     ];
     const VARIADIC: &[&str] = &[
-        "--add-dir", "--allowedTools", "--allowed-tools", "--disallowedTools",
-        "--disallowed-tools", "--tools", "--betas", "--mcp-config", "--plugin-dir",
-        "--plugin-url", "--file",
+        "--add-dir",
+        "--allowedTools",
+        "--allowed-tools",
+        "--disallowedTools",
+        "--disallowed-tools",
+        "--tools",
+        "--betas",
+        "--mcp-config",
+        "--plugin-dir",
+        "--plugin-url",
+        "--file",
     ];
     const ZERO: &[&str] = &[
-        "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
-        "--chrome", "--no-chrome", "--verbose", "--bare", "--ax-screen-reader",
-        "--exclude-dynamic-system-prompt-sections", "--ide",
+        "--dangerously-skip-permissions",
+        "--allow-dangerously-skip-permissions",
+        "--chrome",
+        "--no-chrome",
+        "--verbose",
+        "--bare",
+        "--ax-screen-reader",
+        "--exclude-dynamic-system-prompt-sections",
+        "--ide",
     ];
     const STRIP_ZERO: &[&str] = &["-c", "--continue", "--fork-session"];
     const STRIP_OPT_ARG: &[&str] = &["-r", "--resume", "--from-pr"];
     const BAD_SUBCMDS: &[&str] = &[
-        "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import",
-        "install", "logs", "mcp", "plugin", "plugins", "purge", "respawn", "rm",
-        "setup-token", "stop", "kill", "ultrareview", "update", "upgrade",
+        "agents",
+        "attach",
+        "auth",
+        "auto-mode",
+        "doctor",
+        "gateway",
+        "import",
+        "install",
+        "logs",
+        "mcp",
+        "plugin",
+        "plugins",
+        "purge",
+        "respawn",
+        "rm",
+        "setup-token",
+        "stop",
+        "kill",
+        "ultrareview",
+        "update",
+        "upgrade",
     ];
 
     let mut out = Vec::new();
@@ -354,7 +454,9 @@ fn filter_claude(args: &[String]) -> Result<Vec<String>> {
             bail!("không thể quản lý xoay vòng cho subcommand của Claude Code: '{a}'");
         }
         if saw_positional {
-            bail!("đối số vị trí nhập nhằng trong lệnh Claude Code: '{a}' — hãy truyền lệnh sạch qua `-- claude ...`");
+            bail!(
+                "đối số vị trí nhập nhằng trong lệnh Claude Code: '{a}' — hãy truyền lệnh sạch qua `-- claude ...`"
+            );
         }
         saw_positional = true;
         i += 1;

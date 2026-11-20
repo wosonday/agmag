@@ -79,7 +79,11 @@ impl Store {
                     ("rotations", "handoff_path", "TEXT"),
                     ("rotations", "handoff_ms", "INTEGER"),
                     ("rotations", "linked_ms", "INTEGER"),
-                    ("terminals", "handoff_state", "TEXT NOT NULL DEFAULT 'active'"),
+                    (
+                        "terminals",
+                        "handoff_state",
+                        "TEXT NOT NULL DEFAULT 'active'",
+                    ),
                     ("terminals", "managed", "INTEGER NOT NULL DEFAULT 0"),
                     ("terminals", "launch_spec", "TEXT"),
                 ] {
@@ -141,7 +145,12 @@ impl Store {
         Ok(())
     }
 
-    pub fn set_session_identity(&self, sid: i64, session_id: &str, cwd: Option<&str>) -> Result<()> {
+    pub fn set_session_identity(
+        &self,
+        sid: i64,
+        session_id: &str,
+        cwd: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE sessions
              SET session_id = ?2,
@@ -168,7 +177,10 @@ impl Store {
                 .collect::<rusqlite::Result<_>>()?;
             drop(stmt);
             for old_sid in old_ids {
-                tx.execute("UPDATE terminals SET session = ?1 WHERE session = ?2", params![keep_sid, old_sid])?;
+                tx.execute(
+                    "UPDATE terminals SET session = ?1 WHERE session = ?2",
+                    params![keep_sid, old_sid],
+                )?;
                 tx.execute("DELETE FROM usage WHERE session = ?1", [old_sid])?;
                 tx.execute("DELETE FROM turns WHERE session = ?1", [old_sid])?;
                 tx.execute("DELETE FROM sessions WHERE id = ?1", [old_sid])?;
@@ -186,7 +198,10 @@ impl Store {
     }
 
     pub fn set_effort(&self, sid: i64, effort: &str) -> Result<()> {
-        self.conn.execute("UPDATE sessions SET effort=?2 WHERE id=?1", params![sid, effort])?;
+        self.conn.execute(
+            "UPDATE sessions SET effort=?2 WHERE id=?1",
+            params![sid, effort],
+        )?;
         Ok(())
     }
 

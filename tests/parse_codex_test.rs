@@ -236,9 +236,14 @@ fn turn_context_reports_effort() {
     let line = r#"{"timestamp":"2026-11-18T08:58:20.798Z","type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"high"}}"#;
     assert_eq!(
         events(parser.parse_line(line, 0).unwrap()),
-        [ParseEvent::Model("gpt-6.1-sol".into()), ParseEvent::Effort("high".into())]
+        [
+            ParseEvent::Model("gpt-6.1-sol".into()),
+            ParseEvent::Effort("high".into())
+        ]
     );
     // Older Codex builds only carry it inside collaboration_mode.
     let line = r#"{"timestamp":"2026-11-18T08:58:20.798Z","type":"turn_context","payload":{"model":"gpt-6.1-sol","collaboration_mode":{"settings":{"reasoning_effort":"low"}}}}"#;
-    assert!(events(parser.parse_line(line, 0).unwrap()).contains(&ParseEvent::Effort("low".into())));
+    assert!(
+        events(parser.parse_line(line, 0).unwrap()).contains(&ParseEvent::Effort("low".into()))
+    );
 }

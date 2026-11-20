@@ -11,7 +11,7 @@ use agmag::correlate::link_all;
 use agmag::dashboard::snapshot;
 use agmag::ingest::ingest_file;
 use agmag::model::{LineOutcome, ParseEvent, Role, Source};
-use agmag::parse::{agy::AgyParser, LogParser, ParseError};
+use agmag::parse::{LogParser, ParseError, agy::AgyParser};
 use agmag::store::{Store, TerminalRow};
 
 #[test]
@@ -39,7 +39,9 @@ fn agy_parser_extracts_usage_context_thinking_and_handles_missing_ts() {
     });
     match p.parse_line(&user_line.to_string(), 0).unwrap() {
         LineOutcome::Events(ev) => {
-            assert!(matches!(&ev[0], ParseEvent::Turn(t) if t.role == Role::User && t.summary == "Kiểm tra token"));
+            assert!(
+                matches!(&ev[0], ParseEvent::Turn(t) if t.role == Role::User && t.summary == "Kiểm tra token")
+            );
         }
         other => panic!("expected events, got {other:?}"),
     }
@@ -60,14 +62,18 @@ fn agy_parser_extracts_usage_context_thinking_and_handles_missing_ts() {
     match p.parse_line(&planner_line.to_string(), 250).unwrap() {
         LineOutcome::Events(ev) => {
             assert!(matches!(&ev[0], ParseEvent::Model(m) if m == "gemini-4-hydrogen-high"));
-            let ParseEvent::Usage(u) = &ev[1] else { panic!("expected usage") };
+            let ParseEvent::Usage(u) = &ev[1] else {
+                panic!("expected usage")
+            };
             assert_eq!(u.dedupe_key, "step:1");
             assert_eq!(u.usage.input_uncached, 2430);
             assert_eq!(u.usage.cache_read, 8466);
             assert_eq!(u.usage.output, 120);
             assert_eq!(u.usage.reasoning, 80);
             assert!(matches!(&ev[2], ParseEvent::Context(c) if c.used_tokens == 10896));
-            assert!(matches!(&ev[3], ParseEvent::Turn(t) if t.role == Role::Assistant && t.summary == "[tool] read_file"));
+            assert!(
+                matches!(&ev[3], ParseEvent::Turn(t) if t.role == Role::Assistant && t.summary == "[tool] read_file")
+            );
         }
         other => panic!("expected events, got {other:?}"),
     }
@@ -80,7 +86,9 @@ fn agy_parser_extracts_usage_context_thinking_and_handles_missing_ts() {
     });
     match p.parse_line(&thinking_only.to_string(), 400).unwrap() {
         LineOutcome::Events(ev) => {
-            let ParseEvent::Usage(u) = &ev[0] else { panic!("expected usage") };
+            let ParseEvent::Usage(u) = &ev[0] else {
+                panic!("expected usage")
+            };
             assert!(u.ts_ms > 0);
             assert_eq!(u.usage.output, 42);
             assert_eq!(u.usage.reasoning, 42);
@@ -90,12 +98,23 @@ fn agy_parser_extracts_usage_context_thinking_and_handles_missing_ts() {
 
     for kind in ["GENERIC", "SYSTEM_MESSAGE", "ERROR_MESSAGE"] {
         let noise = json!({"step_index": 3, "type": kind, "created_at": "2026-11-18T13:09:50Z", "content": "ok"});
-        assert_eq!(p.parse_line(&noise.to_string(), 500).unwrap(), LineOutcome::Ignored);
+        assert_eq!(
+            p.parse_line(&noise.to_string(), 500).unwrap(),
+            LineOutcome::Ignored
+        );
     }
 }
 
-fn write_transcript(root: &std::path::Path, conv: &str, lines: &[serde_json::Value]) -> anyhow::Result<std::path::PathBuf> {
-    let dir = root.join("brain").join(conv).join(".system_generated").join("logs");
+fn write_transcript(
+    root: &std::path::Path,
+    conv: &str,
+    lines: &[serde_json::Value],
+) -> anyhow::Result<std::path::PathBuf> {
+    let dir = root
+        .join("brain")
+        .join(conv)
+        .join(".system_generated")
+        .join("logs");
     fs::create_dir_all(&dir)?;
     let p = dir.join("transcript.jsonl");
     let mut body = String::new();
@@ -112,7 +131,13 @@ fn ingest_agy_reads_summaries_correlates_and_avoids_ask_race() -> anyhow::Result
     let tmp = tempfile::tempdir()?;
     let root = tmp.path();
 
-    let ask_uri = format!("file:///{}", ask_workdir().to_string_lossy().replace('\\', "/").trim_start_matches('/'));
+    let ask_uri = format!(
+        "file:///{}",
+        ask_workdir()
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+    );
     let db = Connection::open(root.join("conversation_summaries.db"))?;
     db.execute_batch(
         "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT NOT NULL);",
@@ -123,7 +148,10 @@ fn ingest_agy_reads_summaries_correlates_and_avoids_ask_race() -> anyhow::Result
         ("conv-ask-race", r#"["file:///D:/Project/agmag"]"#),
         ("conv-ask-dir", &format!(r#"["{ask_uri}"]"#)),
     ] {
-        db.execute("INSERT INTO conversation_summaries VALUES (?1, ?2)", [id, uri])?;
+        db.execute(
+            "INSERT INTO conversation_summaries VALUES (?1, ?2)",
+            [id, uri],
+        )?;
     }
     drop(db);
 
@@ -179,7 +207,10 @@ fn ingest_agy_reads_summaries_correlates_and_avoids_ask_race() -> anyhow::Result
 
     // Append thêm 1 lượt rồi ingest lại
     let l2 = json!({"step_index":2,"type":"PLANNER_RESPONSE","created_at":"2026-11-18T13:10:00Z","model":"gemini-4-hydrogen-high","input_tokens":300,"cache_read_tokens":1250,"output_tokens":75,"content":"done"});
-    writeln!(fs::OpenOptions::new().append(true).open(&live_path)?, "{l2}")?;
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&live_path)?,
+        "{l2}"
+    )?;
     let stats2 = ingest_agy(&store, root, 0)?;
     assert_eq!(stats2.lines, 1);
 
@@ -200,13 +231,17 @@ fn ingest_agy_reads_summaries_correlates_and_avoids_ask_race() -> anyhow::Result
     // (1000+200+50) + (300+1250+75) = 2875
     assert_eq!(tv.tokens, Some(2875));
 
-    let ask_first_count: i64 = store
-        .conn()
-        .query_row("SELECT COUNT(*) FROM sessions WHERE source = 'agy' AND session_id = 'conv-ask-first'", [], |r| r.get(0))?;
+    let ask_first_count: i64 = store.conn().query_row(
+        "SELECT COUNT(*) FROM sessions WHERE source = 'agy' AND session_id = 'conv-ask-first'",
+        [],
+        |r| r.get(0),
+    )?;
     assert_eq!(ask_first_count, 1);
-    let ask_dir_count: i64 = store
-        .conn()
-        .query_row("SELECT COUNT(*) FROM sessions WHERE source = 'agy' AND session_id = 'conv-ask-dir'", [], |r| r.get(0))?;
+    let ask_dir_count: i64 = store.conn().query_row(
+        "SELECT COUNT(*) FROM sessions WHERE source = 'agy' AND session_id = 'conv-ask-dir'",
+        [],
+        |r| r.get(0),
+    )?;
     assert_eq!(ask_dir_count, 0);
 
     let srow: (Option<String>, i64, Option<i64>) = store.conn().query_row(
@@ -262,8 +297,13 @@ fn ingest_agy_resumed_line_without_created_at_inherits_session_last_ts() -> anyh
     let stats = ingest_agy(&store, root, 0)?;
     assert_eq!((stats.lines, stats.bad), (1, 0));
 
-    let ts: i64 = store.conn().query_row("SELECT ts_ms FROM usage", [], |r| r.get(0))?;
-    assert_eq!(ts, agmag::model::parse_rfc3339_ms("2026-11-18T13:09:38Z").unwrap());
+    let ts: i64 = store
+        .conn()
+        .query_row("SELECT ts_ms FROM usage", [], |r| r.get(0))?;
+    assert_eq!(
+        ts,
+        agmag::model::parse_rfc3339_ms("2026-11-18T13:09:38Z").unwrap()
+    );
     Ok(())
 }
 
@@ -285,7 +325,8 @@ fn ask_without_usage_never_drops_transcript_tokens() -> anyhow::Result<()> {
     write_transcript(root, "conv-a", std::slice::from_ref(&l1))?;
     write_transcript(root, "conv-b", &[l1])?;
     let store = Store::open_in_memory()?;
-    let no_usage = |conv: &str| json!({"status": "SUCCESS", "conversation_id": conv, "response": "ok"});
+    let no_usage =
+        |conv: &str| json!({"status": "SUCCESS", "conversation_id": conv, "response": "ok"});
 
     // (a) daemon quét transcript trước, rồi `agm ask` trả JSON thiếu `usage` → token đã có phải còn nguyên.
     ingest_agy(&store, root, 0)?;
@@ -315,9 +356,15 @@ fn ingest_agy_backfills_cwd_written_after_transcript() -> anyhow::Result<()> {
     drop(db);
     // Transcript không đổi (mtime cũ hơn mốc quét) nhưng cwd vẫn phải được bổ sung.
     ingest_agy(&store, root, i64::MAX)?;
-    let cwd: Option<String> =
-        store.conn().query_row("SELECT cwd FROM sessions WHERE session_id = 'conv-late'", [], |r| r.get(0))?;
-    assert!(cwd.is_some_and(|c| c.ends_with("late")), "cwd chưa được bổ sung");
+    let cwd: Option<String> = store.conn().query_row(
+        "SELECT cwd FROM sessions WHERE session_id = 'conv-late'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert!(
+        cwd.is_some_and(|c| c.ends_with("late")),
+        "cwd chưa được bổ sung"
+    );
     Ok(())
 }
 

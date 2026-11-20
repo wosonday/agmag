@@ -1,10 +1,10 @@
 //! Hạn mức agy qua `agy --print /usage --output-format json` (.agents/decisions/agy-quota-usage.md).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use agmag::agy_quota::{parse_usage, record_usage, AgyQuotaPoller};
+use agmag::agy_quota::{AgyQuotaPoller, parse_usage, record_usage};
 use agmag::config::Config;
 use agmag::dashboard::{render, snapshot};
 use agmag::model::parse_rfc3339_ms;
@@ -27,8 +27,16 @@ const PROBE: &str = r#"{"conversation_id":"","status":"SUCCESS","response":"Gemi
 const NOW_MS: i64 = 1_795_000_000_000;
 
 fn window(p: &agmag::agy_quota::UsageParse, provider: &str, minutes: u32) -> (f64, i64) {
-    let snap = p.snapshots.iter().find(|s| s.provider == provider).unwrap_or_else(|| panic!("no {provider}"));
-    let w = snap.windows.iter().find(|w| w.window_minutes == minutes).unwrap_or_else(|| panic!("no {provider} {minutes}"));
+    let snap = p
+        .snapshots
+        .iter()
+        .find(|s| s.provider == provider)
+        .unwrap_or_else(|| panic!("no {provider}"));
+    let w = snap
+        .windows
+        .iter()
+        .find(|w| w.window_minutes == minutes)
+        .unwrap_or_else(|| panic!("no {provider} {minutes}"));
     (w.used_percent, w.resets_at_s)
 }
 
@@ -44,14 +52,29 @@ fn parses_three_quota_groups_as_used_percent() -> anyhow::Result<()> {
     // agy reports what is LEFT; agm stores what is USED.
     let (used, reset) = window(&p, "agy-gemini", 10080);
     assert!(close(used, 89.68), "{used}");
-    assert_eq!(reset, parse_rfc3339_ms("2026-11-25T03:24:56Z").unwrap() / 1000);
+    assert_eq!(
+        reset,
+        parse_rfc3339_ms("2026-11-25T03:24:56Z").unwrap() / 1000
+    );
     assert!(close(window(&p, "agy-gemini", 300).0, 80.59));
     assert!(close(window(&p, "agy-3p", 10080).0, 94.37));
     assert!(close(window(&p, "agy-3p", 300).0, 87.05));
     // `gemini-argon-` must win over the shorter `gemini-` prefix; Argon has a weekly bucket only.
     assert!(close(window(&p, "agy-argon", 10080).0, 51.65));
-    assert_eq!(p.snapshots.iter().find(|s| s.provider == "agy-argon").unwrap().windows.len(), 1);
-    assert!(p.snapshots.iter().all(|s| s.ts_ms == NOW_MS && !s.provider.contains(':')));
+    assert_eq!(
+        p.snapshots
+            .iter()
+            .find(|s| s.provider == "agy-argon")
+            .unwrap()
+            .windows
+            .len(),
+        1
+    );
+    assert!(
+        p.snapshots
+            .iter()
+            .all(|s| s.ts_ms == NOW_MS && !s.provider.contains(':'))
+    );
     Ok(())
 }
 
@@ -61,7 +84,10 @@ fn error_status_is_an_error_not_a_zero_or_full_quota() {
     let err = parse_usage(offline, NOW_MS).unwrap_err().to_string();
     assert!(err.contains("/usage failed"), "{err}");
     assert!(parse_usage("not json", NOW_MS).is_err());
-    assert!(parse_usage(r#"{"status":"SUCCESS"}"#, NOW_MS).is_err(), "SUCCESS without groups is malformed");
+    assert!(
+        parse_usage(r#"{"status":"SUCCESS"}"#, NOW_MS).is_err(),
+        "SUCCESS without groups is malformed"
+    );
 }
 
 #[test]
@@ -88,9 +114,16 @@ fn disabled_five_hour_bucket_is_skipped_quietly_when_weekly_limit_is_hit() -> an
       {"id":"gemini-5h","window":"5h","disabled":true,"remaining_fraction":0.8736,
        "description":"You have hit your weekly limit, the 5-hour limit does not currently apply."}]}]}}}"#;
     let p = parse_usage(hit, NOW_MS)?;
-    assert_eq!(p.unknown, 0, "a disabled bucket must not raise the 'unrecognised' warning");
+    assert_eq!(
+        p.unknown, 0,
+        "a disabled bucket must not raise the 'unrecognised' warning"
+    );
     assert_eq!(p.disabled, 1);
-    let gem = p.snapshots.iter().find(|s| s.provider == "agy-gemini").unwrap();
+    let gem = p
+        .snapshots
+        .iter()
+        .find(|s| s.provider == "agy-gemini")
+        .unwrap();
     assert_eq!(gem.windows.len(), 1, "only the weekly window is stored");
     assert_eq!(window(&p, "agy-gemini", 10080).0, 100.0);
     Ok(())
@@ -100,12 +133,25 @@ fn disabled_five_hour_bucket_is_skipped_quietly_when_weekly_limit_is_hit() -> an
 fn recorded_usage_shows_up_in_quota_report_as_percent_left() -> anyhow::Result<()> {
     let store = Store::open_in_memory()?;
     let p = record_usage(&store, PROBE, NOW_MS)?;
-    assert_eq!(p.snapshots.iter().map(|s| s.windows.len()).sum::<usize>(), 5);
+    assert_eq!(
+        p.snapshots.iter().map(|s| s.windows.len()).sum::<usize>(),
+        5
+    );
     let rows = report::quota(&store, NOW_MS / 1000)?;
-    let gem_week = rows.iter().find(|r| r.provider == "agy-gemini" && r.window_minutes == 10080).unwrap();
-    assert!(close(gem_week.left_percent, 10.32), "{}", gem_week.left_percent);
+    let gem_week = rows
+        .iter()
+        .find(|r| r.provider == "agy-gemini" && r.window_minutes == 10080)
+        .unwrap();
+    assert!(
+        close(gem_week.left_percent, 10.32),
+        "{}",
+        gem_week.left_percent
+    );
     let raw = render(&snapshot(&store, &Config::builtin(), NOW_MS)?, 110);
-    assert!(raw.contains("agy-gemini") && raw.contains("agy-argon"), "provider names must not be cut:\n{raw}");
+    assert!(
+        raw.contains("agy-gemini") && raw.contains("agy-argon"),
+        "provider names must not be cut:\n{raw}"
+    );
     Ok(())
 }
 
@@ -126,10 +172,13 @@ fn poller_fetches_in_background_and_respects_interval() -> anyhow::Result<()> {
     let store = Store::open_in_memory()?;
     let calls = Arc::new(AtomicUsize::new(0));
     let c = calls.clone();
-    let mut poller = AgyQuotaPoller::new(15, Arc::new(move || {
-        c.fetch_add(1, Ordering::SeqCst);
-        Ok(PROBE.to_string())
-    }));
+    let mut poller = AgyQuotaPoller::new(
+        15,
+        Arc::new(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+            Ok(PROBE.to_string())
+        }),
+    );
     assert_eq!(wait_for_rows(&store, &mut poller, NOW_MS)?, 5);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // Within the 15-minute interval: no new call.
@@ -148,13 +197,20 @@ fn poller_is_off_at_zero_and_survives_fetch_errors() -> anyhow::Result<()> {
     let store = Store::open_in_memory()?;
     let calls = Arc::new(AtomicUsize::new(0));
     let c = calls.clone();
-    let mut off = AgyQuotaPoller::new(0, Arc::new(move || {
-        c.fetch_add(1, Ordering::SeqCst);
-        Ok(PROBE.to_string())
-    }));
+    let mut off = AgyQuotaPoller::new(
+        0,
+        Arc::new(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+            Ok(PROBE.to_string())
+        }),
+    );
     off.tick(&store, NOW_MS)?;
     std::thread::sleep(Duration::from_millis(50));
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "agy_quota_poll_min = 0 disables polling");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "agy_quota_poll_min = 0 disables polling"
+    );
 
     let mut failing = AgyQuotaPoller::new(15, Arc::new(|| anyhow::bail!("agy not installed")));
     assert_eq!(wait_for_rows(&store, &mut failing, NOW_MS)?, 0);

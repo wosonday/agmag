@@ -2,7 +2,7 @@
 
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 pub trait Git {
     fn head(&self, cwd: &str) -> Result<String>;
@@ -17,7 +17,11 @@ pub struct GitCli;
 fn git(cwd: &str, args: &[&str]) -> Result<String> {
     let out = Command::new("git").arg("-C").arg(cwd).args(args).output()?;
     if !out.status.success() {
-        bail!("git {} lỗi: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "git {} lỗi: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -31,7 +35,15 @@ impl Git for GitCli {
         // Tệp mới chưa commit (mã nguồn) cũng tính là bẩn; chỉ bỏ qua tệp điều phối chép vào worktree.
         let status = git(
             cwd,
-            &["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).agents/tasks", ":(exclude).agents/.runtime"],
+            &[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--",
+                ".",
+                ":(exclude).agents/tasks",
+                ":(exclude).agents/.runtime",
+            ],
         )?;
         Ok(status.is_empty())
     }

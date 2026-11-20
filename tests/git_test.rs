@@ -4,7 +4,14 @@ use std::process::Command;
 use agmag::git::{Git, GitCli};
 
 fn git(dir: &std::path::Path, args: &[&str]) {
-    let ok = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap().status.success();
+    let ok = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap()
+        .status
+        .success();
     assert!(ok, "git {args:?}");
 }
 
@@ -30,7 +37,10 @@ fn git_cli_detects_handoff_commit() -> anyhow::Result<()> {
     git(d, &["add", "."]);
     git(d, &["commit", "-qm", "x: handoff"]);
     assert!(g.is_clean(&cwd)?);
-    assert_eq!(g.touched_since(&cwd, &base, ".agents/log/x.md")?, Some(g.head(&cwd)?));
+    assert_eq!(
+        g.touched_since(&cwd, &base, ".agents/log/x.md")?,
+        Some(g.head(&cwd)?)
+    );
     Ok(())
 }
 

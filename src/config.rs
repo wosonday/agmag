@@ -26,11 +26,18 @@ pub struct Price {
 }
 
 impl Price {
-    pub const FREE: Price = Price { input: 0.0, cache_read: 0.0, cache_write: 0.0, output: 0.0 };
+    pub const FREE: Price = Price {
+        input: 0.0,
+        cache_read: 0.0,
+        cache_write: 0.0,
+        output: 0.0,
+    };
 }
 
 /// Reasoning-effort levels; agy appends one to its model ids (`gemini-4-argon-high`).
-pub const EFFORT_LEVELS: [&str; 7] = ["minimal", "low", "medium", "high", "xhigh", "max", "thinking"];
+pub const EFFORT_LEVELS: [&str; 7] = [
+    "minimal", "low", "medium", "high", "xhigh", "max", "thinking",
+];
 
 #[derive(Deserialize)]
 struct PriceTable {
@@ -60,7 +67,9 @@ pub fn model_id_candidates(name: &str) -> Vec<String> {
     for base in [name, bare] {
         push(base);
         let undated = match base.rsplit_once('-') {
-            Some((head, tail)) if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+            Some((head, tail)) if tail.len() == 8 && tail.bytes().all(|b| b.is_ascii_digit()) => {
+                head
+            }
             _ => base,
         };
         push(undated);
@@ -154,7 +163,10 @@ impl Config {
     /// Looks up `name`, then (for OpenCode's `provider/id` keys) the id without its first segment, so
     /// `openai/gpt-6.1-sol` reuses `[models."gpt-6.1-sol"]`. An exact `[models."provider/id"]` entry wins.
     pub fn model(&self, name: &str) -> Option<&ModelCfg> {
-        let find = |n: &str| self.models.get(self.aliases.get(n).map(String::as_str).unwrap_or(n));
+        let find = |n: &str| {
+            self.models
+                .get(self.aliases.get(n).map(String::as_str).unwrap_or(n))
+        };
         find(name).or_else(|| find(split_provider(name)?.1))
     }
 
@@ -177,7 +189,10 @@ impl Config {
     /// ids at $0. Unknown models → None (shown as "?", never guessed).
     pub fn price_for(&self, name: &str) -> Option<Price> {
         let candidates = model_id_candidates(name);
-        if let Some(p) = candidates.iter().find_map(|c| self.model(c).and_then(|m| m.price.clone())) {
+        if let Some(p) = candidates
+            .iter()
+            .find_map(|c| self.model(c).and_then(|m| m.price.clone()))
+        {
             return Some(p);
         }
         if let Some(p) = candidates.iter().find_map(|c| builtin_prices().get(c)) {
@@ -211,7 +226,8 @@ impl Config {
 /// Splits an OpenCode model key `provider/id` at the first `/` (`nvidia-kimi/moonshotai/kimi-k3.1-pro` →
 /// `("nvidia-kimi", "moonshotai/kimi-k3.1-pro")`). Bare ids (`gpt-6.1-sol`) → None.
 pub fn split_provider(name: &str) -> Option<(&str, &str)> {
-    name.split_once('/').filter(|(p, id)| !p.is_empty() && !id.is_empty())
+    name.split_once('/')
+        .filter(|(p, id)| !p.is_empty() && !id.is_empty())
 }
 
 /// Chi phí USD của một lượng token đã chuẩn hóa, theo giá USD / 1M token.

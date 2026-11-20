@@ -18,7 +18,11 @@ fn sandbox(codex_model: Option<&str>) -> TempDir {
         codex = codex.replace(r#""model":"gpt-6.1-sol""#, &format!(r#""model":"{model}""#));
     }
     fs::write(codex_dir.join("rollout-a.jsonl"), codex).unwrap();
-    fs::copy("tests/fixtures/claude/mini.jsonl", claude_dir.join("s-1.jsonl")).unwrap();
+    fs::copy(
+        "tests/fixtures/claude/mini.jsonl",
+        claude_dir.join("s-1.jsonl"),
+    )
+    .unwrap();
     tmp
 }
 
@@ -35,7 +39,11 @@ fn agm(tmp: &Path, args: &[&str]) -> Output {
 }
 
 fn json(out: &Output) -> Value {
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     serde_json::from_slice(&out.stdout).unwrap()
 }
 
@@ -49,8 +57,16 @@ fn cli_ls_json() {
 #[test]
 fn cost_json_unknown_model_null_usd() {
     let tmp = sandbox(Some("mystery-1"));
-    let v = json(&agm(tmp.path(), &["cost", "--by", "model", "--json", "--days", "36500"]));
-    let row = v.as_array().unwrap().iter().find(|r| r["key"] == "mystery-1").expect("mystery-1 row");
+    let v = json(&agm(
+        tmp.path(),
+        &["cost", "--by", "model", "--json", "--days", "36500"],
+    ));
+    let row = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["key"] == "mystery-1")
+        .expect("mystery-1 row");
     assert!(row["cost_usd"].is_null());
     assert!(row["usage"]["output"].as_u64().unwrap() > 0);
 }
@@ -59,10 +75,18 @@ fn cost_json_unknown_model_null_usd() {
 fn cli_quota_json() {
     let tmp = sandbox(None);
     let v = json(&agm(tmp.path(), &["quota", "--json"]));
-    let row = v.as_array().unwrap().iter().find(|r| r["used_percent"] == 22.0).expect("22% used row");
+    let row = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["used_percent"] == 22.0)
+        .expect("22% used row");
     // JSON keeps `used_percent` (as logged) and adds `left_percent` (what the TUI/table show).
     let left = row["left_percent"].as_f64().expect("left_percent");
-    assert!(left == 78.0 || (left == 100.0 && row["reset_passed"] == true), "left_percent = {left}");
+    assert!(
+        left == 78.0 || (left == 100.0 && row["reset_passed"] == true),
+        "left_percent = {left}"
+    );
 }
 
 #[test]
@@ -78,7 +102,10 @@ fn cli_bad_config_exits_1() {
 fn cli_log_json_returns_turns() {
     let tmp = sandbox(None);
     let v = json(&agm(tmp.path(), &["log", "s-1", "--json"]));
-    assert_eq!(v.as_array().unwrap().last().unwrap()["summary"], "chào bạn lần nữa");
+    assert_eq!(
+        v.as_array().unwrap().last().unwrap()["summary"],
+        "chào bạn lần nữa"
+    );
 }
 
 fn agm_env(tmp: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
@@ -100,8 +127,18 @@ fn agm_env(tmp: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
 #[test]
 fn cli_send_to_user_and_inbox_json() {
     let tmp = sandbox(None);
-    let out = agm_env(tmp.path(), &["send", "user", "--type", "HỎI", "--task", "a", "đổi", "đặc", "tả?"], &[("HC_TERMINAL_ID", "t5")]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = agm_env(
+        tmp.path(),
+        &[
+            "send", "user", "--type", "HỎI", "--task", "a", "đổi", "đặc", "tả?",
+        ],
+        &[("HC_TERMINAL_ID", "t5")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]));
     assert_eq!(v[0]["text"], "[HỎI] [ID a] đổi đặc tả?");
     assert_eq!(v[0]["terminal"], "t5");
@@ -110,25 +147,74 @@ fn cli_send_to_user_and_inbox_json() {
 #[test]
 fn cli_budget_set_ls_rm() {
     let tmp = sandbox(None);
-    assert!(agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "100", "--hard", "200"], &[]).status.success());
-    assert!(agm_env(tmp.path(), &["budget", "set", "provider:codex:10080", "--soft", "80", "--hard", "95"], &[]).status.success());
+    assert!(
+        agm_env(
+            tmp.path(),
+            &["budget", "set", "task:a", "--soft", "100", "--hard", "200"],
+            &[]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        agm_env(
+            tmp.path(),
+            &[
+                "budget",
+                "set",
+                "provider:codex:10080",
+                "--soft",
+                "80",
+                "--hard",
+                "95"
+            ],
+            &[]
+        )
+        .status
+        .success()
+    );
     let v = json(&agm_env(tmp.path(), &["budget", "ls", "--json"], &[]));
     let rows = v.as_array().unwrap();
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().any(|r| r["scope"] == "task:a" && r["unit"] == "tokens"));
-    assert!(rows.iter().any(|r| r["scope"] == "provider:codex:10080" && r["unit"] == "percent"));
-    assert!(!agm_env(tmp.path(), &["budget", "set", "bừa", "--soft", "1", "--hard", "2"], &[]).status.success());
-    assert!(agm_env(tmp.path(), &["budget", "rm", "task:a"], &[]).status.success());
+    assert!(
+        rows.iter()
+            .any(|r| r["scope"] == "task:a" && r["unit"] == "tokens")
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r["scope"] == "provider:codex:10080" && r["unit"] == "percent")
+    );
+    assert!(
+        !agm_env(
+            tmp.path(),
+            &["budget", "set", "bừa", "--soft", "1", "--hard", "2"],
+            &[]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        agm_env(tmp.path(), &["budget", "rm", "task:a"], &[])
+            .status
+            .success()
+    );
 }
 
 #[test]
 fn cli_policy_toggle() {
     let tmp = sandbox(None);
-    assert!(agm_env(tmp.path(), &["policy", "off"], &[]).status.success());
+    assert!(
+        agm_env(tmp.path(), &["policy", "off"], &[])
+            .status
+            .success()
+    );
     let v = json(&agm_env(tmp.path(), &["policy", "status", "--json"], &[]));
     assert_eq!(v["enabled"], false);
     assert!(agm_env(tmp.path(), &["policy", "on"], &[]).status.success());
-    assert_eq!(json(&agm_env(tmp.path(), &["policy", "status", "--json"], &[]))["enabled"], true);
+    assert_eq!(
+        json(&agm_env(tmp.path(), &["policy", "status", "--json"], &[]))["enabled"],
+        true
+    );
 }
 
 #[test]
@@ -142,16 +228,40 @@ fn cli_replay_then_agent_cannot_kill_codex() {
 "#,
     )
     .unwrap();
-    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
+    assert!(
+        agm_env(
+            tmp.path(),
+            &["daemon", "--replay", events.to_str().unwrap()],
+            &[]
+        )
+        .status
+        .success()
+    );
     let terms = json(&agm_env(tmp.path(), &["ps", "--json"], &[]));
     assert_eq!(terms[0]["app"], "codex");
     // Lệnh từ một agent (có HC_TERMINAL_ID, không TTY) → bị từ chối, không gọi hc.
     let out = agm_env(tmp.path(), &["kill", "t1q"], &[("HC_TERMINAL_ID", "t9")]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("chỉ người dùng"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("chỉ người dùng"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let inbox = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]));
-    assert!(inbox.as_array().unwrap().iter().any(|i| i["source"] == "request"));
-    assert!(inbox.as_array().unwrap().iter().any(|i| i["source"] == "blocked" && i["kind"] == "permission"));
+    assert!(
+        inbox
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["source"] == "request")
+    );
+    assert!(
+        inbox
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["source"] == "blocked" && i["kind"] == "permission")
+    );
 }
 
 #[test]
@@ -177,7 +287,15 @@ fn cli_tui_with_piped_stdin_cannot_kill_codex() {
     let tmp = sandbox(None);
     let events = tmp.path().join("ev.jsonl");
     fs::write(&events, "{\"channel\":null,\"seq\":1,\"terminals\":[{\"address\":\"t1q\",\"argv\":[\"codex\"],\"created_ms\":1,\"labels\":{},\"state\":\"live\",\"reported\":true,\"status\":{\"app\":\"codex\",\"state\":\"idle\"}}]}\n").unwrap();
-    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
+    assert!(
+        agm_env(
+            tmp.path(),
+            &["daemon", "--replay", events.to_str().unwrap()],
+            &[]
+        )
+        .status
+        .success()
+    );
     let mut child = Command::new(env!("CARGO_BIN_EXE_agm"))
         .args(["tui", "--refresh", "60"])
         .env("AGM_HOME", tmp.path().join("home"))
@@ -190,28 +308,63 @@ fn cli_tui_with_piped_stdin_cannot_kill_codex() {
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"p off\nk t1q\ny\nq\n").unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"p off\nk t1q\ny\nq\n")
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     // Không lệnh nào được thực hiện: policy vẫn bật.
-    assert_eq!(json(&agm_env(tmp.path(), &["policy", "status", "--json"], &[]))["enabled"], true);
+    assert_eq!(
+        json(&agm_env(tmp.path(), &["policy", "status", "--json"], &[]))["enabled"],
+        true
+    );
 }
 
 #[test]
 fn cli_emergency_commands_work_with_broken_config() {
     let tmp = sandbox(None);
     fs::write(tmp.path().join("home/providers.toml"), "[[[").unwrap();
-    assert!(agm_env(tmp.path(), &["policy", "off"], &[]).status.success());
-    assert!(agm_env(tmp.path(), &["inbox", "--json"], &[]).status.success());
+    assert!(
+        agm_env(tmp.path(), &["policy", "off"], &[])
+            .status
+            .success()
+    );
+    assert!(
+        agm_env(tmp.path(), &["inbox", "--json"], &[])
+            .status
+            .success()
+    );
 }
 
 #[test]
 fn cli_done_dismisses_inbox_item() {
     let tmp = sandbox(None);
-    assert!(agm_env(tmp.path(), &["send", "user", "--type", "BÁO CÁO", "xong"], &[("HC_TERMINAL_ID", "t5")]).status.success());
-    let id = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]))[0]["id"].as_i64().unwrap();
-    assert!(agm_env(tmp.path(), &["done", &id.to_string()], &[]).status.success());
-    assert!(json(&agm_env(tmp.path(), &["inbox", "--json"], &[])).as_array().unwrap().is_empty());
+    assert!(
+        agm_env(
+            tmp.path(),
+            &["send", "user", "--type", "BÁO CÁO", "xong"],
+            &[("HC_TERMINAL_ID", "t5")]
+        )
+        .status
+        .success()
+    );
+    let id = json(&agm_env(tmp.path(), &["inbox", "--json"], &[]))[0]["id"]
+        .as_i64()
+        .unwrap();
+    assert!(
+        agm_env(tmp.path(), &["done", &id.to_string()], &[])
+            .status
+            .success()
+    );
+    assert!(
+        json(&agm_env(tmp.path(), &["inbox", "--json"], &[]))
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -219,10 +372,37 @@ fn cli_rotate_refuses_unknown_app_and_budget_rejects_nan() {
     let tmp = sandbox(None);
     let events = tmp.path().join("ev.jsonl");
     fs::write(&events, "{\"channel\":null,\"seq\":1,\"terminals\":[{\"address\":\"t7\",\"argv\":[],\"created_ms\":1,\"labels\":{\"agm.task\":\"a\",\"agm.role\":\"worker\"},\"state\":\"live\"}]}\n").unwrap();
-    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
-    assert_eq!(agm_env(tmp.path(), &["rotate", "t7"], &[]).status.code(), Some(1));
-    assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "NaN", "--hard", "5"], &[]).status.success());
-    assert!(!agm_env(tmp.path(), &["budget", "set", "task:a", "--soft", "-1", "--hard", "5"], &[]).status.success());
+    assert!(
+        agm_env(
+            tmp.path(),
+            &["daemon", "--replay", events.to_str().unwrap()],
+            &[]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        agm_env(tmp.path(), &["rotate", "t7"], &[]).status.code(),
+        Some(1)
+    );
+    assert!(
+        !agm_env(
+            tmp.path(),
+            &["budget", "set", "task:a", "--soft", "NaN", "--hard", "5"],
+            &[]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        !agm_env(
+            tmp.path(),
+            &["budget", "set", "task:a", "--soft", "-1", "--hard", "5"],
+            &[]
+        )
+        .status
+        .success()
+    );
 }
 
 #[test]
@@ -243,10 +423,24 @@ fn cli_agy_scan_ls_and_cost() {
     assert!(scan["events"].as_u64().unwrap() >= 4);
 
     let sessions = json(&agm(tmp.path(), &["ls", "--days", "36500", "--json"]));
-    assert!(sessions.as_array().unwrap().iter().any(|r| r["source"] == "agy" && r["session_id"] == "conv-cli"));
+    assert!(
+        sessions
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["source"] == "agy" && r["session_id"] == "conv-cli")
+    );
 
-    let cost = json(&agm(tmp.path(), &["cost", "--by", "source", "--days", "36500", "--json"]));
-    let agy_row = cost.as_array().unwrap().iter().find(|r| r["key"] == "agy").expect("agy cost row");
+    let cost = json(&agm(
+        tmp.path(),
+        &["cost", "--by", "source", "--days", "36500", "--json"],
+    ));
+    let agy_row = cost
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["key"] == "agy")
+        .expect("agy cost row");
     assert_eq!(agy_row["usage"]["input_uncached"], 500);
     assert_eq!(agy_row["usage"]["cache_read"], 200);
     assert_eq!(agy_row["usage"]["output"], 40);
@@ -255,7 +449,10 @@ fn cli_agy_scan_ls_and_cost() {
 #[test]
 fn cli_cost_summary_window_month_and_scan_since() {
     let tmp = sandbox(None);
-    let scan = json(&agm(tmp.path(), &["scan", "--since", "2020-01-01", "--json"]));
+    let scan = json(&agm(
+        tmp.path(),
+        &["scan", "--since", "2020-01-01", "--json"],
+    ));
     assert!(scan["files"].as_u64().unwrap() >= 2);
 
     // Chèn thêm bản ghi usage cách đây 10 ngày để kiểm chứng `cost --by month` (mặc định không cần --window)
@@ -267,7 +464,9 @@ fn cli_cost_summary_window_month_and_scan_since() {
     let old_ts = now_epoch - 10 * 86_400_000;
     {
         let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
-        let sid = store.session_id_for_path(agmag::model::Source::Claude, "claude://old-in-4m").unwrap();
+        let sid = store
+            .session_id_for_path(agmag::model::Source::Claude, "claude://old-in-4m")
+            .unwrap();
         store
             .upsert_usage(
                 sid,
@@ -275,7 +474,10 @@ fn cli_cost_summary_window_month_and_scan_since() {
                     dedupe_key: "u-10d".into(),
                     ts_ms: old_ts,
                     model: Some("claude-opus-4-7".into()),
-                    usage: agmag::model::Usage { output: 777, ..Default::default() },
+                    usage: agmag::model::Usage {
+                        output: 777,
+                        ..Default::default()
+                    },
                 },
             )
             .unwrap();
@@ -292,9 +494,15 @@ fn cli_cost_summary_window_month_and_scan_since() {
         .iter()
         .map(|r| r["usage"]["output"].as_u64().unwrap_or(0))
         .sum();
-    assert!(total_out >= 777, "cost --by month phai bao gom usage cu hon 1 ngay");
+    assert!(
+        total_out >= 777,
+        "cost --by month phai bao gom usage cu hon 1 ngay"
+    );
 
-    let by_m = json(&agm(tmp.path(), &["cost", "--window", "4months", "--by", "month", "--json"]));
+    let by_m = json(&agm(
+        tmp.path(),
+        &["cost", "--window", "4months", "--by", "month", "--json"],
+    ));
     assert!(by_m.as_array().is_some());
 }
 
@@ -327,7 +535,15 @@ fn cli_manage_rotate_and_cleanup() {
         }]
     });
     fs::write(&events, format!("{ev}\n")).unwrap();
-    assert!(agm_env(tmp.path(), &["daemon", "--replay", events.to_str().unwrap()], &[]).status.success());
+    assert!(
+        agm_env(
+            tmp.path(),
+            &["daemon", "--replay", events.to_str().unwrap()],
+            &[]
+        )
+        .status
+        .success()
+    );
 
     // Chạy qua pipe (không TTY / như agent) phải bị từ chối khi bật `agm manage`.
     let claude_home_str = claude_home.to_string_lossy().to_string();
@@ -336,9 +552,15 @@ fn cli_manage_rotate_and_cleanup() {
         &["manage", "t11", "--", "claude", "--model", "opus"],
         &[("AGM_CLAUDE_HOME", &claude_home_str)],
     );
-    assert!(!m_out.status.success(), "agm manage không TTY phải bị từ chối fail-closed");
+    assert!(
+        !m_out.status.success(),
+        "agm manage không TTY phải bị từ chối fail-closed"
+    );
     let m_err = String::from_utf8_lossy(&m_out.stderr);
-    assert!(m_err.contains("chỉ người dùng"), "phải bị từ chối vì không phải người dùng, stderr: {m_err}");
+    assert!(
+        m_err.contains("chỉ người dùng"),
+        "phải bị từ chối vì không phải người dùng, stderr: {m_err}"
+    );
 
     // Khi người dùng xác nhận trong phiên tương tác (giả lập qua Store + Caller::User { confirmed: true }),
     // `rotate` và `cleanup --json` hoạt động bình thường.
@@ -361,7 +583,11 @@ fn cli_manage_rotate_and_cleanup() {
     }
 
     let r_out = agm_env(tmp.path(), &["rotate", "t11"], &[]);
-    assert!(r_out.status.success(), "{}", String::from_utf8_lossy(&r_out.stderr));
+    assert!(
+        r_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&r_out.stderr)
+    );
 
     let c_out = agm_env(tmp.path(), &["cleanup", "--json"], &[]);
     assert_eq!(json(&c_out).as_array().unwrap().len(), 0);
@@ -372,7 +598,10 @@ fn cli_cleanup_help_documents_mandatory_confirmation_even_with_yes() {
     let tmp = sandbox(None);
     let out = agm_env(tmp.path(), &["cleanup", "--help"], &[]);
     assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("cleanup still requires one typed confirmation"));
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("cleanup still requires one typed confirmation")
+    );
 }
 
 #[test]
@@ -381,24 +610,43 @@ fn cli_cleanup_yes_without_human_confirmation_does_not_touch_terminals() {
     {
         let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
         for address in ["t1", "t2"] {
-            store.upsert_terminal(&agmag::store::TerminalRow {
-                address: address.into(), app: Some("codex".into()), state: "live".into(),
-                created_ms: 1, ..Default::default()
-            }).unwrap();
+            store
+                .upsert_terminal(&agmag::store::TerminalRow {
+                    address: address.into(),
+                    app: Some("codex".into()),
+                    state: "live".into(),
+                    created_ms: 1,
+                    ..Default::default()
+                })
+                .unwrap();
         }
-        let sid = store.session_id_for_path(agmag::model::Source::Codex, "codex://successor").unwrap();
+        let sid = store
+            .session_id_for_path(agmag::model::Source::Codex, "codex://successor")
+            .unwrap();
         store.link_terminal("t2", sid, "rotation").unwrap();
-        store.set_terminal_handoff_state("t1", "handed_off").unwrap();
+        store
+            .set_terminal_handoff_state("t1", "handed_off")
+            .unwrap();
         store.conn().execute(
             "INSERT INTO rotations (old_terminal,new_terminal,app,state,updated_ms) VALUES ('t1','t2','codex','done',1)", []
         ).unwrap();
     }
     let out = agm_env(tmp.path(), &["cleanup", "--all", "--yes"], &[]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(String::from_utf8_lossy(&out.stdout).contains("Cancelled."));
     let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
     assert_eq!(store.terminal("t1").unwrap().unwrap().state, "live");
-    assert_eq!(store.conn().query_row(
-        "SELECT COUNT(*) FROM actions WHERE kind='kill'", [], |r| r.get::<_, i64>(0)
-    ).unwrap(), 0);
+    assert_eq!(
+        store
+            .conn()
+            .query_row("SELECT COUNT(*) FROM actions WHERE kind='kill'", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
 }

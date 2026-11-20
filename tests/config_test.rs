@@ -177,13 +177,27 @@ fn cost_basic() {
 #[test]
 fn policy_defaults() {
     let p = Config::builtin().policy;
-    assert_eq!((p.max_workers, p.ctx_warn, p.ctx_rotate, p.handoff_timeout_min), (3, 50.0, 70.0, 10));
+    assert_eq!(
+        (
+            p.max_workers,
+            p.ctx_warn,
+            p.ctx_rotate,
+            p.handoff_timeout_min
+        ),
+        (3, 50.0, 70.0, 10)
+    );
     assert_eq!(p.manager, None);
 }
 
 #[test]
 fn gpt_sol_has_window() {
-    assert_eq!(Config::builtin().model("gpt-6.1-sol").unwrap().context_window, Some(475000));
+    assert_eq!(
+        Config::builtin()
+            .model("gpt-6.1-sol")
+            .unwrap()
+            .context_window,
+        Some(475000)
+    );
 }
 
 /// OpenCode keys are `providerID/id`: the bare id's entry is reused; an exact `provider/id` entry wins.
@@ -204,10 +218,19 @@ context_window = 200000
 "#,
     )
     .unwrap();
-    assert_eq!(cfg.model("openai/gpt-6.1-sol").unwrap().context_window, Some(475000));
-    assert_eq!(cfg.model("openrouter/gpt-6.1-sol").unwrap().context_window, Some(200000));
+    assert_eq!(
+        cfg.model("openai/gpt-6.1-sol").unwrap().context_window,
+        Some(475000)
+    );
+    assert_eq!(
+        cfg.model("openrouter/gpt-6.1-sol").unwrap().context_window,
+        Some(200000)
+    );
     assert!(cfg.model("opencode-go/deepseek-v4-pro").is_none());
-    assert_eq!(agmag::config::split_provider("nvidia-kimi/moonshotai/kimi-k3.1-pro"), Some(("nvidia-kimi", "moonshotai/kimi-k3.1-pro")));
+    assert_eq!(
+        agmag::config::split_provider("nvidia-kimi/moonshotai/kimi-k3.1-pro"),
+        Some(("nvidia-kimi", "moonshotai/kimi-k3.1-pro"))
+    );
     assert_eq!(agmag::config::split_provider("gpt-6.1-sol"), None);
     assert_eq!(agmag::config::split_provider("/x"), None);
 }
@@ -217,11 +240,26 @@ context_window = 200000
 fn undeclared_opencode_model_billed_by_provider_prefix() {
     let cfg = Config::builtin();
     // Declared model wins over the prefix (ChatGPT login through OpenCode = Codex subscription).
-    assert_eq!(cfg.billing_for_model("openai/gpt-6.1-sol"), Some(Billing::Subscription));
-    assert_eq!(cfg.billing_for_model("opencode-go/deepseek-v4-pro"), Some(Billing::Subscription));
-    assert_eq!(cfg.billing_for_model("opencode-go/some-model-from-2027"), Some(Billing::Subscription));
-    assert_eq!(cfg.billing_for_model("openrouter/qwen/qwen4-max"), Some(Billing::Api));
+    assert_eq!(
+        cfg.billing_for_model("openai/gpt-6.1-sol"),
+        Some(Billing::Subscription)
+    );
+    assert_eq!(
+        cfg.billing_for_model("opencode-go/deepseek-v4-pro"),
+        Some(Billing::Subscription)
+    );
+    assert_eq!(
+        cfg.billing_for_model("opencode-go/some-model-from-2027"),
+        Some(Billing::Subscription)
+    );
+    assert_eq!(
+        cfg.billing_for_model("openrouter/qwen/qwen4-max"),
+        Some(Billing::Api)
+    );
     // Unknown provider (e.g. NVIDIA, fees unverified) stays unknown rather than guessed.
-    assert_eq!(cfg.billing_for_model("nvidia-kimi/moonshotai/kimi-k3.1-pro"), None);
+    assert_eq!(
+        cfg.billing_for_model("nvidia-kimi/moonshotai/kimi-k3.1-pro"),
+        None
+    );
     assert_eq!(cfg.billing_for_model("nope"), None);
 }

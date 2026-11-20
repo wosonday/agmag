@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::store::TerminalRow;
@@ -35,7 +35,9 @@ pub struct HcCli {
 
 impl Default for HcCli {
     fn default() -> Self {
-        HcCli { bin: std::env::var("AGM_HC_BIN").unwrap_or_else(|_| "hc".into()) }
+        HcCli {
+            bin: std::env::var("AGM_HC_BIN").unwrap_or_else(|_| "hc".into()),
+        }
     }
 }
 
@@ -49,11 +51,20 @@ impl HcCli {
         let stdout = String::from_utf8_lossy(&out.stdout);
         let cmd = args.first().map_or("", String::as_str);
         if !out.status.success() {
-            bail!("hc {cmd} lỗi ({}): {}{}", out.status, stdout.trim(), String::from_utf8_lossy(&out.stderr).trim());
+            bail!(
+                "hc {cmd} lỗi ({}): {}{}",
+                out.status,
+                stdout.trim(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
-        let v: Value = serde_json::from_str(stdout.trim()).unwrap_or(Value::String(stdout.trim().to_string()));
+        let v: Value =
+            serde_json::from_str(stdout.trim()).unwrap_or(Value::String(stdout.trim().to_string()));
         if let Some(err) = v.get("error") {
-            bail!("hc {cmd} lỗi: {}", err["message"].as_str().unwrap_or(&err.to_string()));
+            bail!(
+                "hc {cmd} lỗi: {}",
+                err["message"].as_str().unwrap_or(&err.to_string())
+            );
         }
         Ok(v)
     }
@@ -116,20 +127,29 @@ impl Hc for HcCli {
     }
 
     fn kill(&self, terminal: &str) -> Result<()> {
-        self.call(&[s("kill"), s("--json"), s("--"), s(terminal)]).map(|_| ())
+        self.call(&[s("kill"), s("--json"), s("--"), s(terminal)])
+            .map(|_| ())
     }
 
     fn interrupt(&self, terminal: &str) -> Result<()> {
-        self.call(&[s("interrupt"), s("--json"), s("--"), s(terminal)]).map(|_| ())
+        self.call(&[s("interrupt"), s("--json"), s("--"), s(terminal)])
+            .map(|_| ())
     }
 }
 
 /// Đoán app từ argv khi chương trình chưa tự báo trạng thái 7501.
 pub fn app_from_argv(argv: &[String]) -> Option<String> {
     let first = argv.first().filter(|a| !a.trim().is_empty())?;
-    let base = first.rsplit(['\\', '/']).next().unwrap_or(first).to_lowercase();
+    let base = first
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(first)
+        .to_lowercase();
     // Shim của npm/pnpm/bun trên Windows: claude.cmd, codex.ps1, …
-    let base = [".exe", ".cmd", ".bat", ".ps1"].iter().find_map(|ext| base.strip_suffix(ext)).unwrap_or(&base);
+    let base = [".exe", ".cmd", ".bat", ".ps1"]
+        .iter()
+        .find_map(|ext| base.strip_suffix(ext))
+        .unwrap_or(&base);
     Some(match base {
         "claude" => "claude-code".into(),
         "agy" => "antigravity".into(),
@@ -140,19 +160,38 @@ pub fn app_from_argv(argv: &[String]) -> Option<String> {
 /// Đối tượng Terminal của hc (ảnh chụp, sự kiện `created`, `hc get`, `hc ls`) → hàng CSDL.
 pub fn terminal_row_from(v: &Value) -> TerminalRow {
     let str_of = |k: &str| v[k].as_str().map(String::from);
-    let argv: Vec<String> = v["argv"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+    let argv: Vec<String> = v["argv"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     let mut labels: BTreeMap<String, String> = v["labels"]
         .as_object()
-        .map(|o| o.iter().filter_map(|(k, x)| x.as_str().map(|x| (k.clone(), x.to_string()))).collect())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, x)| x.as_str().map(|x| (k.clone(), x.to_string())))
+                .collect()
+        })
         .unwrap_or_default();
     // herdr's location ("workspace / tab"): a label in snapshots/events, a top-level field in `hc ls`.
     if let Some(place) = v["where"].as_str().filter(|w| !w.trim().is_empty()) {
-        labels.entry("where".into()).or_insert_with(|| place.to_string());
+        labels
+            .entry("where".into())
+            .or_insert_with(|| place.to_string());
     }
     // `hc ls` cho `status` là chuỗi + `agent`; `hc get`/sự kiện cho `status` là đối tượng.
-    let reported_app = v["status"]["app"].as_str().filter(|a| !a.trim().is_empty()).map(String::from).or_else(|| {
-        v["agent"].as_str().and_then(|a| app_from_argv(&[a.to_string()]))
-    });
+    let reported_app = v["status"]["app"]
+        .as_str()
+        .filter(|a| !a.trim().is_empty())
+        .map(String::from)
+        .or_else(|| {
+            v["agent"]
+                .as_str()
+                .and_then(|a| app_from_argv(&[a.to_string()]))
+        });
     TerminalRow {
         address: str_of("address").unwrap_or_default(),
         name: str_of("name"),
@@ -166,7 +205,10 @@ pub fn terminal_row_from(v: &Value) -> TerminalRow {
             Some("live") | None => "live".into(),
             Some(_) => "finished".into(),
         },
-        status: v["status"]["state"].as_str().or_else(|| v["status"].as_str()).map(String::from),
+        status: v["status"]["state"]
+            .as_str()
+            .or_else(|| v["status"].as_str())
+            .map(String::from),
         kind: v["status"]["kind"].as_str().map(String::from),
         msg: v["status"]["msg"].as_str().map(String::from),
         turn: v["turn"].as_i64().unwrap_or(0),

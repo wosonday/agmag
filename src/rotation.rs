@@ -13,13 +13,14 @@ use crate::actions::{self, Caller, SpawnReq};
 use crate::config::Config;
 use crate::correlate;
 use crate::git::{self, Git};
-use crate::hc::{terminal_row_from, Hc, RunSpec};
-use crate::launch::{build_successor_argv, LaunchSpec};
-use crate::policy::{enabled, session_context_pct, POLICY_ACTOR};
+use crate::hc::{Hc, RunSpec, terminal_row_from};
+use crate::launch::{LaunchSpec, build_successor_argv};
+use crate::policy::{POLICY_ACTOR, enabled, session_context_pct};
 use crate::store::{Store, TerminalRow};
 
 pub const HANDOFF_MARKER: &str = "<!-- agm:handoff-done -->";
-const ACTIVE_STATES_SQL: &str = "'pending', 'requested', 'handoff_ready', 'spawning', 'awaiting_link'";
+const ACTIVE_STATES_SQL: &str =
+    "'pending', 'requested', 'handoff_ready', 'spawning', 'awaiting_link'";
 
 struct Rotation {
     id: i64,
@@ -46,7 +47,9 @@ pub fn handoff_text(task: &str) -> String {
 }
 
 pub fn resume_text(task: &str) -> String {
-    format!("Đọc .agents/tasks/{task}.md, .agents/log/{task}.md và git log của nhánh, rồi làm tiếp đầu việc {task}.")
+    format!(
+        "Đọc .agents/tasks/{task}.md, .agents/log/{task}.md và git log của nhánh, rồi làm tiếp đầu việc {task}."
+    )
 }
 
 pub fn interactive_handoff_text(rot_id: i64, rel_path: &str) -> String {
@@ -60,9 +63,13 @@ pub fn interactive_handoff_text(rot_id: i64, rel_path: &str) -> String {
 
 pub fn build_successor_prompt(app: &str, rot_id: i64, rel_path: &str) -> String {
     if app == "codex" {
-        format!("[agm-rot:{rot_id}] Read {rel_path}, summarize your understanding briefly, then wait for user instructions.")
+        format!(
+            "[agm-rot:{rot_id}] Read {rel_path}, summarize your understanding briefly, then wait for user instructions."
+        )
     } else {
-        format!("Read {rel_path}, summarize your understanding briefly, then wait for user instructions.")
+        format!(
+            "Read {rel_path}, summarize your understanding briefly, then wait for user instructions."
+        )
     }
 }
 
@@ -154,7 +161,10 @@ fn fail(store: &Store, r: &Rotation, reason: &str, now: i64) -> Result<()> {
 
 fn fail_with(store: &Store, r: &Rotation, reason: &str, after: &str, now: i64) -> Result<()> {
     set_state(store, r.id, "failed", Some(reason), now)?;
-    let text = format!("Xoay vòng {} thất bại: {reason}. {after} Dùng `agm rotate {}` để thử lại.", r.old, r.old);
+    let text = format!(
+        "Xoay vòng {} thất bại: {reason}. {after} Dùng `agm rotate {}` để thử lại.",
+        r.old, r.old
+    );
     store.open_inbox(Some(&r.old), "rotation", Some("failed"), &text, now)?;
     store.log_action(POLICY_ACTOR, "rotate", &r.old, reason, false, now)?;
     Ok(())
@@ -163,14 +173,26 @@ fn fail_with(store: &Store, r: &Rotation, reason: &str, after: &str, now: i64) -
 fn needs_attention(store: &Store, r: &Rotation, reason: &str, now: i64) -> Result<()> {
     set_state(store, r.id, "needs_attention", Some(reason), now)?;
     let text = format!("Xoay vòng {} cần xử lý: {reason}.", r.old);
-    store.open_inbox(Some(&r.old), "rotation", Some("needs_attention"), &text, now)?;
+    store.open_inbox(
+        Some(&r.old),
+        "rotation",
+        Some("needs_attention"),
+        &text,
+        now,
+    )?;
     store.log_action(POLICY_ACTOR, "rotate", &r.old, reason, false, now)?;
     Ok(())
 }
 
 /// Bắt đầu xoay vòng một terminal. Bỏ qua nếu đã có vòng đang chạy hoặc terminal đã `handed_off`.
 /// Vòng **tự động** cũng bỏ qua terminal đã có vòng thất bại/cần chú ý (tránh nhắc bàn giao mãi).
-pub fn start(store: &Store, addr: &str, ctx_pct: Option<f64>, manual: bool, now: i64) -> Result<bool> {
+pub fn start(
+    store: &Store,
+    addr: &str,
+    ctx_pct: Option<f64>,
+    manual: bool,
+    now: i64,
+) -> Result<bool> {
     let Some(t) = store.terminal(addr)? else {
         return Ok(false);
     };
@@ -183,7 +205,9 @@ pub fn start(store: &Store, addr: &str, ctx_pct: Option<f64>, manual: bool, now:
         format!("{ACTIVE_STATES_SQL}, 'failed', 'needs_attention'")
     };
     let busy: bool = store.conn().query_row(
-        &format!("SELECT EXISTS(SELECT 1 FROM rotations WHERE old_terminal = ?1 AND state IN ({states}))"),
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM rotations WHERE old_terminal = ?1 AND state IN ({states}))"
+        ),
         [&t.address],
         |r| r.get(0),
     )?;
@@ -205,13 +229,18 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
     // 1. Phát hiện phiên đạt ngưỡng xoay vòng (hoặc cảnh báo phiên Claude/Codex mở tay).
     for t in store.terminals(true)? {
         let Some(sid) = t.session else { continue };
-        let Some(pct) = session_context_pct(store, cfg, sid)? else { continue };
+        let Some(pct) = session_context_pct(store, cfg, sid)? else {
+            continue;
+        };
         if pct < cfg.policy.ctx_rotate {
             continue;
         }
         if rotatable(&t) {
             start(store, &t.address, Some(pct), false, now)?;
-        } else if !t.managed && matches!(t.app.as_deref(), Some("claude-code" | "codex")) && t.handoff_state == "active" {
+        } else if !t.managed
+            && matches!(t.app.as_deref(), Some("claude-code" | "codex"))
+            && t.handoff_state == "active"
+        {
             let name = t.name.as_deref().unwrap_or(&t.address);
             let app = t.app.as_deref().unwrap_or("?");
             let text = format!(
@@ -224,16 +253,28 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
     }
     // 2. Tiến từng vòng đang chạy theo nhánh app tương ứng.
     for r in active(store)? {
-        let app = r.app.clone().or_else(|| store.terminal(&r.old).ok().flatten().and_then(|t| t.app));
+        let app = r
+            .app
+            .clone()
+            .or_else(|| store.terminal(&r.old).ok().flatten().and_then(|t| t.app));
         match app.as_deref() {
-            Some("claude-code" | "codex") => advance_interactive(store, cfg, hc, &r, app.as_deref().unwrap(), now)?,
+            Some("claude-code" | "codex") => {
+                advance_interactive(store, cfg, hc, &r, app.as_deref().unwrap(), now)?
+            }
             _ => advance_opencode(store, cfg, hc, git, &r, now)?,
         }
     }
     Ok(())
 }
 
-fn advance_opencode(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r: &Rotation, now: i64) -> Result<()> {
+fn advance_opencode(
+    store: &Store,
+    cfg: &Config,
+    hc: &dyn Hc,
+    git: &dyn Git,
+    r: &Rotation,
+    now: i64,
+) -> Result<()> {
     let timeout = cfg.policy.handoff_timeout_min as i64 * 60_000;
     let Some(t) = store.terminal(&r.old)? else {
         return fail(store, r, "không còn thấy terminal", now);
@@ -253,7 +294,14 @@ fn advance_opencode(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r: 
         "pending" if t.status.as_deref() == Some("idle") => {
             let head = match git.head(&cwd) {
                 Ok(h) => h,
-                Err(e) => return fail(store, r, &format!("không đọc được git HEAD trong {cwd}: {e:#}"), now),
+                Err(e) => {
+                    return fail(
+                        store,
+                        r,
+                        &format!("không đọc được git HEAD trong {cwd}: {e:#}"),
+                        now,
+                    );
+                }
             };
             match hc.send(&t.address, &handoff_text(&task), true, false) {
                 Ok(_) => {
@@ -262,9 +310,23 @@ fn advance_opencode(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r: 
                          WHERE id = ?1",
                         params![r.id, head, t.turn, now],
                     )?;
-                    store.log_action(POLICY_ACTOR, "rotate", &t.address, "yêu cầu bàn giao", true, now)?;
+                    store.log_action(
+                        POLICY_ACTOR,
+                        "rotate",
+                        &t.address,
+                        "yêu cầu bàn giao",
+                        true,
+                        now,
+                    )?;
                 }
-                Err(e) => store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("gửi yêu cầu bàn giao lỗi: {e:#}"), false, now)?,
+                Err(e) => store.log_action(
+                    POLICY_ACTOR,
+                    "rotate",
+                    &t.address,
+                    &format!("gửi yêu cầu bàn giao lỗi: {e:#}"),
+                    false,
+                    now,
+                )?,
             }
         }
         "requested" => {
@@ -272,7 +334,15 @@ fn advance_opencode(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, r: 
             if t.turn > r.turn_before && idle(&t) {
                 verify_and_respawn(store, cfg, hc, git, r, &t, timed_out, now)?;
             } else if timed_out {
-                fail(store, r, &format!("không bàn giao trong {} phút", cfg.policy.handoff_timeout_min), now)?;
+                fail(
+                    store,
+                    r,
+                    &format!(
+                        "không bàn giao trong {} phút",
+                        cfg.policy.handoff_timeout_min
+                    ),
+                    now,
+                )?;
             }
         }
         _ => {}
@@ -294,16 +364,32 @@ fn verify_and_respawn(
 ) -> Result<()> {
     let task = r.task.clone().unwrap_or_default();
     let cwd = t.cwd.clone().unwrap_or_default();
-    let Some(template) = t.template.clone() else { return fail(store, r, "không biết template để mở phiên mới", now) };
-    let Some(base) = r.head_before.clone() else { return fail(store, r, "không đọc được HEAD lúc yêu cầu bàn giao", now) };
-    let wait_or_fail = |reason: &str| if timed_out { fail(store, r, reason, now) } else { Ok(()) };
+    let Some(template) = t.template.clone() else {
+        return fail(store, r, "không biết template để mở phiên mới", now);
+    };
+    let Some(base) = r.head_before.clone() else {
+        return fail(store, r, "không đọc được HEAD lúc yêu cầu bàn giao", now);
+    };
+    let wait_or_fail = |reason: &str| {
+        if timed_out {
+            fail(store, r, reason, now)
+        } else {
+            Ok(())
+        }
+    };
     if !git.is_clean(&cwd).unwrap_or(false) {
         return wait_or_fail("worktree còn thay đổi chưa commit");
     }
-    let Some(commit) = git.touched_since(&cwd, &base, &format!(".agents/log/{task}.md")).unwrap_or(None) else {
+    let Some(commit) = git
+        .touched_since(&cwd, &base, &format!(".agents/log/{task}.md"))
+        .unwrap_or(None)
+    else {
         return wait_or_fail(&format!("không có commit mới chạm .agents/log/{task}.md"));
     };
-    store.conn().execute("UPDATE rotations SET commit_sha = ?2 WHERE id = ?1", params![r.id, commit])?;
+    store.conn().execute(
+        "UPDATE rotations SET commit_sha = ?2 WHERE id = ?1",
+        params![r.id, commit],
+    )?;
     let req = SpawnReq {
         template,
         task: task.clone(),
@@ -316,13 +402,26 @@ fn verify_and_respawn(
     if let Err(e) = actions::spawn_precheck(store, cfg, &req, Some(&t.address)) {
         return fail(store, r, &format!("không mở được phiên mới: {e:#}"), now);
     }
-    if let Err(e) = actions::kill(store, hc, &Caller::Agent(Some(POLICY_ACTOR.into())), &t.address, now) {
+    if let Err(e) = actions::kill(
+        store,
+        hc,
+        &Caller::Agent(Some(POLICY_ACTOR.into())),
+        &t.address,
+        now,
+    ) {
         return fail(store, r, &format!("kill phiên cũ lỗi: {e:#}"), now);
     }
     // Đã kill: từ đây không được dừng giữa chừng vì lỗi CSDL — phải thử mở phiên mới.
     // Đánh dấu ngay (không chờ sự kiện hc) để max_workers và vòng sau không còn tính phiên cũ.
     if let Err(e) = store.finish_terminal(&t.address, None, now) {
-        let _ = store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("đánh dấu kết thúc lỗi: {e:#}"), false, now);
+        let _ = store.log_action(
+            POLICY_ACTOR,
+            "rotate",
+            &t.address,
+            &format!("đánh dấu kết thúc lỗi: {e:#}"),
+            false,
+            now,
+        );
     }
     match actions::spawn(store, hc, cfg, &req, now) {
         Ok(addr) => {
@@ -330,14 +429,23 @@ fn verify_and_respawn(
                 "UPDATE rotations SET new_terminal = ?2, state = 'done', detail = ?3, updated_ms = ?4 WHERE id = ?1",
                 params![r.id, addr, format!("{} → {addr} (commit {commit})", t.address), now],
             )?;
-            store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("→ {addr}"), true, now)?;
+            store.log_action(
+                POLICY_ACTOR,
+                "rotate",
+                &t.address,
+                &format!("→ {addr}"),
+                true,
+                now,
+            )?;
             Ok(())
         }
         Err(e) => fail_with(
             store,
             r,
             &format!("mở phiên mới lỗi: {e:#}"),
-            &format!("Phiên cũ ĐÃ bị dừng; bàn giao nằm ở commit {commit} — hãy `agm spawn` lại cho đầu việc {task}."),
+            &format!(
+                "Phiên cũ ĐÃ bị dừng; bàn giao nằm ở commit {commit} — hãy `agm spawn` lại cho đầu việc {task}."
+            ),
             now,
         ),
     }
@@ -353,10 +461,19 @@ fn fresh_idle_status(hc: &dyn Hc, t: &TerminalRow) -> Option<String> {
     {
         return None;
     }
-    fresh.status.filter(|s| matches!(s.as_str(), "idle" | "done"))
+    fresh
+        .status
+        .filter(|s| matches!(s.as_str(), "idle" | "done"))
 }
 
-fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, app: &str, now: i64) -> Result<()> {
+fn advance_interactive(
+    store: &Store,
+    cfg: &Config,
+    hc: &dyn Hc,
+    r: &Rotation,
+    app: &str,
+    now: i64,
+) -> Result<()> {
     let handoff_timeout = cfg.policy.handoff_timeout_min as i64 * 60_000;
     let link_timeout = cfg.policy.link_timeout_min as i64 * 60_000;
     let old_opt = store.terminal(&r.old)?;
@@ -378,7 +495,13 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
                 && let Some(pct) = session_context_pct(store, cfg, sid)?
                 && pct < cfg.policy.ctx_warn
             {
-                return set_state(store, r.id, "cancelled", Some("ngữ cảnh đã giảm dưới ngưỡng cảnh báo"), now);
+                return set_state(
+                    store,
+                    r.id,
+                    "cancelled",
+                    Some("ngữ cảnh đã giảm dưới ngưỡng cảnh báo"),
+                    now,
+                );
             }
             if !idle(&t) {
                 return Ok(());
@@ -386,36 +509,82 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
             let Some(fresh) = fresh_idle_status(hc, &t) else {
                 return Ok(());
             };
-            let Some(cwd) = r.cwd.clone().or_else(|| t.cwd.clone()).filter(|c| !c.trim().is_empty()) else {
+            let Some(cwd) = r
+                .cwd
+                .clone()
+                .or_else(|| t.cwd.clone())
+                .filter(|c| !c.trim().is_empty())
+            else {
                 return fail(store, r, "không biết thư mục làm việc của terminal", now);
             };
             if !Path::new(&cwd).is_dir() {
-                return needs_attention(store, r, &format!("thư mục '{cwd}' không còn tồn tại"), now);
+                return needs_attention(
+                    store,
+                    r,
+                    &format!("thư mục '{cwd}' không còn tồn tại"),
+                    now,
+                );
             }
             let rel_path = format!(".agents/handoff/{}-{now}.md", r.id);
             let abs_path = Path::new(&cwd).join(&rel_path);
             if abs_path.exists() {
-                return fail(store, r, &format!("tệp bàn giao {rel_path} đã tồn tại"), now);
+                return fail(
+                    store,
+                    r,
+                    &format!("tệp bàn giao {rel_path} đã tồn tại"),
+                    now,
+                );
             }
             if let Some(parent) = abs_path.parent()
                 && let Err(e) = std::fs::create_dir_all(parent)
             {
-                return needs_attention(store, r, &format!("không tạo được thư mục bàn giao: {e}"), now);
+                return needs_attention(
+                    store,
+                    r,
+                    &format!("không tạo được thư mục bàn giao: {e}"),
+                    now,
+                );
             }
             if let Err(e) = git::ensure_handoff_excluded(&cwd) {
-                let _ = store.log_action(POLICY_ACTOR, "exclude", &t.address, &format!("cảnh báo exclude: {e:#}"), false, now);
+                let _ = store.log_action(
+                    POLICY_ACTOR,
+                    "exclude",
+                    &t.address,
+                    &format!("cảnh báo exclude: {e:#}"),
+                    false,
+                    now,
+                );
             }
             let if_idle = fresh == "idle";
-            match hc.send(&t.address, &interactive_handoff_text(r.id, &rel_path), if_idle, false) {
+            match hc.send(
+                &t.address,
+                &interactive_handoff_text(r.id, &rel_path),
+                if_idle,
+                false,
+            ) {
                 Ok(_) => {
                     store.conn().execute(
                         "UPDATE rotations SET state = 'requested', cwd = ?2, handoff_path = ?3, turn_before = ?4, requested_ms = ?5, updated_ms = ?5
                          WHERE id = ?1",
                         params![r.id, cwd, rel_path, t.turn, now],
                     )?;
-                    store.log_action(POLICY_ACTOR, "rotate", &t.address, "yêu cầu bàn giao (không kill)", true, now)?;
+                    store.log_action(
+                        POLICY_ACTOR,
+                        "rotate",
+                        &t.address,
+                        "yêu cầu bàn giao (không kill)",
+                        true,
+                        now,
+                    )?;
                 }
-                Err(e) => store.log_action(POLICY_ACTOR, "rotate", &t.address, &format!("gửi yêu cầu bàn giao lỗi: {e:#}"), false, now)?,
+                Err(e) => store.log_action(
+                    POLICY_ACTOR,
+                    "rotate",
+                    &t.address,
+                    &format!("gửi yêu cầu bàn giao lỗi: {e:#}"),
+                    false,
+                    now,
+                )?,
             }
         }
         "requested" => {
@@ -428,7 +597,9 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
             let abs = Path::new(cwd).join(rel);
             let handoff_file_ok = is_handoff_ready(&abs, r.id);
             let live_ready = match &old_opt {
-                Some(t) if t.state == "live" => t.turn > r.turn_before && idle(t) && handoff_file_ok,
+                Some(t) if t.state == "live" => {
+                    t.turn > r.turn_before && idle(t) && handoff_file_ok
+                }
                 _ => handoff_file_ok,
             };
             let timed_out = now - r.requested_ms.unwrap_or(now) > handoff_timeout;
@@ -457,9 +628,19 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
             }
             match old_opt {
                 None => return fail(store, r, "không còn thấy terminal", now),
-                Some(t) if t.state != "live" => return fail(store, r, "terminal đã kết thúc trước khi bàn giao", now),
+                Some(t) if t.state != "live" => {
+                    return fail(store, r, "terminal đã kết thúc trước khi bàn giao", now);
+                }
                 _ if timed_out => {
-                    fail(store, r, &format!("chưa ghi xong tệp bàn giao hợp lệ trong {} phút", cfg.policy.handoff_timeout_min), now)?;
+                    fail(
+                        store,
+                        r,
+                        &format!(
+                            "chưa ghi xong tệp bàn giao hợp lệ trong {} phút",
+                            cfg.policy.handoff_timeout_min
+                        ),
+                        now,
+                    )?;
                 }
                 _ => {}
             }
@@ -477,7 +658,9 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
             };
             let mut spec = match LaunchSpec::from_json(spec_json) {
                 Ok(s) => s,
-                Err(e) => return needs_attention(store, r, &format!("launch_spec hỏng: {e:#}"), now),
+                Err(e) => {
+                    return needs_attention(store, r, &format!("launch_spec hỏng: {e:#}"), now);
+                }
             };
             if let Some(cwd) = &r.cwd {
                 spec.cwd = cwd.clone();
@@ -491,7 +674,14 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
                 &spec,
             ) {
                 Ok(n) => n,
-                Err(e) => return needs_attention(store, r, &format!("precheck mở phiên mới lỗi: {e:#}"), now),
+                Err(e) => {
+                    return needs_attention(
+                        store,
+                        r,
+                        &format!("precheck mở phiên mới lỗi: {e:#}"),
+                        now,
+                    );
+                }
             };
             let prompt = build_successor_prompt(app, r.id, rel);
             let argv = build_successor_argv(&spec, &prompt);
@@ -516,7 +706,12 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
                 Ok(v) => {
                     let mut row = terminal_row_from(&v);
                     if row.address.is_empty() {
-                        return needs_attention(store, r, "hc run không trả địa chỉ terminal mới", now);
+                        return needs_attention(
+                            store,
+                            r,
+                            "hc run không trả địa chỉ terminal mới",
+                            now,
+                        );
                     }
                     row.app.get_or_insert_with(|| app.to_string());
                     row.cwd.get_or_insert_with(|| spec.cwd.clone());
@@ -531,10 +726,22 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
                         "UPDATE rotations SET new_terminal = ?2, state = 'awaiting_link', detail = ?3, updated_ms = ?4 WHERE id = ?1",
                         params![r.id, row.address, format!("{} → {} (đang chờ ghép)", t.address, row.address), now],
                     )?;
-                    store.log_action(POLICY_ACTOR, "spawn_successor", &row.address, &format!("rotation #{}", r.id), true, now)?;
+                    store.log_action(
+                        POLICY_ACTOR,
+                        "spawn_successor",
+                        &row.address,
+                        &format!("rotation #{}", r.id),
+                        true,
+                        now,
+                    )?;
                 }
                 Err(e) => {
-                    return needs_attention(store, r, &format!("hc run mở phiên kế nhiệm lỗi: {e:#}"), now);
+                    return needs_attention(
+                        store,
+                        r,
+                        &format!("hc run mở phiên kế nhiệm lỗi: {e:#}"),
+                        now,
+                    );
                 }
             }
         }
@@ -545,7 +752,9 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
             if let Ok(list) = hc.ls(false) {
                 for v in list {
                     let row = terminal_row_from(&v);
-                    if row.labels.get("agm.parent_rotation").map(String::as_str) == Some(tag.as_str()) {
+                    if row.labels.get("agm.parent_rotation").map(String::as_str)
+                        == Some(tag.as_str())
+                    {
                         found.push(row);
                     }
                 }
@@ -554,7 +763,10 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
                 found = store
                     .terminals(true)?
                     .into_iter()
-                    .filter(|t| t.labels.get("agm.parent_rotation").map(String::as_str) == Some(tag.as_str()))
+                    .filter(|t| {
+                        t.labels.get("agm.parent_rotation").map(String::as_str)
+                            == Some(tag.as_str())
+                    })
                     .collect();
             }
             if let [only] = found.as_slice() {
@@ -581,13 +793,28 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
         }
         "awaiting_link" => {
             let Some(new_addr) = r.new_terminal.as_deref() else {
-                return needs_attention(store, r, "thiếu new_terminal ở trạng thái awaiting_link", now);
+                return needs_attention(
+                    store,
+                    r,
+                    "thiếu new_terminal ở trạng thái awaiting_link",
+                    now,
+                );
             };
             let Some(mut nt) = store.terminal(new_addr)? else {
-                return needs_attention(store, r, &format!("không thấy terminal kế nhiệm {new_addr}"), now);
+                return needs_attention(
+                    store,
+                    r,
+                    &format!("không thấy terminal kế nhiệm {new_addr}"),
+                    now,
+                );
             };
             if nt.state != "live" {
-                return needs_attention(store, r, &format!("phiên kế nhiệm {new_addr} đã thoát trước khi ghép"), now);
+                return needs_attention(
+                    store,
+                    r,
+                    &format!("phiên kế nhiệm {new_addr} đã thoát trước khi ghép"),
+                    now,
+                );
             }
             if app == "codex" && nt.session.is_none() {
                 let cwd = r.cwd.as_deref().or(nt.cwd.as_deref()).unwrap_or_default();
@@ -613,12 +840,22 @@ fn advance_interactive(store: &Store, cfg: &Config, hc: &dyn Hc, r: &Rotation, a
                     "UPDATE rotations SET state = 'done', linked_ms = ?2, detail = ?3, updated_ms = ?2 WHERE id = ?1",
                     params![r.id, now, format!("{} → {} (đã bàn giao, chờ dọn thủ công)", r.old, nt.address)],
                 )?;
-                store.log_action(POLICY_ACTOR, "rotate", &r.old, &format!("→ {} (handed_off)", nt.address), true, now)?;
+                store.log_action(
+                    POLICY_ACTOR,
+                    "rotate",
+                    &r.old,
+                    &format!("→ {} (handed_off)", nt.address),
+                    true,
+                    now,
+                )?;
             } else if now - r.updated_ms > link_timeout {
                 needs_attention(
                     store,
                     r,
-                    &format!("quá {} phút chưa ghép được phiên cho {new_addr}", cfg.policy.link_timeout_min),
+                    &format!(
+                        "quá {} phút chưa ghép được phiên cho {new_addr}",
+                        cfg.policy.link_timeout_min
+                    ),
                     now,
                 )?;
             }

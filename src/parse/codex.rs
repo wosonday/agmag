@@ -36,9 +36,9 @@ impl LogParser for CodexParser {
                 self.seed_model(model);
                 let mut events = vec![ParseEvent::Model(model.to_owned())];
                 // Codex writes the effort chosen for this turn (`/model` can change it mid-session).
-                let effort = payload["effort"]
-                    .as_str()
-                    .or_else(|| payload["collaboration_mode"]["settings"]["reasoning_effort"].as_str());
+                let effort = payload["effort"].as_str().or_else(|| {
+                    payload["collaboration_mode"]["settings"]["reasoning_effort"].as_str()
+                });
                 if let Some(effort) = effort.filter(|e| !e.is_empty()) {
                     events.push(ParseEvent::Effort(effort.to_owned()));
                 }

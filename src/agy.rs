@@ -11,18 +11,20 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::ask::ask_workdir;
 use crate::correlate::norm_cwd;
-use crate::ingest::{ingest_file, path_key, IngestStats};
+use crate::ingest::{IngestStats, ingest_file, path_key};
 use crate::model::Source;
 use crate::store::Store;
 
 /// Thư mục gốc mặc định của Antigravity CLI (ghi đè bằng `AGM_AGY_DIR`).
 pub fn default_dir() -> PathBuf {
-    std::env::var_os("AGM_AGY_DIR").map(PathBuf::from).unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join(".gemini")
-            .join("antigravity-cli")
-    })
+    std::env::var_os("AGM_AGY_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".gemini")
+                .join("antigravity-cli")
+        })
 }
 
 /// Tìm các tệp `brain/<conv_id>/.system_generated/logs/transcript.jsonl` sửa đổi từ `since_ms`.
@@ -40,7 +42,10 @@ pub fn discover(root: &Path, since_ms: i64) -> Vec<(String, PathBuf)> {
         let Some(conv_id) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let log = dir.join(".system_generated").join("logs").join("transcript.jsonl");
+        let log = dir
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
         let Ok(meta) = log.metadata() else {
             continue;
         };
@@ -142,9 +147,13 @@ fn try_load_cwds(db: &Path) -> Result<HashMap<String, String>> {
     if !db.exists() {
         return Ok(out);
     }
-    let src = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    let src = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
     src.busy_timeout(std::time::Duration::from_secs(2))?;
-    let mut stmt = src.prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries")?;
+    let mut stmt =
+        src.prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries")?;
     let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
     for row in rows {
         let (id, uris) = row?;
@@ -162,7 +171,10 @@ fn first_workspace_path(workspace_uris: &str) -> Option<String> {
 
 pub fn file_uri_to_path(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
-    let rest = rest.strip_prefix("localhost").filter(|s| s.starts_with('/')).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix("localhost")
+        .filter(|s| s.starts_with('/'))
+        .unwrap_or(rest);
     let decoded = percent_decode(rest);
     if decoded.is_empty() {
         return None;
@@ -182,7 +194,11 @@ pub fn file_uri_to_path(uri: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    Some(if cfg!(windows) { trimmed.replace('/', "\\") } else { trimmed.to_string() })
+    Some(if cfg!(windows) {
+        trimmed.replace('/', "\\")
+    } else {
+        trimmed.to_string()
+    })
 }
 
 fn percent_decode(s: &str) -> String {

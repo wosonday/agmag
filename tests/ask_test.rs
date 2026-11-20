@@ -15,8 +15,20 @@ fn ask_records_agy_usage() -> anyhow::Result<()> {
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
     )?;
     // `output_tokens` của agy đã gồm `thinking_tokens` (10682 + 357 == 11039 total_tokens).
-    assert_eq!(row, ("agy://conv-1".into(), "gemini-4-argon-medium".into(), 10000, 682, 357, 54));
-    let turns: i64 = store.conn().query_row("SELECT COUNT(*) FROM turns", [], |r| r.get(0))?;
+    assert_eq!(
+        row,
+        (
+            "agy://conv-1".into(),
+            "gemini-4-argon-medium".into(),
+            10000,
+            682,
+            357,
+            54
+        )
+    );
+    let turns: i64 = store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM turns", [], |r| r.get(0))?;
     assert_eq!(turns, 2);
     Ok(())
 }
@@ -34,7 +46,12 @@ fn ask_failure_still_records_usage_and_model_is_not_invented() -> anyhow::Result
     let store = Store::open_in_memory()?;
     let out = json!({"status": "TIMEOUT", "response": "", "usage": {"input_tokens": 500, "output_tokens": 0}});
     assert!(record(&store, &out, "q", None, 7).is_err());
-    let (n, model): (i64, Option<String>) = store.conn().query_row("SELECT COUNT(*), MAX(model) FROM usage", [], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let (n, model): (i64, Option<String>) =
+        store
+            .conn()
+            .query_row("SELECT COUNT(*), MAX(model) FROM usage", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
     assert_eq!((n, model), (1, None));
     Ok(())
 }

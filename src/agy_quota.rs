@@ -9,17 +9,21 @@
 
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::model::{parse_rfc3339_ms, QuotaSnapshot, QuotaWindow};
+use crate::model::{QuotaSnapshot, QuotaWindow, parse_rfc3339_ms};
 use crate::store::Store;
 
 /// Tiền tố `bucket.id` → provider. Tiền tố dài trước (`gemini-argon-` trước `gemini-`).
-const PROVIDERS: [(&str, &str); 3] = [("gemini-argon-", "agy-argon"), ("gemini-", "agy-gemini"), ("3p-", "agy-3p")];
+const PROVIDERS: [(&str, &str); 3] = [
+    ("gemini-argon-", "agy-argon"),
+    ("gemini-", "agy-gemini"),
+    ("3p-", "agy-3p"),
+];
 
 /// Kết quả đọc một lần `/usage`.
 #[derive(Debug, Default)]
@@ -33,7 +37,10 @@ pub struct UsageParse {
 }
 
 fn provider_for(id: &str) -> Option<&'static str> {
-    PROVIDERS.iter().find(|(prefix, _)| id.starts_with(prefix)).map(|(_, p)| *p)
+    PROVIDERS
+        .iter()
+        .find(|(prefix, _)| id.starts_with(prefix))
+        .map(|(_, p)| *p)
 }
 
 fn window_minutes(window: &str) -> Option<u32> {
@@ -49,23 +56,33 @@ fn window_minutes(window: &str) -> Option<u32> {
 pub fn parse_usage(stdout: &str, now_ms: i64) -> Result<UsageParse> {
     let v: Value = serde_json::from_str(stdout.trim()).context("agy /usage không trả JSON")?;
     if v["status"].as_str() != Some("SUCCESS") {
-        bail!("agy /usage lỗi: {}", v["error"].as_str().unwrap_or("không rõ lỗi"));
+        bail!(
+            "agy /usage lỗi: {}",
+            v["error"].as_str().unwrap_or("không rõ lỗi")
+        );
     }
     let Some(groups) = v["command"]["data"]["groups"].as_array() else {
         bail!("agy /usage thiếu command.data.groups");
     };
     let mut by_provider: BTreeMap<&str, Vec<QuotaWindow>> = BTreeMap::new();
     let (mut unknown, mut disabled) = (0, 0);
-    for bucket in groups.iter().filter_map(|g| g["buckets"].as_array()).flatten() {
+    for bucket in groups
+        .iter()
+        .filter_map(|g| g["buckets"].as_array())
+        .flatten()
+    {
         if bucket["disabled"].as_bool() == Some(true) {
             disabled += 1;
             continue;
         }
         let provider = bucket["id"].as_str().and_then(provider_for);
         let minutes = bucket["window"].as_str().and_then(window_minutes);
-        let remaining = bucket["remaining_fraction"].as_f64().filter(|r| r.is_finite() && (0.0..=1.0).contains(r));
+        let remaining = bucket["remaining_fraction"]
+            .as_f64()
+            .filter(|r| r.is_finite() && (0.0..=1.0).contains(r));
         let reset_ms = bucket["reset_time"].as_str().and_then(parse_rfc3339_ms);
-        let (Some(provider), Some(window_minutes), Some(remaining), Some(reset_ms)) = (provider, minutes, remaining, reset_ms)
+        let (Some(provider), Some(window_minutes), Some(remaining), Some(reset_ms)) =
+            (provider, minutes, remaining, reset_ms)
         else {
             unknown += 1;
             continue;
@@ -78,9 +95,17 @@ pub fn parse_usage(stdout: &str, now_ms: i64) -> Result<UsageParse> {
     }
     let snapshots = by_provider
         .into_iter()
-        .map(|(provider, windows)| QuotaSnapshot { provider: provider.into(), ts_ms: now_ms, windows })
+        .map(|(provider, windows)| QuotaSnapshot {
+            provider: provider.into(),
+            ts_ms: now_ms,
+            windows,
+        })
         .collect();
-    Ok(UsageParse { snapshots, unknown, disabled })
+    Ok(UsageParse {
+        snapshots,
+        unknown,
+        disabled,
+    })
 }
 
 /// Đọc rồi ghi vào bảng `quota` (dùng chung với Codex/Claude: `agm quota`, TUI, ngân sách `provider:`).
@@ -98,7 +123,14 @@ pub fn fetch_usage() -> Result<String> {
     std::fs::create_dir_all(&dir)?;
     let out = Command::new(std::env::var("AGM_AGY_BIN").unwrap_or_else(|_| "agy".into()))
         .current_dir(&dir)
-        .args(["--print", "/usage", "--output-format", "json", "--print-timeout", "20s"])
+        .args([
+            "--print",
+            "/usage",
+            "--output-format",
+            "json",
+            "--print-timeout",
+            "20s",
+        ])
         .output()
         .context("chạy agy --print /usage")?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -106,7 +138,10 @@ pub fn fetch_usage() -> Result<String> {
         bail!(
             "agy /usage ({}) không in gì: {}",
             out.status,
-            String::from_utf8_lossy(&out.stderr).chars().take(300).collect::<String>()
+            String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(300)
+                .collect::<String>()
         );
     }
     Ok(stdout)
@@ -127,8 +162,16 @@ pub struct AgyQuotaPoller {
 impl AgyQuotaPoller {
     /// `interval_min = 0` → tắt.
     pub fn new(interval_min: u64, fetch: Fetch) -> Self {
-        let interval_ms = i64::try_from(interval_min).unwrap_or(i64::MAX / 60_000).saturating_mul(60_000);
-        AgyQuotaPoller { interval_ms, fetch, last_start_ms: None, pending: None, last_error: None }
+        let interval_ms = i64::try_from(interval_min)
+            .unwrap_or(i64::MAX / 60_000)
+            .saturating_mul(60_000);
+        AgyQuotaPoller {
+            interval_ms,
+            fetch,
+            last_start_ms: None,
+            pending: None,
+            last_error: None,
+        }
     }
 
     /// Một nhịp: ghi kết quả của lượt trước (nếu đã xong), rồi bắt đầu lượt mới khi đến hạn.
@@ -150,7 +193,9 @@ impl AgyQuotaPoller {
                 Err(TryRecvError::Disconnected) => self.pending = None,
             }
         }
-        let due = self.last_start_ms.is_none_or(|last| now_ms - last >= self.interval_ms);
+        let due = self
+            .last_start_ms
+            .is_none_or(|last| now_ms - last >= self.interval_ms);
         if due && self.pending.is_none() {
             let (tx, rx) = mpsc::channel();
             let fetch = self.fetch.clone();

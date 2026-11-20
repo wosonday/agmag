@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use rusqlite::{params, OptionalExtension, Row};
+use rusqlite::{OptionalExtension, Row, params};
 use serde::Serialize;
 
 use super::Store;
@@ -188,7 +188,12 @@ impl Store {
         self.conn.execute(
             "UPDATE terminals SET labels = ?2,
                  task = COALESCE(?3, task), role = COALESCE(?4, role) WHERE address = ?1",
-            params![addr, serde_json::to_string(labels)?, labels.get("agm.task"), labels.get("agm.role")],
+            params![
+                addr,
+                serde_json::to_string(labels)?,
+                labels.get("agm.task"),
+                labels.get("agm.role")
+            ],
         )?;
         Ok(())
     }
@@ -211,7 +216,13 @@ impl Store {
         Ok(())
     }
 
-    pub fn set_terminal_turn(&self, addr: &str, turn: i64, state: Option<&str>, now: i64) -> Result<()> {
+    pub fn set_terminal_turn(
+        &self,
+        addr: &str,
+        turn: i64,
+        state: Option<&str>,
+        now: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE terminals SET turn = MAX(turn, ?2), status = COALESCE(?3, status), updated_ms = ?4 WHERE address = ?1",
             params![addr, turn, state, now],
@@ -220,11 +231,19 @@ impl Store {
     }
 
     pub fn set_terminal_app(&self, addr: &str, app: &str) -> Result<()> {
-        self.conn.execute("UPDATE terminals SET app = ?2 WHERE address = ?1", params![addr, app])?;
+        self.conn.execute(
+            "UPDATE terminals SET app = ?2 WHERE address = ?1",
+            params![addr, app],
+        )?;
         Ok(())
     }
 
-    pub fn finish_terminal(&self, addr: &str, exit_code: Option<i64>, finished_ms: i64) -> Result<()> {
+    pub fn finish_terminal(
+        &self,
+        addr: &str,
+        exit_code: Option<i64>,
+        finished_ms: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE terminals SET state = 'finished', exit_code = COALESCE(?2, exit_code), finished_ms = ?3,
                  updated_ms = ?3 WHERE address = ?1",
@@ -234,13 +253,19 @@ impl Store {
     }
 
     pub fn remove_terminal(&self, addr: &str) -> Result<()> {
-        self.conn.execute("UPDATE terminals SET state = 'removed' WHERE address = ?1", [addr])?;
+        self.conn.execute(
+            "UPDATE terminals SET state = 'removed' WHERE address = ?1",
+            [addr],
+        )?;
         Ok(())
     }
 
     /// Kích thước cửa sổ ngữ cảnh là thuộc tính của model: ghi không phụ thuộc mốc thời gian.
     pub fn set_context_window(&self, sid: i64, window: u64) -> Result<()> {
-        self.conn.execute("UPDATE sessions SET ctx_window = ?2 WHERE id = ?1", params![sid, window as i64])?;
+        self.conn.execute(
+            "UPDATE sessions SET ctx_window = ?2 WHERE id = ?1",
+            params![sid, window as i64],
+        )?;
         Ok(())
     }
 
@@ -252,7 +277,12 @@ impl Store {
         Ok(())
     }
 
-    pub fn set_terminal_launch(&self, addr: &str, managed: bool, launch_spec: Option<&str>) -> Result<()> {
+    pub fn set_terminal_launch(
+        &self,
+        addr: &str,
+        managed: bool,
+        launch_spec: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE terminals SET managed = ?2, launch_spec = COALESCE(?3, launch_spec) WHERE address = ?1",
             params![addr, managed as i64, launch_spec],
@@ -261,7 +291,10 @@ impl Store {
     }
 
     pub fn clear_terminal_managed(&self, addr: &str) -> Result<()> {
-        self.conn.execute("UPDATE terminals SET managed = 0 WHERE address = ?1", [addr])?;
+        self.conn.execute(
+            "UPDATE terminals SET managed = 0 WHERE address = ?1",
+            [addr],
+        )?;
         Ok(())
     }
 
@@ -300,14 +333,29 @@ impl Store {
     }
 
     pub fn terminals(&self, live_only: bool) -> Result<Vec<TerminalRow>> {
-        let filter = if live_only { "WHERE state = 'live'" } else { "" };
-        let mut stmt = self.conn.prepare(&format!("SELECT {TERM_COLS} FROM terminals {filter} ORDER BY created_ms"))?;
-        let rows = stmt.query_map([], term_from)?.collect::<rusqlite::Result<_>>()?;
+        let filter = if live_only {
+            "WHERE state = 'live'"
+        } else {
+            ""
+        };
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TERM_COLS} FROM terminals {filter} ORDER BY created_ms"
+        ))?;
+        let rows = stmt
+            .query_map([], term_from)?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
     /// Mở một mục hộp thư; trả None nếu đã có mục đang mở y hệt (cùng terminal, nguồn, nội dung).
-    pub fn open_inbox(&self, terminal: Option<&str>, source: &str, kind: Option<&str>, text: &str, now: i64) -> Result<Option<i64>> {
+    pub fn open_inbox(
+        &self,
+        terminal: Option<&str>,
+        source: &str,
+        kind: Option<&str>,
+        text: &str,
+        now: i64,
+    ) -> Result<Option<i64>> {
         // Một câu lệnh nguyên tử: daemon và CLI cùng ghi không tạo được mục trùng.
         let n = self.conn.execute(
             "INSERT INTO inbox (ts_ms, terminal, source, kind, text)
@@ -320,7 +368,14 @@ impl Store {
 
     /// Như `open_inbox` nhưng khử trùng theo (terminal, nguồn, kind) thay vì nội dung: nếu đã có mục
     /// đang mở cùng khóa thì chỉ cập nhật nội dung mới nhất (vd. % ngữ cảnh 86% → 87%) và trả None.
-    pub fn open_inbox_keyed(&self, terminal: &str, source: &str, kind: &str, text: &str, now: i64) -> Result<Option<i64>> {
+    pub fn open_inbox_keyed(
+        &self,
+        terminal: &str,
+        source: &str,
+        kind: &str,
+        text: &str,
+        now: i64,
+    ) -> Result<Option<i64>> {
         let n = self.conn.execute(
             "INSERT INTO inbox (ts_ms, terminal, source, kind, text)
              SELECT ?1, ?2, ?3, ?4, ?5
@@ -365,11 +420,17 @@ impl Store {
     }
 
     pub fn inbox(&self, open_only: bool) -> Result<Vec<InboxRow>> {
-        let filter = if open_only { "WHERE resolved_ms IS NULL" } else { "" };
+        let filter = if open_only {
+            "WHERE resolved_ms IS NULL"
+        } else {
+            ""
+        };
         let mut stmt = self.conn.prepare(&format!(
             "SELECT id, ts_ms, terminal, source, kind, text, resolved_ms, reply FROM inbox {filter} ORDER BY id"
         ))?;
-        let rows = stmt.query_map([], inbox_from)?.collect::<rusqlite::Result<_>>()?;
+        let rows = stmt
+            .query_map([], inbox_from)?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
@@ -377,7 +438,9 @@ impl Store {
         self.conn.execute(
             "INSERT INTO messages (ts_ms, from_t, to_t, kind, task, text, status, detail)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![m.ts_ms, m.from, m.to, m.kind, m.task, m.text, m.status, m.detail],
+            params![
+                m.ts_ms, m.from, m.to, m.kind, m.task, m.text, m.status, m.detail
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -413,7 +476,15 @@ impl Store {
         Ok(rows)
     }
 
-    pub fn log_action(&self, actor: &str, kind: &str, target: &str, detail: &str, ok: bool, now: i64) -> Result<()> {
+    pub fn log_action(
+        &self,
+        actor: &str,
+        kind: &str,
+        target: &str,
+        detail: &str,
+        ok: bool,
+        now: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO actions (ts_ms, actor, kind, target, detail, ok) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![now, actor, kind, target, detail, ok as i64],
@@ -424,7 +495,9 @@ impl Store {
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .conn
-            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
             .optional()?)
     }
 
@@ -446,16 +519,27 @@ impl Store {
     }
 
     pub fn budgets(&self) -> Result<Vec<BudgetRow>> {
-        let mut stmt = self.conn.prepare("SELECT scope, unit, soft, hard, action FROM budgets ORDER BY scope")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT scope, unit, soft, hard, action FROM budgets ORDER BY scope")?;
         let rows = stmt
             .query_map([], |r| {
-                Ok(BudgetRow { scope: r.get(0)?, unit: r.get(1)?, soft: r.get(2)?, hard: r.get(3)?, action: r.get(4)? })
+                Ok(BudgetRow {
+                    scope: r.get(0)?,
+                    unit: r.get(1)?,
+                    soft: r.get(2)?,
+                    hard: r.get(3)?,
+                    action: r.get(4)?,
+                })
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
     pub fn rm_budget(&self, scope: &str) -> Result<bool> {
-        Ok(self.conn.execute("DELETE FROM budgets WHERE scope = ?1", [scope])? > 0)
+        Ok(self
+            .conn
+            .execute("DELETE FROM budgets WHERE scope = ?1", [scope])?
+            > 0)
     }
 }

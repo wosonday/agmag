@@ -6,15 +6,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use comfy_table::{presets::UTF8_FULL_CONDENSED, Attribute, Cell, CellAlignment, Table};
+use comfy_table::{Attribute, Cell, CellAlignment, Table, presets::UTF8_FULL_CONDENSED};
 use serde::Serialize;
 
 use agmag::config::Config;
-use agmag::ingest::{ingest_source, Roots};
+use agmag::ingest::{Roots, ingest_source};
 use agmag::model::Source;
 use agmag::report::{
-    self, compute_local_bounds, coverage_status, days_from_civil, render_bar, sqlite_offset_at,
-    window_since_ms, GroupBy, UsageSummary, UsageWindow,
+    self, GroupBy, UsageSummary, UsageWindow, compute_local_bounds, coverage_status,
+    days_from_civil, render_bar, sqlite_offset_at, window_since_ms,
 };
 use agmag::store::Store;
 
@@ -22,7 +22,11 @@ mod ops;
 mod tui;
 
 #[derive(Parser)]
-#[command(name = "agm", version, about = "Theo dõi token, hạn mức gói và hội thoại của các agent trong herdr")]
+#[command(
+    name = "agm",
+    version,
+    about = "Theo dõi token, hạn mức gói và hội thoại của các agent trong herdr"
+)]
 struct Cli {
     /// In JSON (mặc định khi đầu ra không phải terminal)
     #[arg(long, global = true)]
@@ -206,7 +210,9 @@ enum BudgetCmd {
         action: String,
     },
     Ls,
-    Rm { scope: String },
+    Rm {
+        scope: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -221,7 +227,10 @@ const SCAN_DAYS: i64 = 7;
 const DAY_MS: i64 = 86_400_000;
 
 pub(crate) fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn agm_home() -> PathBuf {
@@ -243,7 +252,10 @@ fn roots() -> Roots {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if let Cmd::Hook { cmd: HookCmd::Statusline } = cli.cmd {
+    if let Cmd::Hook {
+        cmd: HookCmd::Statusline,
+    } = cli.cmd
+    {
         println!("{}", ops::hook_statusline(&agm_home(), now_ms()));
         return ExitCode::SUCCESS;
     }
@@ -260,7 +272,8 @@ fn run(cli: Cli) -> Result<()> {
     let home = agm_home();
     let cfg_path = home.join("providers.toml");
     // Chỉ nạp cấu hình khi lệnh cần: `policy off`, `kill`, `inbox`, `done` phải chạy được cả khi providers.toml hỏng.
-    let cfg = || Config::load(&cfg_path).with_context(|| format!("đọc cấu hình {}", cfg_path.display()));
+    let cfg =
+        || Config::load(&cfg_path).with_context(|| format!("đọc cấu hình {}", cfg_path.display()));
     let db_path = home.join("agm.db");
     let store = Store::open(&db_path)?;
     let json = cli.json || !std::io::stdout().is_terminal();
@@ -272,12 +285,29 @@ fn run(cli: Cli) -> Result<()> {
             None => now - (*days).clamp(0, 36_500) * DAY_MS,
         }),
         Cmd::Ls { days } => Some(now - (*days).clamp(0, 36_500).max(SCAN_DAYS) * DAY_MS),
-        Cmd::Cost { by, days, window, summary } => {
+        Cmd::Cost {
+            by,
+            days,
+            window,
+            summary,
+        } => {
             let cfg_loaded = cfg()?;
-            let target_since = cost_target_since_ms(store.conn(), &cfg_loaded, *by, *days, *window, *summary, now);
+            let target_since = cost_target_since_ms(
+                store.conn(),
+                &cfg_loaded,
+                *by,
+                *days,
+                *window,
+                *summary,
+                now,
+            );
             let need_backfill = coverage_status(&store, target_since)?.1;
             let default_since = now - SCAN_DAYS * DAY_MS;
-            Some(if need_backfill { target_since.min(default_since) } else { default_since })
+            Some(if need_backfill {
+                target_since.min(default_since)
+            } else {
+                default_since
+            })
         }
         Cmd::Quota { .. } | Cmd::Log { .. } => Some(now - SCAN_DAYS * DAY_MS),
         _ => None,
@@ -289,14 +319,25 @@ fn run(cli: Cli) -> Result<()> {
     };
 
     match cli.cmd {
-        Cmd::Hook { cmd: HookCmd::Statusline } => unreachable!("xử lý trong main"),
-        Cmd::Hook { cmd: HookCmd::Install } => ops::hook_install(&std::env::current_exe()?),
-        Cmd::Daemon { replay: Some(file), .. } => {
+        Cmd::Hook {
+            cmd: HookCmd::Statusline,
+        } => unreachable!("xử lý trong main"),
+        Cmd::Hook {
+            cmd: HookCmd::Install,
+        } => ops::hook_install(&std::env::current_exe()?),
+        Cmd::Daemon {
+            replay: Some(file), ..
+        } => {
             let n = ops::daemon_replay(&store, &file, now)?;
             agmag::correlate::link_all(&store)?;
-            emit(json, &serde_json::json!({ "applied": n }), || println!("Applied {n} events."))
+            emit(json, &serde_json::json!({ "applied": n }), || {
+                println!("Applied {n} events.")
+            })
         }
-        Cmd::Daemon { interval, replay: None } => {
+        Cmd::Daemon {
+            interval,
+            replay: None,
+        } => {
             let cfg = cfg()?;
             // Hạn mức agy: gọi `agy --print /usage` thưa và trên luồng riêng; lỗi chỉ cảnh báo.
             let mut agy_quota = agmag::agy_quota::AgyQuotaPoller::new(
@@ -312,25 +353,74 @@ fn run(cli: Cli) -> Result<()> {
             let rows = store.terminals(!all)?;
             emit(json, &rows, || print_terminals(&rows))
         }
-        Cmd::Send { to, kind, task, text } => ops::send(&store, &to, &kind, task.as_deref(), &text.join(" "), json, now),
+        Cmd::Send {
+            to,
+            kind,
+            task,
+            text,
+        } => ops::send(
+            &store,
+            &to,
+            &kind,
+            task.as_deref(),
+            &text.join(" "),
+            json,
+            now,
+        ),
         Cmd::Inbox { all } => ops::inbox(&store, all, json),
         Cmd::Done { id } => {
             agmag::actions::dismiss(&store, id, now)?;
-            emit(json, &serde_json::json!({ "done": id }), || println!("Dismissed #{id}."))
+            emit(json, &serde_json::json!({ "done": id }), || {
+                println!("Dismissed #{id}.")
+            })
         }
         Cmd::Reply { id, text } => ops::reply(&store, id, &text.join(" "), now),
-        Cmd::Spawn { template, task, role, name, cwd, text } => {
+        Cmd::Spawn {
+            template,
+            task,
+            role,
+            name,
+            cwd,
+            text,
+        } => {
             let text = (!text.is_empty()).then(|| text.join(" "));
-            ops::spawn(&store, &cfg()?, &agmag::actions::SpawnReq { template, task, role, name, cwd, text }, now)
+            ops::spawn(
+                &store,
+                &cfg()?,
+                &agmag::actions::SpawnReq {
+                    template,
+                    task,
+                    role,
+                    name,
+                    cwd,
+                    text,
+                },
+                now,
+            )
         }
         Cmd::Kill { target, yes } => ops::stop(&store, &target, "kill", yes, now),
         Cmd::Interrupt { target, yes } => ops::stop(&store, &target, "interrupt", yes, now),
         Cmd::Rotate { target, yes } => ops::rotate(&store, &target, yes, now),
-        Cmd::Manage { target, off, cmd, argv } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
+        Cmd::Manage {
+            target,
+            off,
+            cmd,
+            argv,
+        } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
         Cmd::Cleanup { targets, all, yes } => ops::cleanup(&store, &targets, all, yes, json, now),
-        Cmd::Budget { cmd: BudgetCmd::Set { scope, soft, hard, action } } => ops::budget_set(&store, &scope, soft, hard, &action),
+        Cmd::Budget {
+            cmd:
+                BudgetCmd::Set {
+                    scope,
+                    soft,
+                    hard,
+                    action,
+                },
+        } => ops::budget_set(&store, &scope, soft, hard, &action),
         Cmd::Budget { cmd: BudgetCmd::Ls } => ops::budget_ls(&store, json, now),
-        Cmd::Budget { cmd: BudgetCmd::Rm { scope } } => {
+        Cmd::Budget {
+            cmd: BudgetCmd::Rm { scope },
+        } => {
             if !store.rm_budget(&scope)? {
                 anyhow::bail!("không có ngân sách {scope}");
             }
@@ -339,18 +429,38 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Policy { state } => match state.as_str() {
             "status" => {
                 let on = agmag::policy::enabled(&store)?;
-                emit(json, &serde_json::json!({ "enabled": on }), || println!("policy: {}", if on { "ON" } else { "OFF" }))
+                emit(json, &serde_json::json!({ "enabled": on }), || {
+                    println!("policy: {}", if on { "ON" } else { "OFF" })
+                })
             }
             s => {
                 store.set_setting("policy", s)?;
-                store.log_action(&ops::hc_terminal().unwrap_or_else(|| "user".into()), "policy", s, "", true, now)?;
+                store.log_action(
+                    &ops::hc_terminal().unwrap_or_else(|| "user".into()),
+                    "policy",
+                    s,
+                    "",
+                    true,
+                    now,
+                )?;
                 emit(json, &serde_json::json!({ "enabled": s == "on" }), || {
-                    println!("policy: {}", if s == "on" { "ON" } else { "OFF — no automatic actions" })
+                    println!(
+                        "policy: {}",
+                        if s == "on" {
+                            "ON"
+                        } else {
+                            "OFF — no automatic actions"
+                        }
+                    )
                 })
             }
         },
         Cmd::Link { terminal, session } => ops::link(&store, &terminal, &session),
-        Cmd::Ask { model, timeout, question } => {
+        Cmd::Ask {
+            model,
+            timeout,
+            question,
+        } => {
             let q = question.join(" ");
             let out = agmag::ask::run_agy(&q, model.as_deref(), timeout)?;
             let text = agmag::ask::record(&store, &out, &q, model.as_deref(), now)?;
@@ -374,13 +484,19 @@ fn run(cli: Cli) -> Result<()> {
             let rows = report::sessions(&store, &cfg()?, now - days.clamp(0, 36_500) * DAY_MS)?;
             emit(json, &rows, || print_sessions(&rows))
         }
-        Cmd::Cost { by, days, window, summary } => {
+        Cmd::Cost {
+            by,
+            days,
+            window,
+            summary,
+        } => {
             let cfg_loaded = cfg()?;
             if summary {
                 let sum = report::usage_summary(&store, &cfg_loaded, now)?;
                 emit(json, &sum, || print_summary(&sum))
             } else {
-                let since_ms = cost_target_since_ms(store.conn(), &cfg_loaded, by, days, window, false, now);
+                let since_ms =
+                    cost_target_since_ms(store.conn(), &cfg_loaded, by, days, window, false, now);
                 let rows = report::cost(&store, &cfg_loaded, by, since_ms)?;
                 emit(json, &rows, || print_cost(&rows, by))
             }
@@ -388,8 +504,13 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Quota { refresh } => {
             if refresh {
                 // Lỗi agy (chưa cài, mất mạng, chưa đăng nhập) không chặn việc in hạn mức Codex/Claude.
-                match agmag::agy_quota::fetch_usage().and_then(|out| agmag::agy_quota::record_usage(&store, &out, now)) {
-                    Ok(p) if p.unknown > 0 => eprintln!("agm: skipped {} unrecognized agy quota bucket(s)", p.unknown),
+                match agmag::agy_quota::fetch_usage()
+                    .and_then(|out| agmag::agy_quota::record_usage(&store, &out, now))
+                {
+                    Ok(p) if p.unknown > 0 => eprintln!(
+                        "agm: skipped {} unrecognized agy quota bucket(s)",
+                        p.unknown
+                    ),
                     Ok(_) => {}
                     Err(e) => eprintln!("agm: could not read agy quota: {e:#}"),
                 }
@@ -397,12 +518,19 @@ fn run(cli: Cli) -> Result<()> {
             let rows = report::quota(&store, now / 1000)?;
             emit(json, &rows, || print_quota(&rows, now / 1000))
         }
-        Cmd::Log { session, limit, full } => {
+        Cmd::Log {
+            session,
+            limit,
+            full,
+        } => {
             let turns = report::turns(&store, &session, limit)?;
             if full {
                 let (_, path) = report::resolve_session(&store, &session)?;
                 if path.starts_with("opencode://") || path.starts_with("agy://") {
-                    anyhow::bail!("--full chỉ dùng cho phiên Codex/Claude (log jsonl); phiên này lưu trong CSDL của {}", path.split(':').next().unwrap_or(""));
+                    anyhow::bail!(
+                        "--full chỉ dùng cho phiên Codex/Claude (log jsonl); phiên này lưu trong CSDL của {}",
+                        path.split(':').next().unwrap_or("")
+                    );
                 }
                 let raw = turns
                     .iter()
@@ -413,7 +541,11 @@ fn run(cli: Cli) -> Result<()> {
                 emit(json, &turns, || {
                     let mut t = table(&["time (UTC)", "role", "summary"]);
                     for turn in &turns {
-                        t.add_row(vec![hhmm(turn.ts_ms), format!("{:?}", turn.role).to_lowercase(), turn.summary.clone()]);
+                        t.add_row(vec![
+                            hhmm(turn.ts_ms),
+                            format!("{:?}", turn.role).to_lowercase(),
+                            turn.summary.clone(),
+                        ]);
                     }
                     println!("{t}");
                 })
@@ -478,16 +610,27 @@ fn scan(store: &Store, since_ms: i64) -> Result<agmag::ingest::IngestStats> {
 }
 
 fn print_terminals(rows: &[agmag::store::TerminalRow]) {
-    let mut t = table(&["terminal", "name", "agent", "status", "task", "role", "session", "where"]);
+    let mut t = table(&[
+        "terminal", "name", "agent", "status", "task", "role", "session", "where",
+    ]);
     for r in rows {
         t.add_row(vec![
             r.address.clone(),
             r.name.clone().unwrap_or_default(),
             r.app.clone().unwrap_or_else(|| "?".into()),
-            format!("{}{}", r.status.clone().unwrap_or_else(|| r.state.clone()), r.kind.as_deref().map(|k| format!(" ({k})")).unwrap_or_default()),
+            format!(
+                "{}{}",
+                r.status.clone().unwrap_or_else(|| r.state.clone()),
+                r.kind
+                    .as_deref()
+                    .map(|k| format!(" ({k})"))
+                    .unwrap_or_default()
+            ),
             r.task.clone().unwrap_or_default(),
             r.role.clone().unwrap_or_default(),
-            r.session.map(|s| format!("#{s} {}", r.link_source.as_deref().unwrap_or(""))).unwrap_or_default(),
+            r.session
+                .map(|s| format!("#{s} {}", r.link_source.as_deref().unwrap_or("")))
+                .unwrap_or_default(),
             r.cwd.clone().unwrap_or_default(),
         ]);
     }
@@ -518,7 +661,8 @@ fn raw_line(path: &str, offset: u64) -> Result<serde_json::Value> {
 
 fn table(header: &[&str]) -> Table {
     let mut t = Table::new();
-    t.load_style(UTF8_FULL_CONDENSED).set_header(header.to_vec());
+    t.load_style(UTF8_FULL_CONDENSED)
+        .set_header(header.to_vec());
     t
 }
 
@@ -536,14 +680,30 @@ fn hhmm(ts_ms: i64) -> String {
 }
 
 fn print_sessions(rows: &[report::SessionRow]) {
-    let mut t = table(&["source", "session", "model", "tokens", "context", "last (UTC)", "where", "warning"]);
+    let mut t = table(&[
+        "source",
+        "session",
+        "model",
+        "tokens",
+        "context",
+        "last (UTC)",
+        "where",
+        "warning",
+    ]);
     for r in rows {
         t.add_row(vec![
             r.source.as_str().to_string(),
-            r.session_id.as_deref().unwrap_or("?").chars().take(8).collect(),
+            r.session_id
+                .as_deref()
+                .unwrap_or("?")
+                .chars()
+                .take(8)
+                .collect(),
             r.model.clone().unwrap_or_else(|| "?".into()),
             human_tokens(r.usage.total()),
-            r.context_pct.map(|p| format!("{p}%")).unwrap_or_else(|| "?".into()),
+            r.context_pct
+                .map(|p| format!("{p}%"))
+                .unwrap_or_else(|| "?".into()),
             r.last_ms.map(hhmm).unwrap_or_else(|| "?".into()),
             r.cwd.clone().unwrap_or_else(|| "?".into()),
             r.warning.clone().unwrap_or_default(),
@@ -586,7 +746,10 @@ fn print_cost(rows: &[report::CostRow], by: GroupBy) {
         row
     };
     for r in rows {
-        t.add_row(cells(r, with_bar.then(|| render_bar(r.usage.total(), max_tok, 16, false))));
+        t.add_row(cells(
+            r,
+            with_bar.then(|| render_bar(r.usage.total(), max_tok, 16, false)),
+        ));
     }
     // SUM line: every numeric column added up, in bold.
     let sum = report::cost_totals(rows);
@@ -630,7 +793,16 @@ fn cost_target_since_ms(
 
 fn print_summary(sum: &UsageSummary) {
     println!("USAGE ({})", sum.offset_label);
-    let mut t = table(&["window", "input", "cache read", "cache write", "output", "total", "USD", "billed (API)"]);
+    let mut t = table(&[
+        "window",
+        "input",
+        "cache read",
+        "cache write",
+        "output",
+        "total",
+        "USD",
+        "billed (API)",
+    ]);
     for (label, b) in [
         ("Last 24h", &sum.last_24h),
         ("Today", &sum.today),
@@ -645,7 +817,9 @@ fn print_summary(sum: &UsageSummary) {
             human_tokens(b.usage.output),
             human_tokens(b.usage.total()),
             report::value_label(priced.then_some(b.value_usd), b.unpriced_tokens),
-            b.api_usd.map(|c| format!("${c:.2}")).unwrap_or_else(|| "—".into()),
+            b.api_usd
+                .map(|c| format!("${c:.2}"))
+                .unwrap_or_else(|| "—".into()),
         ]);
     }
     for idx in 1..8 {
@@ -655,19 +829,35 @@ fn print_summary(sum: &UsageSummary) {
     }
     println!("{t}");
 
-    println!("\nLAST {} MONTHS (total tokens, USD at list prices)", sum.recent_months.len());
-    let max_m = sum.recent_months.iter().map(|r| r.usage.total()).max().unwrap_or(0);
+    println!(
+        "\nLAST {} MONTHS (total tokens, USD at list prices)",
+        sum.recent_months.len()
+    );
+    let max_m = sum
+        .recent_months
+        .iter()
+        .map(|r| r.usage.total())
+        .max()
+        .unwrap_or(0);
     for r in &sum.recent_months {
         let bar = render_bar(r.usage.total(), max_m, 20, false);
-        let usd = if r.usage.total() == 0 { String::new() } else { format!("  {}", report::value_label(r.value_usd, r.unpriced_tokens)) };
-        println!("  {}  {}  {:>6}{usd}", r.key, bar, human_tokens(r.usage.total()));
+        let usd = if r.usage.total() == 0 {
+            String::new()
+        } else {
+            format!("  {}", report::value_label(r.value_usd, r.unpriced_tokens))
+        };
+        println!(
+            "  {}  {}  {:>6}{usd}",
+            r.key,
+            bar,
+            human_tokens(r.usage.total())
+        );
     }
     println!("\n{USD_NOTE}");
     if sum.incomplete_coverage {
         println!(
             "\n! Older log data may be incomplete since {} (run `agm scan --since {}`).",
-            sum.four_months_start_day,
-            sum.four_months_start_day,
+            sum.four_months_start_day, sum.four_months_start_day,
         );
     }
 }
@@ -686,7 +876,11 @@ fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
     // Hiển thị phần CÒN LẠI (giảm dần từ 100%); JSON vẫn có cả `used_percent` lẫn `left_percent`.
     let mut t = table(&["plan", "window", "left", "", "reset"]);
     for r in rows {
-        let left = if r.left_percent.is_finite() { r.left_percent } else { 0.0 };
+        let left = if r.left_percent.is_finite() {
+            r.left_percent
+        } else {
+            0.0
+        };
         let filled = ((left / 10.0).round() as usize).min(10);
         let reset = if r.reset_passed {
             "reset passed".to_string()
@@ -698,7 +892,11 @@ fn print_quota(rows: &[report::QuotaRow], now_s: i64) {
             r.provider.clone(),
             window_label(r.window_minutes),
             format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled)),
-            if r.left_percent.is_finite() { format!("{:.0}%", r.left_percent) } else { "?".into() },
+            if r.left_percent.is_finite() {
+                format!("{:.0}%", r.left_percent)
+            } else {
+                "?".into()
+            },
             reset,
         ]);
     }

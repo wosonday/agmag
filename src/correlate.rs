@@ -18,7 +18,11 @@ pub fn norm_cwd(p: &str) -> String {
     let s = p.replace('/', "\\");
     let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
     let s = s.trim_end_matches('\\');
-    if cfg!(windows) { s.to_lowercase() } else { s.to_string() }
+    if cfg!(windows) {
+        s.to_lowercase()
+    } else {
+        s.to_string()
+    }
 }
 
 fn source_for_app(app: &str) -> Option<&'static str> {
@@ -40,8 +44,12 @@ pub fn link_all(store: &Store) -> Result<usize> {
         if t.labels.contains_key("agm.parent_rotation") {
             continue;
         }
-        let (Some(app), Some(cwd)) = (t.app.as_deref(), t.cwd.as_deref()) else { continue };
-        let Some(source) = source_for_app(app) else { continue };
+        let (Some(app), Some(cwd)) = (t.app.as_deref(), t.cwd.as_deref()) else {
+            continue;
+        };
+        let Some(source) = source_for_app(app) else {
+            continue;
+        };
         // One OpenCode TUI hosts many sessions over its life: opened now, first prompt much later, `/new` anytime.
         let multi = source == "opencode";
         // Already linked: only an automatic OpenCode link may move on, to a session newer than the current one.
@@ -50,13 +58,21 @@ pub fn link_all(store: &Store) -> Result<usize> {
             Some(sid) if multi && t.link_source.as_deref() == Some("auto") => Some(
                 store
                     .conn()
-                    .query_row("SELECT COALESCE(started_ms, 0) FROM sessions WHERE id = ?1", [sid], |r| r.get::<_, i64>(0))
+                    .query_row(
+                        "SELECT COALESCE(started_ms, 0) FROM sessions WHERE id = ?1",
+                        [sid],
+                        |r| r.get::<_, i64>(0),
+                    )
                     .unwrap_or(0),
             ),
             Some(_) => continue,
         };
         let want = norm_cwd(cwd);
-        let until = if multi { i64::MAX } else { t.created_ms + AFTER_MS };
+        let until = if multi {
+            i64::MAX
+        } else {
+            t.created_ms + AFTER_MS
+        };
         let mut stmt = store.conn().prepare(
             "SELECT s.id, s.cwd FROM sessions s
              WHERE s.source = ?1 AND s.started_ms BETWEEN ?2 AND ?3 AND s.started_ms > ?4
@@ -64,9 +80,15 @@ pub fn link_all(store: &Store) -> Result<usize> {
              ORDER BY s.started_ms DESC, s.id DESC",
         )?;
         let mut ids: Vec<i64> = stmt
-            .query_map(params![source, t.created_ms - BEFORE_MS, until, newer_than.unwrap_or(i64::MIN)], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))
-            })?
+            .query_map(
+                params![
+                    source,
+                    t.created_ms - BEFORE_MS,
+                    until,
+                    newer_than.unwrap_or(i64::MIN)
+                ],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
+            )?
             .filter_map(|r| r.ok())
             .filter(|(_, c)| c.as_deref().map(norm_cwd).as_deref() == Some(want.as_str()))
             .map(|(id, _)| id)
@@ -108,7 +130,11 @@ pub fn link_codex_rotation(
     let tag = format!("[agm-rot:{rot_id}]");
     let tx = store.conn().unchecked_transaction()?;
     let already: Option<i64> = tx
-        .query_row("SELECT session FROM terminals WHERE address = ?1", [terminal_addr], |r| r.get(0))
+        .query_row(
+            "SELECT session FROM terminals WHERE address = ?1",
+            [terminal_addr],
+            |r| r.get(0),
+        )
         .ok()
         .flatten();
     if let Some(sid) = already {
@@ -126,7 +152,9 @@ pub fn link_codex_rotation(
            AND NOT EXISTS (SELECT 1 FROM terminals x WHERE x.session = s.id)",
     )?;
     let matches: Vec<i64> = stmt
-        .query_map(params![requested_ms, tag], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)))?
+        .query_map(params![requested_ms, tag], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?))
+        })?
         .filter_map(|r| r.ok())
         .filter(|(_, c)| c.as_deref().map(norm_cwd).as_deref() == Some(want.as_str()))
         .map(|(id, _)| id)

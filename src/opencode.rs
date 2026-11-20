@@ -4,23 +4,27 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, params};
 use serde_json::Value;
 
 use crate::ingest::IngestStats;
-use crate::model::{ContextSnapshot, Role, SessionMeta, Source, TurnSummary, Usage, UsageRecord, summarize};
+use crate::model::{
+    ContextSnapshot, Role, SessionMeta, Source, TurnSummary, Usage, UsageRecord, summarize,
+};
 use crate::store::{Cursor, Store};
 
 /// Vị trí mặc định của CSDL OpenCode v2 (ghi đè bằng `AGM_OPENCODE_DB`).
 pub fn default_db() -> PathBuf {
-    std::env::var_os("AGM_OPENCODE_DB").map(PathBuf::from).unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join(".local")
-            .join("share")
-            .join("opencode")
-            .join("opencode.db")
-    })
+    std::env::var_os("AGM_OPENCODE_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("opencode.db")
+        })
 }
 
 /// Cờ trong `settings`: model OpenCode đã được lưu theo dạng `providerID/id`.
@@ -31,10 +35,12 @@ const MODEL_KEY_VERSION: &str = "provider/id";
 /// để cùng một model qua hai nguồn tính phí khác nhau không bị gộp. Thiếu `providerID` → giữ id trần.
 fn model_key(model: &Value) -> Option<String> {
     let id = model["id"].as_str().filter(|s| !s.is_empty())?;
-    Some(match model["providerID"].as_str().filter(|s| !s.is_empty()) {
-        Some(provider) => format!("{provider}/{id}"),
-        None => id.to_string(),
-    })
+    Some(
+        match model["providerID"].as_str().filter(|s| !s.is_empty()) {
+            Some(provider) => format!("{provider}/{id}"),
+            None => id.to_string(),
+        },
+    )
 }
 
 struct Msg {
@@ -53,7 +59,10 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
     if !db.exists() {
         return Ok(stats);
     }
-    let src = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    let src = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
     src.busy_timeout(std::time::Duration::from_secs(5))?;
     let key = format!("opencode-db:{}", crate::ingest::path_key(db));
     // Con trỏ kép (time_updated, rowid): message chèn sau trong cùng mili-giây có rowid lớn hơn nên không bị bỏ sót.
@@ -89,7 +98,8 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
     for m in &msgs {
         (max_updated, max_row) = (m.updated, m.rowid); // đã sắp theo (time_updated, rowid)
         stats.lines += 1;
-        let sid = store.session_id_for_path(Source::OpenCode, &format!("opencode://{}", m.session))?;
+        let sid =
+            store.session_id_for_path(Source::OpenCode, &format!("opencode://{}", m.session))?;
         if let Some(meta) = session_meta(&src, &m.session)? {
             store.set_meta(sid, &meta)?;
         }
@@ -109,11 +119,22 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
                     store.set_model(sid, model)?;
                 }
                 // OpenCode's `variant` is the reasoning level picked in the TUI; "default" carries no information.
-                if let Some(variant) = data["model"]["variant"].as_str().filter(|v| !v.is_empty() && *v != "default") {
+                if let Some(variant) = data["model"]["variant"]
+                    .as_str()
+                    .filter(|v| !v.is_empty() && *v != "default")
+                {
                     store.set_effort(sid, variant)?;
                 }
                 let tok = &data["tokens"];
-                let total: u64 = [&tok["input"], &tok["output"], &tok["cache"]["read"], &tok["cache"]["write"]].iter().filter_map(|v| v.as_u64()).sum();
+                let total: u64 = [
+                    &tok["input"],
+                    &tok["output"],
+                    &tok["cache"]["read"],
+                    &tok["cache"]["write"],
+                ]
+                .iter()
+                .filter_map(|v| v.as_u64())
+                .sum();
                 // Message đang stream chưa có số (toàn 0) → chưa ghi; lần cập nhật sau sẽ có.
                 if tok.is_object() && total > 0 {
                     let n = |v: &Value| v.as_u64().unwrap_or(0);
@@ -135,23 +156,56 @@ pub fn ingest_opencode(store: &Store, db: &Path) -> Result<IngestStats> {
                         },
                     )?;
                     if used > 0 {
-                        store.set_context(sid, &ContextSnapshot { ts_ms: ts, used_tokens: used, window_tokens: None })?;
+                        store.set_context(
+                            sid,
+                            &ContextSnapshot {
+                                ts_ms: ts,
+                                used_tokens: used,
+                                window_tokens: None,
+                            },
+                        )?;
                     }
                     stats.events += 1;
                 }
                 if let Some(text) = assistant_summary(&data) {
-                    store.insert_turn(sid, &TurnSummary { ts_ms: ts, role: Role::Assistant, summary: text, byte_offset: m.seq as u64 })?;
+                    store.insert_turn(
+                        sid,
+                        &TurnSummary {
+                            ts_ms: ts,
+                            role: Role::Assistant,
+                            summary: text,
+                            byte_offset: m.seq as u64,
+                        },
+                    )?;
                 }
             }
             "user" => {
-                if let Some(text) = data["text"].as_str().map(summarize).filter(|t| !t.is_empty()) {
-                    store.insert_turn(sid, &TurnSummary { ts_ms: ts, role: Role::User, summary: text, byte_offset: m.seq as u64 })?;
+                if let Some(text) = data["text"]
+                    .as_str()
+                    .map(summarize)
+                    .filter(|t| !t.is_empty())
+                {
+                    store.insert_turn(
+                        sid,
+                        &TurnSummary {
+                            ts_ms: ts,
+                            role: Role::User,
+                            summary: text,
+                            byte_offset: m.seq as u64,
+                        },
+                    )?;
                 }
             }
             _ => {}
         }
     }
-    store.save_cursor(&Cursor { path: key, offset: max_updated.max(0) as u64, size: max_row.max(0) as u64, mtime_ms: 0, head_hash: 0 })?;
+    store.save_cursor(&Cursor {
+        path: key,
+        offset: max_updated.max(0) as u64,
+        size: max_row.max(0) as u64,
+        mtime_ms: 0,
+        head_hash: 0,
+    })?;
     if rescan {
         store.set_setting(MODEL_KEY_SETTING, MODEL_KEY_VERSION)?;
     }
@@ -164,7 +218,13 @@ fn session_meta(src: &Connection, id: &str) -> Result<Option<SessionMeta>> {
         .query_row(
             "SELECT directory, version, time_created FROM session_v2 WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
         )
         .ok();
     Ok(row.map(|(dir, version, created)| SessionMeta {

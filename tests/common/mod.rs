@@ -2,8 +2,8 @@
 use std::cell::RefCell;
 
 use agmag::hc::{Hc, RunSpec};
-use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, bail};
+use serde_json::{Value, json};
 
 /// hc giả: ghi lại mọi lệnh, `send` thất bại nếu `fail_send`.
 #[derive(Default)]
@@ -28,20 +28,29 @@ impl Hc for FakeHc {
             return Ok(value.clone());
         }
         match self.apps.iter().find(|(a, _)| a == t) {
-            Some((_, app)) => Ok(json!({"address": t, "reported": true, "status": {"app": app, "state": "idle"}})),
+            Some((_, app)) => {
+                Ok(json!({"address": t, "reported": true, "status": {"app": app, "state": "idle"}}))
+            }
             None => Ok(json!({"address": t})),
         }
     }
     fn send(&self, t: &str, text: &str, if_idle: bool, force: bool) -> Result<Value> {
-        self.calls.borrow_mut().push(format!("send {t} if_idle={if_idle} force={force} {text}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("send {t} if_idle={if_idle} force={force} {text}"));
         if self.fail_send {
             bail!("refused: working");
         }
         Ok(json!({"turn": 4}))
     }
     fn run(&self, spec: &RunSpec) -> Result<Value> {
-        self.calls.borrow_mut().push(format!("run {:?} {:?} {:?} {:?}", spec.argv, spec.name, spec.cwd, spec.labels));
-        Ok(json!({"address": "t99", "name": spec.name, "argv": spec.argv, "cwd": spec.cwd, "labels": spec.labels, "state": "live"}))
+        self.calls.borrow_mut().push(format!(
+            "run {:?} {:?} {:?} {:?}",
+            spec.argv, spec.name, spec.cwd, spec.labels
+        ));
+        Ok(
+            json!({"address": "t99", "name": spec.name, "argv": spec.argv, "cwd": spec.cwd, "labels": spec.labels, "state": "live"}),
+        )
     }
     fn kill(&self, t: &str) -> Result<()> {
         self.calls.borrow_mut().push(format!("kill {t}"));

@@ -100,7 +100,8 @@ pub fn record_usage(store: &Store, stdout: &str, now_ms: i64) -> Result<UsagePar
 }
 
 /// Hạn chót chung cho toàn bộ một lần đọc hạn mức: khởi động, đọc phản hồi, thoát.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
+/// Công khai để test treo dùng chung con số này thay vì hard-code 8 giây.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
 
 pub fn fetch_usage() -> Result<String> {
     let bin = std::env::var("AGM_CODEX_BIN").unwrap_or_else(|_| "codex".into());

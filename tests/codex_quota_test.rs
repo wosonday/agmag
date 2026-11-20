@@ -1,9 +1,9 @@
 //! Parse phản hồi `account/rateLimits/read` của `codex app-server` (0 token, không mở lượt hội thoại).
 
-use agmag::codex_quota::{fetch_usage, parse_usage, record_usage};
+use agmag::codex_quota::{FETCH_TIMEOUT, fetch_usage, parse_usage, record_usage};
 use agmag::store::Store;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -120,9 +120,15 @@ fn fetch_usage_hanging_binary_times_out_and_kills_tree() -> anyhow::Result<()> {
         None => unsafe { std::env::remove_var("AGM_CODEX_BIN") },
     }
 
+    // So sánh Duration, không as_secs(): as_secs() làm tròn xuống nên 8.99s vẫn là 8.
+    // Biên trên 4s cho phép chi phí `taskkill`/`wait()` sau deadline trên máy tải cao.
     assert!(
-        elapsed.as_secs() <= 8,
-        "phải quá hạn trong ≤ 8 s, thực tế {elapsed:?}: {err:#}"
+        elapsed >= FETCH_TIMEOUT - Duration::from_secs(1),
+        "lỗi phải đến từ hạn chót {FETCH_TIMEOUT:?}, thực tế {elapsed:?}: {err:#}"
+    );
+    assert!(
+        elapsed <= FETCH_TIMEOUT + Duration::from_secs(4),
+        "phải trả lỗi trong {FETCH_TIMEOUT:?} + 4s, thực tế {elapsed:?}: {err:#}"
     );
     let msg = format!("{err:#}");
     assert!(

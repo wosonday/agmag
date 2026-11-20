@@ -8,7 +8,7 @@
 //! Lỗi/không đăng nhập/timeout → không ghi gì, cảnh báo một lần, không bao giờ ghi 0% hay 100%.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
@@ -99,8 +99,12 @@ pub fn record_usage(store: &Store, stdout: &str, now_ms: i64) -> Result<UsagePar
     Ok(parsed)
 }
 
+/// Hạn chót chung cho toàn bộ một lần đọc hạn mức: khởi động, đọc phản hồi, thoát.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
+
 pub fn fetch_usage() -> Result<String> {
     let bin = std::env::var("AGM_CODEX_BIN").unwrap_or_else(|_| "codex".into());
+    let deadline = Instant::now() + FETCH_TIMEOUT;
     let mut child = Command::new(&bin)
         .args(["app-server", "--stdio"])
         .stdin(Stdio::piped())
@@ -109,6 +113,18 @@ pub fn fetch_usage() -> Result<String> {
         .spawn()
         .context("chạy codex app-server")?;
 
+    let res = fetch_usage_inner(&mut child, &bin, deadline);
+    if res.is_err() {
+        // Quá hạn/lỗi: diệt cả cây tiến trình; không join luồng đọc (con có thể còn giữ stdout).
+        kill_tree(&mut child);
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    res
+}
+
+fn fetch_usage_inner(child: &mut Child, bin: &str, deadline: Instant) -> Result<String> {
     let mut stdin = child.stdin.take().context("stdin codex app-server")?;
     let stdout = child.stdout.take().context("stdout codex app-server")?;
     let (tx, rx) = mpsc::channel::<Result<String>>();
@@ -142,19 +158,15 @@ pub fn fetch_usage() -> Result<String> {
         &mut stdin,
         &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"agm","version":"0.1"}}}),
     )?;
-    // chờ phản hồi id=1
-    wait_for_id(&rx, 1, Duration::from_secs(10))?;
+    wait_for_id(&rx, 1, deadline, bin)?;
     // account/rateLimits/read
     write(
         &mut stdin,
         &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":{}}),
     )?;
-    let resp_line = wait_for_id(&rx, 2, Duration::from_secs(10))?;
+    let resp_line = wait_for_id(&rx, 2, deadline, bin)?;
     let v: Value =
         serde_json::from_str(resp_line.trim()).context("phản hồi codex không phải JSON")?;
-    // kill process
-    let _ = child.kill();
-    let _ = child.wait();
 
     if let Some(err) = v.get("error") {
         bail!("codex app-server lỗi: {}", err);
@@ -163,14 +175,18 @@ pub fn fetch_usage() -> Result<String> {
     Ok(serde_json::to_string(result)?)
 }
 
-fn wait_for_id(rx: &Receiver<Result<String>>, id: i64, timeout: Duration) -> Result<String> {
-    let deadline = Instant::now() + timeout;
+fn wait_for_id(
+    rx: &Receiver<Result<String>>,
+    id: i64,
+    deadline: Instant,
+    bin: &str,
+) -> Result<String> {
     loop {
         let now = Instant::now();
         if now >= deadline {
-            bail!("codex app-server quá thời hạn chờ phản hồi id={id}");
+            bail!("codex app-server `{bin}` quá thời hạn chờ phản hồi id={id}");
         }
-        let remaining = deadline - now;
+        let remaining = deadline.saturating_duration_since(now);
         match rx.recv_timeout(remaining.min(Duration::from_millis(200))) {
             Ok(Ok(line)) => {
                 if let Ok(v) = serde_json::from_str::<Value>(&line)
@@ -186,6 +202,21 @@ fn wait_for_id(rx: &Receiver<Result<String>>, id: i64, timeout: Duration) -> Res
             }
         }
     }
+}
+
+/// Diệt cả cây tiến trình (shim `.cmd`/wrapper có thể giữ con giữ stdout).
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", pid.as_str()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 pub type Fetch = Arc<dyn Fn() -> Result<String> + Send + Sync>;

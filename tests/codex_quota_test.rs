@@ -1,7 +1,11 @@
 //! Parse phản hồi `account/rateLimits/read` của `codex app-server` (0 token, không mở lượt hội thoại).
 
-use agmag::codex_quota::{parse_usage, record_usage};
+use agmag::codex_quota::{fetch_usage, parse_usage, record_usage};
 use agmag::store::Store;
+use std::sync::Mutex;
+use std::time::Instant;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Phản hồi `result` đúng dạng schema `GetAccountRateLimitsResponse` của codex-cli 0.170.0
 /// (`rateLimits` = single-bucket view; `primary`/`secondary` = `RateLimitWindow`).
@@ -77,5 +81,53 @@ fn bad_input_records_nothing() -> anyhow::Result<()> {
         .conn()
         .query_row("SELECT COUNT(*) FROM quota", [], |r| r.get(0))?;
     assert_eq!(n, 0, "lỗi không được phép ghi 0% hay 100% vào bảng quota");
+    Ok(())
+}
+
+#[test]
+fn fetch_usage_hanging_binary_times_out_and_kills_tree() -> anyhow::Result<()> {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir()?;
+    #[cfg(windows)]
+    let (bin, content) = {
+        let p = dir.path().join("fake-codex.cmd");
+        // Treo giữ stdout mở, bỏ qua mọi đối số.
+        (
+            p,
+            "@echo off\r\npowershell -NoProfile -Command \"Start-Sleep -Seconds 999\"\r\n",
+        )
+    };
+    #[cfg(not(windows))]
+    let (bin, content) = {
+        let p = dir.path().join("fake-codex");
+        (p, "#!/bin/sh\nsleep 999\n")
+    };
+    std::fs::write(&bin, content)?;
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    let old = std::env::var_os("AGM_CODEX_BIN");
+    // SAFETY: serialized by ENV_LOCK; test process only.
+    unsafe { std::env::set_var("AGM_CODEX_BIN", &bin) };
+    let start = Instant::now();
+    let err = fetch_usage().expect_err("binary treo phải trả lỗi");
+    let elapsed = start.elapsed();
+    match old {
+        Some(v) => unsafe { std::env::set_var("AGM_CODEX_BIN", v) },
+        None => unsafe { std::env::remove_var("AGM_CODEX_BIN") },
+    }
+
+    assert!(
+        elapsed.as_secs() <= 8,
+        "phải quá hạn trong ≤ 8 s, thực tế {elapsed:?}: {err:#}"
+    );
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("quá thời hạn") || msg.contains("timed out") || msg.contains("timeout"),
+        "lỗi phải báo quá thời hạn: {msg}"
+    );
     Ok(())
 }

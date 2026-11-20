@@ -313,6 +313,8 @@ agy_quota_poll_min = 15         # phút giữa hai lần đọc hạn mức agy 
 
 Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.
 
+**Cửa sổ ngữ cảnh OpenCode.** Với model OpenCode, mục `[models."<providerID/id>"]` (hoặc `[models."<id>"]`) trong `providers.toml` luôn thắng; nếu không có, agm đọc giới hạn từ danh mục model của OpenCode (`opencode api GET /api/model`, cache trong tiến trình). Không đoán số, nên model chưa biết vẫn hiện `?`. Phiên OpenCode có tổng token bằng 0 (tin nhắn assistant lỗi/rỗng) không còn bị gắn `unknown format?`.
+
 **Biến môi trường** (tùy chọn):
 
 | Biến | Mặc định | Ý nghĩa |

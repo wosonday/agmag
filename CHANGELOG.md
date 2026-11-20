@@ -22,6 +22,7 @@
 - **USD theo giá niêm yết** cho mọi model trong `agm cost`, `agm cost --summary` và dòng USAGE của TUI: bảng giá dựng sẵn `assets/prices.toml` (ghi đè bằng `[models."<id>".price]`), tự khớp `provider/id`, hậu tố ngày và hậu tố effort của agy; id `-free` tính $0; model chưa biết giá hiện `?`, tổng có phần chưa biết giá hiện `≥ $x`. JSON có `value_usd` và `unpriced_tokens`; `cost_usd` vẫn là tiền thực trả của model tính theo API (`billed (API)` trong `--summary`).
 - `agm tui`: lệnh `view` chọn tối đa 3 bảng (`quota`, `usage`, `terminals`, `budgets`, `inbox`; mặc định `quota terminals inbox`, được nhớ); RECENT MESSAGES luôn hiện ngay trên thanh lệnh.
 - Theo dõi effort của phiên (Codex `effort`, Claude Code `effort`, `variant` của OpenCode, hậu tố tên model agy); schema CSDL v4 thêm cột `sessions.effort`.
+- Cửa sổ ngữ cảnh của model OpenCode: `providers.toml` (`[models."<providerID/id>"]` rồi `[models."<id>"]`) luôn thắng; nếu thiếu, `agm` đọc `limit.context` từ danh mục của OpenCode (`opencode api GET /api/model`, cache trong tiến trình). Nhờ đó `ctx %`, `ctx_warn` và `ctx_rotate` hoạt động với `opencode/*`, `opencode-go/*`; model không có ở đâu vẫn để trống, không đoán.
 
 - Hạn mức gói của agy: ba provider `agy-gemini`, `agy-3p` (Claude/GPT qua agy, tách khỏi hạn mức Claude Code) và `agy-argon`, đọc qua `agy --print /usage` (không tốn token). Daemon đọc trên luồng riêng mỗi `[policy].agy_quota_poll_min` phút (mặc định 15, `0` = tắt); `agm quota --refresh` đọc ngay. Dùng được cho ngân sách, vd `agm budget set provider:agy-gemini:10080 --soft 80 --hard 95`.
 
@@ -29,6 +30,7 @@
 
 - `agm send` gửi được cho agent đang ở trạng thái `done` (vừa xong lượt, không làm việc). Trước đây `hc send --if idle` luôn từ chối trường hợp này; agent đang `working`/`blocked` vẫn không bị gõ chen.
 - Cửa sổ hạn mức đã reset mà chưa có số liệu mới: không còn hiển thị số cũ, và ngân sách `provider:` không còn báo động theo số cũ (vd 96% đã dùng trước khi reset).
+- Phiên OpenCode chỉ có message assistant lỗi/0 token không còn bị gắn cảnh báo giả `unknown format?`; Codex/Claude/agy giữ nguyên cảnh báo.
 - `agm spawn`: giữ nguyên từng đối số sau `--` (không gộp), chỉ gộp khi `<template>` là template của hc; trên Windows tự dự phòng khi `hc run <template>` lỗi `cannot start "sh"` bằng cách chạy thẳng `command:` của template và gửi thân template + nhiệm vụ vào terminal; xoay vòng kiểm tra mở được phiên kế nhiệm trước khi kill phiên cũ.
 
 ## [0.2.0] - 2026-11-19

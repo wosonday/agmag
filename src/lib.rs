@@ -13,6 +13,7 @@ pub mod ingest;
 pub mod launch;
 pub mod model;
 pub mod opencode;
+pub mod opencode_models;
 pub mod parse;
 pub mod policy;
 pub mod report;

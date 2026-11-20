@@ -317,6 +317,8 @@ agy_quota_poll_min = 15         # minutes between agy quota reads (`agy --print 
 
 Models without a declared price or context window show `?` — agm never invents a 0.
 
+**OpenCode context windows.** For OpenCode models, a `[models."<providerID/id>"]` (or bare `[models."<id>"]`) entry in `providers.toml` always wins; otherwise agm reads the limit from OpenCode's own model catalog (`opencode api GET /api/model`, cached for the process). Nothing is guessed, so unknown models still show `?`. OpenCode sessions whose total token count is 0 (failed/empty assistant messages) are no longer flagged `unknown format?`.
+
 **Environment variables** (optional):
 
 | Variable | Default | Meaning |

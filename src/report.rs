@@ -197,21 +197,21 @@ pub fn sessions(store: &Store, cfg: &Config, since_ms: i64) -> Result<Vec<Sessio
             usages,
             usage,
         ) = row?;
+        let source = source_from(&source)?;
         let window = ctx_window.map(|w| w as u64).or_else(|| {
             model
                 .as_deref()
-                .and_then(|m| cfg.model(m))
-                .and_then(|m| m.context_window)
+                .and_then(|m| cfg.context_window(&source, m))
         });
         let warning = if bad > 0 {
             Some(format!("{bad} unreadable lines"))
-        } else if turns > 0 && usages == 0 {
+        } else if turns > 0 && usages == 0 && source != Source::OpenCode {
             Some("unknown format?".to_string())
         } else {
             None
         };
         out.push(SessionRow {
-            source: source_from(&source)?,
+            source,
             session_id,
             path,
             cwd,

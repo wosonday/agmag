@@ -105,7 +105,14 @@ pub fn send(store: &Store, hc: &dyn Hc, from: &str, to: &str, kind: &str, task: 
         store.open_inbox(from_t, "message", Some(kind), &body, now)?;
         m.status = "inbox".into();
     } else {
-        match hc.send(to, &body, true, false) {
+        // `hc send --if` chỉ nhận đúng `idle`/`working`; agent vừa xong lượt (`done`) không còn làm việc nên
+        // gõ vào là an toàn, nhưng `--if idle` lại từ chối. Đọc trạng thái mới: `done` → gửi không kèm chốt;
+        // mọi trạng thái khác (working, blocked, idle) hoặc đọc lỗi → giữ chốt `--if idle` như cũ.
+        let done = hc
+            .get(to)
+            .ok()
+            .is_some_and(|v| v["state"].as_str() == Some("live") && v["status"]["state"].as_str() == Some("done"));
+        match hc.send(to, &body, !done, false) {
             Ok(v) => {
                 m.status = "sent".into();
                 m.detail = v["turn"].as_i64().map(|t| format!("turn {t}"));

@@ -46,6 +46,41 @@ fn send_records_message_and_calls_hc_if_idle() -> Result<()> {
     Ok(())
 }
 
+fn hc_with_state(addr: &str, state: &str) -> FakeHc {
+    let mut hc = FakeHc::default();
+    hc.get_responses.insert(
+        addr.into(),
+        serde_json::json!({"address": addr, "state": "live", "status": {"app": "claude-code", "state": state}}),
+    );
+    hc
+}
+
+#[test]
+fn send_reaches_agent_whose_turn_is_done() -> Result<()> {
+    // `done` = the agent finished its turn and is not working: typing is safe, but `hc send --if idle`
+    // refuses it ("t3p is done, not idle"), so agm must send without the idle guard.
+    let store = Store::open_in_memory()?;
+    let hc = hc_with_state("t3p", "done");
+    let m = actions::send(&store, &hc, "t1s", "t3p", "GIAO", None, "đọc lại docs", 1)?;
+    assert_eq!(m.status, "sent");
+    assert!(hc.calls.borrow()[0].starts_with("send t3p if_idle=false force=false"), "{:?}", hc.calls.borrow());
+    Ok(())
+}
+
+#[test]
+fn send_keeps_idle_guard_for_working_blocked_or_unknown_agents() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    for state in ["working", "blocked", "idle"] {
+        let hc = hc_with_state("t5", state);
+        actions::send(&store, &hc, "t1s", "t5", "GIAO", None, "x", 1)?;
+        assert!(hc.calls.borrow()[0].starts_with("send t5 if_idle=true force=false"), "{state}: {:?}", hc.calls.borrow());
+    }
+    let unreadable = FakeHc { fail_get: true, ..Default::default() };
+    actions::send(&store, &unreadable, "t1s", "t5", "GIAO", None, "x", 2)?;
+    assert!(unreadable.calls.borrow()[0].starts_with("send t5 if_idle=true"), "hc get failed → keep the guard");
+    Ok(())
+}
+
 #[test]
 fn reply_to_blocked_question_forces_and_resolves() -> Result<()> {
     let store = Store::open_in_memory()?;

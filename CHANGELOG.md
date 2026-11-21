@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-21
+
 ### Thêm mới
 
 - `agm done`: đóng hàng loạt mục hộp thư theo ID/khoảng/danh sách (`N`, `N-M`, `N,M-K`) và bộ lọc `--kind`/`--terminal`/`--source` (AND); bỏ qua mục `blocked` trừ khi chỉ định `--source blocked` hoặc đúng một ID đơn; TUI hỗ trợ `done`/`d` với cú pháp tương tự (`kind:K`, `term:T`).

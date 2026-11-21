@@ -78,3 +78,21 @@ Chặn / nên sửa / nhỏ = **1 / 3 / 2**.
 - Nhỏ: **F5** ký tự BEL/TAB trong log; **F6** log thiếu mục "Lệch so với tệp tác vụ".
 
 Sau khi sửa F1 (bắt buộc) và các mục nên sửa, cần chạy lại `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings`, `cargo fmt --check` và `git ls-files --eol` trước khi trình duyệt lại.
+
+## Xem lại vòng sửa (fbe9a57)
+
+- Phạm vi: `git diff 686028e..fbe9a57`; đỉnh mã được duyệt `fbe9a5795e9f0b1e916a9b4c02f015c552324357` (`fbe9a57`). Reviewer không sửa mã sản phẩm, chỉ đối soát và ghi kết quả vào tệp này.
+- **F1 (đã xử lý, đúng)**: `src/actions.rs:140-143` thay `end - start + 1 > 10_000` bằng `end - start >= 10_000` (tương đương về ngữ nghĩa nhưng bỏ phép `+ 1` tràn i64). `parse_id_token` chỉ nhận chữ số ASCII nên `start`, `end` đều ≥ 0, lại có `if end < start { bail }` → `end - start` không tràn. Chạy thử với `AGM_HOME` tạm: `agm done 0-9223372036854775807 --json` → `agm: error: id range too large: 0-9223372036854775807`, exit 1, không panic. Biên CLI: `1-10000` exit 0 (10000 mục), `1-10001` exit 1 lỗi rõ; `9223372036854775806-9223372036854775807` exit 0, trả `skipped/missing` đúng 2 ID. Test `tests/actions_test.rs` phủ biên 10000/10001, `0-i64::MAX`, dãy `i64::MAX-1..i64::MAX`, số vượt i64::MAX.
+- **F2 (đã xử lý)**: `README_vi.md:142` dòng `cmd:` của TUI dùng `done <#|a-b|kind:K|term:T>`, khớp bản Anh (`README.md:144`).
+- **F3/F5 (đã xử lý)**: `.agents/log/inbox-done-bulk.md` — kiểm byte: 31 LF, 0 CR/CRLF, 0 TAB, 0 BEL; các chuỗi `kind:, term:`, `actions::dismiss_done`, `tests/...`, `agm done` đã sạch ký tự điều khiển. `git ls-files --eol`: cả 14 tệp trong `git diff main...HEAD` đều `i/lf w/lf`.
+- **F4 (đã xử lý, đúng)**: `tests/cli_test.rs` thêm `cli_done_range_and_filters_never_close_blocked_items` — cấy mục blocked ở giữa khoảng, kiểm tra khoảng ID đóng 2 mục thường và đưa blocked vào `skipped`, filter `--terminal` trùng blocked vẫn bỏ qua, chỉ `--source blocked` đóng được. `tests/dashboard_test.rs` thêm ca `done source:blocked` / `done src:blocked 1-3` (`explicit_source_blocked=true`, `source=blocked`) và `done 1-3 source:message` (`explicit=false`) — khóa đúng quy tắc an toàn trên cả hai đường CLI/TUI.
+- **F6 (đã xử lý)**: log có mục `## Lệch so với tệp tác vụ (bổ sung sau review, CEO)` ghi nhận 3 lệch thực tế.
+
+- Lệnh kiểm đã chạy: `cargo test --offline` → **326 passed, 0 failed** (tăng 1 so với 325 ở vòng trước, đúng test CLI mới); `cargo clippy --offline --all-targets -- -D warnings` → sạch, exit 0; `cargo fmt --check` → sạch, exit 0; `git ls-files --eol` trên 14 tệp → `i/lf` hết. Các test mới (`cli_done_range_and_filters_never_close_blocked_items`, `parse_done_id_selectors_rejects_bad_input`, `parse_commands`) đều hiện diện và xanh.
+- Không hồi quy: diff vòng sửa chỉ đụng `src/actions.rs` (1 dòng F1), `README_vi.md` (1 dòng F2), 3 tệp test (F1/F4) và log (F3/F5/F6), cộng tệp review này; không đổi schema/daemon/module khác. Không chạy `agm done` trên inbox thật.
+
+### Kết luận xem lại
+
+**ĐẠT** — SHA HEAD được duyệt: `fbe9a5795e9f0b1e916a9b4c02f015c552324357` (`fbe9a57`).
+
+Chặn / nên sửa / nhỏ = **0 / 0 / 0**.

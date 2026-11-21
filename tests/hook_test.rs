@@ -86,3 +86,46 @@ fn path_key_normalizes_on_windows() {
         );
     }
 }
+
+#[test]
+fn install_statusline_adds_then_is_idempotent_and_never_overwrites_foreign() -> anyhow::Result<()> {
+    use agmag::hook::{InstallOutcome, install_statusline};
+    let tmp = tempfile::tempdir()?;
+    let settings = tmp.path().join(".claude").join("settings.json");
+    let exe = std::path::Path::new(r"C:\bin\agm.exe");
+
+    // No file yet → created with agm's statusLine.
+    assert_eq!(install_statusline(&settings, exe)?, InstallOutcome::Added);
+    let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&settings)?)?;
+    assert!(
+        v["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with("hook statusline")
+    );
+
+    // Running again is a no-op success, file unchanged.
+    let before = fs::read_to_string(&settings)?;
+    assert_eq!(
+        install_statusline(&settings, exe)?,
+        InstallOutcome::AlreadyInstalled
+    );
+    assert_eq!(fs::read_to_string(&settings)?, before);
+
+    // agm installed from another path (e.g. older install) still counts as installed.
+    fs::write(
+        &settings,
+        r#"{"statusLine":{"type":"command","command":"agm hook statusline"},"theme":"dark"}"#,
+    )?;
+    assert_eq!(
+        install_statusline(&settings, exe)?,
+        InstallOutcome::AlreadyInstalled
+    );
+
+    // A foreign statusLine is never overwritten.
+    let foreign = r#"{"statusLine":{"type":"command","command":"my-script.ps1"}}"#;
+    fs::write(&settings, foreign)?;
+    assert!(install_statusline(&settings, exe).is_err());
+    assert_eq!(fs::read_to_string(&settings)?, foreign);
+    Ok(())
+}

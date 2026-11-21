@@ -599,28 +599,11 @@ pub fn hook_install(agm_exe: &Path) -> Result<()> {
         .context("không tìm thấy home")?
         .join(".claude")
         .join("settings.json");
-    let mut v: Value = match std::fs::read_to_string(&path) {
-        Ok(t) => serde_json::from_str(&t)
-            .with_context(|| format!("{} không phải JSON hợp lệ", path.display()))?,
-        // Chỉ "chưa có tệp" mới bắt đầu từ rỗng; lỗi khác (bị khóa, không có quyền) → dừng, không ghi đè cấu hình.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(e) => return Err(e).with_context(|| format!("đọc {}", path.display())),
-    };
-    if !v.is_object() {
-        bail!("{} không phải một đối tượng JSON", path.display());
+    match agmag::hook::install_statusline(&path, agm_exe)? {
+        agmag::hook::InstallOutcome::Added => println!("Added statusLine to {}.", path.display()),
+        agmag::hook::InstallOutcome::AlreadyInstalled => {
+            println!("agm statusLine is already installed in {}.", path.display())
+        }
     }
-    if !v["statusLine"].is_null() {
-        bail!(
-            "{} đã có statusLine; agmag không ghi đè. Gọi `agm hook statusline` từ script hiện có của bạn.",
-            path.display()
-        );
-    }
-    v["statusLine"] =
-        json!({"type": "command", "command": format!("\"{}\" hook statusline", agm_exe.display())});
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, serde_json::to_string_pretty(&v)?)?;
-    println!("Added statusLine to {}.", path.display());
     Ok(())
 }

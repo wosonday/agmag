@@ -5,6 +5,7 @@
 ### Sửa lỗi
 
 - `agm manage` / xoay vòng Claude/Codex dùng nhầm thư mục gốc của shell khi người dùng đã `cd` sang dự án khác: `agm manage` lấy **thư mục hiệu lực** (`foreground.cwd` của hc nếu có, ngược lại `cwd` gốc) cho `launch_spec.cwd`; `agm rotate` ghi `rotations.cwd` theo `launch_spec.cwd` (thư mục người dùng đã xác nhận), nên tệp bàn giao và phiên kế nhiệm ở đúng dự án. Terminal do hc sinh (OpenCode) không có `launch_spec` giữ nguyên hành vi cũ.
+- `agm hook install` chạy lại không còn báo lỗi khi statusLine hiện có đã là của agm (`… hook statusline`): in "already installed" và thoát 0. statusLine của script khác vẫn không bao giờ bị ghi đè.
 
 ## [0.3.2] - 2026-11-21
 

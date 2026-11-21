@@ -90,3 +90,17 @@ Kết luận mục 3: hai ca chính và hai bước requested/handoff_ready đú
 - **Test đỏ trước sửa**: commit `c57e007 manage-foreground-cwd: red tests for effective cwd and rotation cwd source` chứa đủ 4 test (tên thứ ba lúc đó là `managed_handoff_file_lands_in_launch_spec_cwd`, đổi thành `managed_handoff_targets_launch_spec_cwd` ở `fd97620` với lý do do log `.agents/log/manage-foreground-cwd.md:37-40` giải thích — agent tự ghi tệp, agm chỉ gửi lệnh). Log ghi trạng thái đỏ đúng `error[E0432]: unresolved import agmag::hc::effective_cwd` (`.agents/log/manage-foreground-cwd.md:19-20`). Thứ tự commit `c57e007` → `fd97620` → ... → `bffff7e` khớp TDD đỏ→xanh.
 
 Kết luận mục 4: không đụng daemon/terminal_row_from; test phủ đúng và có bằng chứng đỏ trước sửa.
+
+---
+
+## Mục 5 — `CHANGELOG.md`: LF, mục mới nằm ở `[Unreleased]` (không ở `[0.3.2]`)
+
+**Mức: không có vấn đề (ĐẠT).**
+
+- Đọc byte thô `CHANGELOG.md`: `CR = 0`, `LF = 84` → file thuần LF, không bị CRLF hóa (đúng yêu cầu "giữ LF").
+- Diff `main...HEAD -- CHANGELOG.md`: +4/−0, chèn ngay sau `## [Unreleased]` (`CHANGELOG.md:3`):
+  - `### Sửa lỗi` (`CHANGELOG.md:5`)
+  - một dòng mô tả (`CHANGELOG.md:7`) nói rõ cả 2 thay đổi: `manage` lấy thư mục hiệu lực; `rotate` ghi `rotations.cwd = launch_spec.cwd`; nhắc OpenCode không spec giữ hành vi cũ.
+- Nhánh có merge `60b60ba` (đưa release `0.3.2` từ `main` vào) và commit sửa `bffff7e manage-foreground-cwd: changelog entry back under [Unreleased] after 0.3.2 release`. Ở HEAD, mục mới nằm **trước** `## [0.3.2] - 2026-11-21` (`CHANGELOG.md:10`); phần `### Thay đổi` / `### Sửa lỗi` của `[0.3.2]` không bị thêm/sửa bởi diff này (chỉ bị đẩy xuống). Đúng yêu cầu nghiệm thu.
+
+Kết luận mục 5: đúng vị trí và đúng định dạng LF.

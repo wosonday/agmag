@@ -9,6 +9,7 @@
 
 ### Sửa lỗi
 
+- `agm manage` / xoay vòng Claude/Codex dùng nhầm thư mục gốc của shell khi người dùng đã `cd` sang dự án khác: `agm manage` lấy **thư mục hiệu lực** (`foreground.cwd` của hc nếu có, ngược lại `cwd` gốc) cho `launch_spec.cwd`; `agm rotate` ghi `rotations.cwd` theo `launch_spec.cwd` (thư mục người dùng đã xác nhận), nên tệp bàn giao và phiên kế nhiệm ở đúng dự án. Terminal do hc sinh (OpenCode) không có `launch_spec` giữ nguyên hành vi cũ.
 - `agm sys` (Windows): mount không có `\` ở cuối (vd thư mục mount) vẫn nhận đúng định danh volume, thay vì coi là không rõ; thêm test khóa việc định danh volume không bao giờ lọt vào JSON.
 
 ## [0.3.1] - 2026-11-20

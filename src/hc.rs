@@ -254,6 +254,17 @@ pub fn app_from_argv(argv: &[String]) -> Option<String> {
     })
 }
 
+/// Thư mục hiệu lực của một terminal: nơi agent thật sự đang làm việc.
+///
+/// `foreground.cwd` (tiến trình đang chạy trong terminal, vd `claude` sau khi người dùng `cd`)
+/// thắng `cwd` gốc (thư mục lúc tạo shell). Giá trị rỗng/chỉ khoảng trắng bị bỏ qua.
+pub fn effective_cwd(v: &Value) -> Option<String> {
+    let non_blank = |s: Option<&str>| -> Option<String> {
+        s.filter(|s| !s.trim().is_empty()).map(String::from)
+    };
+    non_blank(v["foreground"]["cwd"].as_str()).or_else(|| non_blank(v["cwd"].as_str()))
+}
+
 /// Đối tượng Terminal của hc (ảnh chụp, sự kiện `created`, `hc get`, `hc ls`) → hàng CSDL.
 pub fn terminal_row_from(v: &Value) -> TerminalRow {
     let str_of = |k: &str| v[k].as_str().map(String::from);

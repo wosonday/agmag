@@ -15,7 +15,7 @@ use agmag::actions::{
 };
 use agmag::config::Config;
 use agmag::git::GitCli;
-use agmag::hc::{Hc, HcCli, terminal_row_from};
+use agmag::hc::{Hc, HcCli, effective_cwd, terminal_row_from};
 use agmag::launch::{
     check_claude_hook_installed, extract_launch_argv, parse_cmd_tokens, parse_launch_spec,
 };
@@ -319,7 +319,9 @@ pub fn manage(
         if let Some(app) = fresh.app {
             t.app = Some(app);
         }
-        if let Some(cwd) = fresh.cwd {
+        // Thư mục người dùng đang đứng (foreground) khi gõ `agm manage`, không phải thư mục
+        // lúc tạo shell — câu hỏi xác nhận in `cwd=` và launch_spec lưu đúng thư mục này.
+        if let Some(cwd) = effective_cwd(v) {
             t.cwd = Some(cwd);
         }
     }

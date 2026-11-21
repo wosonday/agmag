@@ -1003,20 +1003,17 @@ fn rotation_start_without_launch_spec_keeps_terminal_cwd() -> Result<()> {
     Ok(())
 }
 
-/// Bàn giao của phiên managed phải ghi vào thư mục của `launch_spec`, không phải thư mục shell.
+/// Bàn giao của phiên managed phải trỏ vào thư mục của `launch_spec`, không phải thư mục shell.
 #[test]
-fn managed_handoff_file_lands_in_launch_spec_cwd() -> Result<()> {
+fn managed_handoff_targets_launch_spec_cwd() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let shell_root = tmp.path().join("shell-root");
     let project = tmp.path().join("project-a");
     std::fs::create_dir_all(&shell_root)?;
     std::fs::create_dir_all(&project)?;
     let store = Store::open_in_memory()?;
-    let spec = agmag::launch::parse_launch_spec(
-        "codex",
-        &["codex".into()],
-        &project.to_string_lossy(),
-    )?;
+    let spec =
+        agmag::launch::parse_launch_spec("codex", &["codex".into()], &project.to_string_lossy())?;
     store.upsert_terminal(&TerminalRow {
         address: "t1".into(),
         app: Some("codex".into()),
@@ -1032,18 +1029,27 @@ fn managed_handoff_file_lands_in_launch_spec_cwd() -> Result<()> {
     rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 1_500)?;
     assert_eq!(state(&store), "requested");
 
-    let rel: String = store
-        .conn()
-        .query_row("SELECT handoff_path FROM rotations", [], |r| r.get(0))?;
-    assert!(
-        project.join(&rel).is_file(),
-        "tệp bàn giao phải nằm trong {}, rel={rel}",
-        project.display()
+    let (cwd, rel): (String, String) =
+        store
+            .conn()
+            .query_row("SELECT cwd, handoff_path FROM rotations", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+    assert_eq!(cwd, project.to_string_lossy());
+    assert_eq!(
+        project.join(&rel).parent(),
+        Some(project.join(".agents/handoff").as_path()),
+        "rel={rel}"
     );
     assert!(
-        !shell_root.join(&rel).exists(),
+        !shell_root.join(".agents").exists(),
         "không được ghi bàn giao vào thư mục shell {}",
         shell_root.display()
+    );
+    let calls = hc.calls.borrow();
+    assert!(
+        calls[0].contains(&rel),
+        "lệnh bàn giao phải trỏ tệp {rel}: {calls:?}"
     );
     Ok(())
 }

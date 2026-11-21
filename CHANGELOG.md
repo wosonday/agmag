@@ -6,10 +6,17 @@
 
 - `agm done`: đóng hàng loạt mục hộp thư theo ID/khoảng/danh sách (`N`, `N-M`, `N,M-K`) và bộ lọc `--kind`/`--terminal`/`--source` (AND); bỏ qua mục `blocked` trừ khi chỉ định `--source blocked` hoặc đúng một ID đơn; TUI hỗ trợ `done`/`d` với cú pháp tương tự (`kind:K`, `term:T`).
 
+### Sửa lỗi
+
+- `agm manage` / xoay vòng Claude/Codex dùng nhầm thư mục gốc của shell khi người dùng đã `cd` sang dự án khác: `agm manage` lấy **thư mục hiệu lực** (`foreground.cwd` của hc nếu có, ngược lại `cwd` gốc) cho `launch_spec.cwd`; `agm rotate` ghi `rotations.cwd` theo `launch_spec.cwd` (thư mục người dùng đã xác nhận), nên tệp bàn giao và phiên kế nhiệm ở đúng dự án. Terminal do hc sinh (OpenCode) không có `launch_spec` giữ nguyên hành vi cũ.
+- `agm hook install` chạy lại không còn báo lỗi khi statusLine hiện có đã là của agm (`… hook statusline`): in "already installed" và thoát 0. statusLine của script khác vẫn không bao giờ bị ghi đè.
+
+## [0.3.2] - 2026-11-21
+
 ### Thay đổi
 
 - `agm cost`: hàng **SUM** được tách khỏi các dòng dữ liệu bằng vạch kẻ đôi (như vạch dưới tiêu đề) cho dễ nhìn.
-- Help CLI chuyển sang tiếng Anh.
+- Help CLI (`agm --help` và help của mọi lệnh, lệnh con) chuyển sang tiếng Anh; mã tin nhắn (`GIAO`, `BÁO CÁO`…) giữ nguyên, kèm giải nghĩa và alias tiếng Anh. Sửa mô tả `rotate --yes` cho đúng hành vi (không có lời nhắc nào để bỏ qua).
 
 ### Sửa lỗi
 

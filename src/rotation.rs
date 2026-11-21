@@ -214,10 +214,20 @@ pub fn start(
     if busy {
         return Ok(false);
     }
+    // Thư mục xoay vòng: terminal managed (Claude/Codex) → `launch_spec.cwd` mà người dùng đã
+    // xác nhận ở `agm manage`; terminal do hc sinh (OpenCode, không có spec) → `terminals.cwd`.
+    // Không đọc `foreground` ở đây: bước `requested`/`handoff_ready` phải dùng một thư mục ổn định.
+    let rotation_cwd = t
+        .launch_spec
+        .as_deref()
+        .and_then(|json| LaunchSpec::from_json(json).ok())
+        .map(|spec| spec.cwd)
+        .filter(|c| !c.trim().is_empty())
+        .or_else(|| t.cwd.clone().filter(|c| !c.trim().is_empty()));
     store.conn().execute(
         "INSERT INTO rotations (task, old_terminal, app, cwd, state, ctx_pct, updated_ms)
          VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6)",
-        params![t.task, t.address, t.app, t.cwd, ctx_pct, now],
+        params![t.task, t.address, t.app, rotation_cwd, ctx_pct, now],
     )?;
     Ok(true)
 }

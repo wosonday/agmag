@@ -4,12 +4,57 @@
 
 use std::path::Path;
 
-use anyhow::Result;
-use serde_json::Value;
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 
 use crate::ingest::path_key;
 use crate::model::{ContextSnapshot, QuotaSnapshot, QuotaWindow, Source};
 use crate::store::{Store, TerminalRow};
+
+/// Kết quả của `agm hook install`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InstallOutcome {
+    Added,
+    /// statusLine hiện có đã gọi `hook statusline` (của agm, kể cả cài ở đường dẫn khác) → không làm gì.
+    AlreadyInstalled,
+}
+
+/// Thêm statusLine của agm vào `settings_path` (Claude Code `settings.json`).
+/// Chạy lại là an toàn; statusLine **của người khác** thì không bao giờ ghi đè (lỗi, tệp giữ nguyên).
+pub fn install_statusline(settings_path: &Path, agm_exe: &Path) -> Result<InstallOutcome> {
+    let path = settings_path;
+    let mut v: Value = match std::fs::read_to_string(path) {
+        Ok(t) => serde_json::from_str(&t)
+            .with_context(|| format!("{} không phải JSON hợp lệ", path.display()))?,
+        // Chỉ "chưa có tệp" mới bắt đầu từ rỗng; lỗi khác (bị khóa, không có quyền) → dừng, không ghi đè cấu hình.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => return Err(e).with_context(|| format!("đọc {}", path.display())),
+    };
+    if !v.is_object() {
+        bail!("{} không phải một đối tượng JSON", path.display());
+    }
+    if !v["statusLine"].is_null() {
+        // Cùng tiêu chí với `launch::check_claude_hook_installed`.
+        let cmd = v["statusLine"]["command"]
+            .as_str()
+            .or_else(|| v["statusLine"].as_str())
+            .unwrap_or_default();
+        if cmd.contains("hook statusline") {
+            return Ok(InstallOutcome::AlreadyInstalled);
+        }
+        bail!(
+            "{} đã có statusLine; agmag không ghi đè. Gọi `agm hook statusline` từ script hiện có của bạn.",
+            path.display()
+        );
+    }
+    v["statusLine"] =
+        json!({"type": "command", "command": format!("\"{}\" hook statusline", agm_exe.display())});
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&v)?)?;
+    Ok(InstallOutcome::Added)
+}
 
 /// Ghi số liệu từ JSON statusline và trả về một dòng trạng thái ngắn để Claude Code hiển thị.
 pub fn statusline(

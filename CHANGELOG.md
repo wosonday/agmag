@@ -2,10 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-21
+
 ### Thay đổi
 
 - `agm cost`: hàng **SUM** được tách khỏi các dòng dữ liệu bằng vạch kẻ đôi (như vạch dưới tiêu đề) cho dễ nhìn.
-- Help CLI chuyển sang tiếng Anh.
+- Help CLI (`agm --help` và help của mọi lệnh, lệnh con) chuyển sang tiếng Anh; mã tin nhắn (`GIAO`, `BÁO CÁO`…) giữ nguyên, kèm giải nghĩa và alias tiếng Anh. Sửa mô tả `rotate --yes` cho đúng hành vi (không có lời nhắc nào để bỏ qua).
 
 ### Sửa lỗi
 

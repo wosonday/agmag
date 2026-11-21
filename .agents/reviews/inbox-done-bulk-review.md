@@ -25,3 +25,10 @@
 - Ngoại lệ cho phép đúng thiết kế: `--source blocked` (`explicit_source_blocked` ở `src/main.rs:476-478`, dùng ở `src/actions.rs:312`) đóng được blocked (`done --source blocked` → `done: [3,6]`); ID đơn của blocked cũng đóng được (`legacy_single` ở `src/main.rs:486`, bypass ở `src/actions.rs:298`) → `done 2` trả `{"done":2}`.
 - Đường TUI: `src/dashboard.rs:1785-1856` nhận `kind:`/`term:`/`source:`(`src:`), đặt `explicit_source_blocked` khi `source:blocked` và chỉ đặt `legacy_single` cho ID đơn không kèm filter; mọi nhánh đều đi vào chung `actions::dismiss_done` (`src/tui.rs:412-444`) nên cùng cơ chế bảo vệ. `done` không gõ vào terminal nào: `src/actions.rs:247-325` và `src/tui.rs:412-444` chỉ thao tác `Store`, không gọi `Hc`.
 - **NÊN SỬA (F4)** — lỗ hổng test: `tests/cli_test.rs:748-798` không tạo mục `blocked`; `tests/dashboard_test.rs:280-385` test `kind:`/`term:` nhưng không có ca `source:`/`src:` hay ca blocked bị skip. Quy tắc an toàn mới chỉ được khóa ở tầng actions (`tests/actions_test.rs:587-645` và `648+`). Nên thêm (a) test CLI range/filter có mục blocked ở giữa và (b) test `parse_command("done source:blocked")` để bảo vệ hợp đồng an toàn hai đường.
+
+## 3. Tương thích `agm done <một ID>` — ĐẠT
+
+- `src/main.rs:521-527` (nhánh `legacy_single`) emit đúng JSON `{"done": id}` và text `Dismissed #id.`; `src/actions.rs:328-333` giữ nguyên hàm `dismiss` và vẫn bail `không có mục hộp thư #id` khi ID không tồn tại.
+- Chạy tay: `done 999999` → exit 1; `done <id có>` → `{"done": <id>}`; single ID trùng với mục blocked → vẫn đóng (đúng ngoại lệ thiết kế).
+- Test `tests/cli_test.rs:748-790` xanh; hai test cũ `cli_done_dismisses_inbox_item` và `cli_help_is_english_for_every_command` vẫn xanh trong `cargo test --offline`.
+- Ghi chú nhỏ (không đủ mức lỗi): `done 5 --kind REPORT` với `#5` không tồn tại đi vào đường bulk và trả `{"done":[],"skipped":[…]}` thay vì exit ≠ 0; tuy nhiên "hành vi cũ" chỉ áp cho `done <ID>` không kèm filter, nên chấp nhận.

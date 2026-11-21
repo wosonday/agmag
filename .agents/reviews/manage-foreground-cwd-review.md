@@ -18,3 +18,18 @@
 - `terminal_row_from` (`src/hc.rs:268+`) không bị động đến trong diff — đúng quyết định tách hàm riêng.
 
 Kết luận mục 1: đúng brief, không có ghi chú.
+
+---
+
+## Mục 2 — `src/ops.rs::manage`: cwd từ foreground, câu hỏi `[y/N]`, không nới quy tắc xác nhận
+
+**Mức: không có vấn đề (ĐẠT).**
+
+- `src/ops.rs:318`: vẫn gọi `terminal_row_from(v)` để lấy `app` (`fresh.app`); thay `fresh.cwd` bằng `effective_cwd(v)` tại `src/ops.rs:324-326` → `t.cwd` trong bộ nhớ là thư mục foreground (là `cwd` gốc nếu foreground rỗng). Đây đúng nguồn "thư mục hiệu lực" của brief.
+- `src/ops.rs:339`: vẫn có bước chặn `t.cwd.as_deref().filter(|c| !c.trim().is_empty())` → nếu `effective_cwd` trả `None` (cả hai thiếu/rỗng) thì báo lỗi "không biết cwd", không dựng spec với cwd rỗng. `src/ops.rs:366`: `parse_launch_spec(app, &argv, cwd)` — cwd đã được kiểm tra chắc chắn không rỗng (xem thêm `src/launch.rs:128-130`).
+- Câu hỏi xác nhận in đúng cwd: `src/ops.rs:367-370` format `cwd={}` từ `spec.cwd` (chính là cwd hiệu lực), gọi qua `caller(store, false, Some(&question))` (`src/ops.rs:372`); `caller` in `"{question} [y/N] "` tại `src/ops.rs:46`. Người dùng thấy đúng thư mục trước khi gõ `y`.
+- **Không nới quy tắc xác nhận**: diff `main...HEAD` trên `src/ops.rs` chỉ có 2 hunk — đổi import (`src/ops.rs:15`) và đổi nguồn cwd (`src/ops.rs:322-326`). `caller` (`src/ops.rs:33-56`) và `actions::set_managed_launch` (`src/actions.rs:562-...`) **không đổi**: vẫn `caller(store, false, ...)` (không nhận `--yes`, `src/ops.rs:371`), vẫn chỉ `Caller::User { confirmed: true }` mới lưu spec (`src/actions.rs:574-580`); agent bị từ chối (`src/actions.rs:585+`).
+- Không đổi cách daemon lưu `terminals.cwd`: `t.cwd = Some(cwd)` ở `src/ops.rs:325` chỉ sửa bản sao `TerminalRow` trong bộ nhớ; `set_terminal_launch` (`src/store/v2.rs:280-291`) chỉ `UPDATE terminals SET managed = ?2, launch_spec = ...`, **không** đụng cột `cwd`. Nên thư mục gốc lưu trong CSDL vẫn nguyên như cũ — đúng quyết định của CEO.
+- Lưu ý phạm vi (đã ghi trong log, không phải lỗi): không có test CLI giả `hc get` cho `manage` trên Windows; `manage` được phủ gián tiếp qua `effective_cwd` + các test rotation. Chấp nhận theo log `.agents/log/manage-foreground-cwd.md:22-24`.
+
+Kết luận mục 2: đúng brief, quy tắc xác nhận nguyên vẹn.

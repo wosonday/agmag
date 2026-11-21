@@ -28,3 +28,24 @@ Không có dòng nào đổi tên lệnh/cờ/alias, `default_value*`, `value_pa
 Ghi nhận (không tính lỗi): `git diff --name-status main...HEAD` cũng có thêm 2 tệp điều phối `.agents/tasks/cli-help-english.md` (brief) và `.agents/log/cli-help-english.md` (log), ngoài 4 tệp liệt kê trong brief; đây không phải mã sản phẩm.
 
 `chặn`: 0. `nên sửa`: 0. `nhỏ`: 0.
+
+## 2. Help đúng nghĩa code hiện tại — ĐẠT (1 nhận xét `nhỏ`)
+
+Đối chiếu từng câu help với dispatch ở `src/main.rs:394-648` và implementation tương ứng:
+
+| Lệnh | Help | Code hiện tại | Kết luận |
+|---|---|---|---|
+| `kill` / `interrupt` | `src/main.rs:155,159,163,167` — "Codex/Claude and unknown apps still require a user to type y"; `--yes` "still requires a user caller" | `src/ops.rs:224-239`: `let yes = yes && app == "opencode"` (`:230`); `caller()` (`src/ops.rs:33-56`) chỉ tự xác nhận khi `detect_caller` trả `User{confirmed}`; agent bị chặn bởi `AGENT_KILLABLE_APPS = ["opencode"]` (`src/actions.rs:65-67,81-102`). | Đúng; cảnh báo an toàn **không bị yếu đi**. |
+| `cleanup` | `src/main.rs:193-202` — "requires one typed y/N confirmation"; `--yes` "Compatibility flag; cleanup still requires one typed confirmation" | `src/ops.rs:379-386` nhận `_yes` rồi bỏ qua; `src/ops.rs:444-455` luôn gọi `caller(store, false, …)`; `--all` chọn mọi ứng viên (`:399-401`). | Đúng. |
+| `rotate` | `src/main.rs:171-177` — OpenCode handoff+kill+spawn; Claude/Codex handoff+open, không kill | `src/ops.rs:241-287`; OpenCode → `rotation::start` rồi daemon kill+spawn (`src/rotation.rs:401-429`); Claude/Codex managed → handoff + successor, "old session is not killed" (`src/ops.rs:267`, `src/rotation.rs:1-4`). | Đúng, trừ câu `--yes` — xem `nhỏ` bên dưới. |
+| `manage` | `src/main.rs:179-191` — bật/tắt quản lý cho phiên Claude Code/Codex mở tay; `--off`, `--cmd`, argv sau `--` | `src/ops.rs:296-377`: chỉ nhận `claude-code`/`codex` (`:326-336`), `off` → `clear_terminal_managed` (`:307-313`), **không nhận `--yes`** (`:369`), argv lấy từ `raw_argv` hoặc `parse_cmd_tokens(cmd)` (`:345-363`). | Đúng. |
+| `budget` | `src/main.rs:204,251-270` — `task:<ID>` (tokens) / `provider:<name>:<minutes>` (quota percent), soft/hard, action | `src/ops.rs:520-545`: `task` → `"tokens"`, `provider` → `"percent"`; action chỉ `notify|interrupt|kill`, mặc định `notify`; `ls`/`rm` ở `:548-569` và `src/main.rs:502-509`. | Đúng. |
+| `policy` | `src/main.rs:209-213` — bật/tắt mọi hành động tự động (emergency stop); một trong `on`/`off`/`status` | `src/main.rs:510-538`: `value_parser = ["on","off","status"]`, ghi setting `policy`; `status` đọc `policy::enabled`. | Đúng. |
+| `send` | `src/main.rs:102-114` — 7 mã kèm giải nghĩa + alias `ASSIGN|REPORT|ERROR|QUESTION|BLOCKED|PASS|FAIL`, đích `user` → inbox | `src/actions.rs:12-23`: `KINDS` và `KINDS_EN` khớp từng cặp; `kind_from_english` chấp nhận mọi chữ hoa/thường (`:33-39`); `src/ops.rs:153-182` gửi qua actions. | Đúng; alias liệt kê đúng giá trị và thứ tự. |
+| `sys` | `src/main.rs:239` — RAM/CPU/disk + phần process tree của từng agent, live, không lưu | `src/main.rs:318-334` đọc `sysmon::read_once()` ngay cả khi thiếu/khóa DB; `src/sysmon.rs:1,106-121` định nghĩa đúng các trường. (Câu này đã có trên `main`, không đổi trong diff.) | Đúng. |
+
+Các câu còn lại cũng khớp: `scan` (`src/main.rs:40` ↔ `:673-703`: Codex/Claude/agy + OpenCode DB), `quota --refresh` (`:72` ↔ `:585-614`: agy/Codex/OpenCode), `cost` (`:55,57,63,66` ↔ `:568-583` + `src/report.rs:28-45`), `log --full` (`:83` ↔ `:625-637`, chặn `opencode://` và `agy://`), `hook install` (`:278` ↔ `src/ops.rs:595-623`, đã có statusLine thì bails, không ghi đè), `ps --all` (`:98` ↔ `:436-439`), `inbox`/`done`/`reply` (`:116-133` ↔ `:454-461`).
+
+`nhỏ` — `rotate --yes` mô tả hơi rộng so với code: `src/main.rs:175` ghi "Skip the interactive confirmation prompt", nhưng trong `src/ops.rs:241-287` biến `yes` chỉ được dùng ở nhánh app không được hỗ trợ (`:275`) qua `caller(store, yes, None)` — với `needs_confirm = None` hàm này trả về ngay, không hỏi (`src/ops.rs:43-45`). Hai nhánh được hỗ trợ (OpenCode `:246-255`, Claude/Codex managed `:256-273`) gọi `rotation::start`, hàm không nhận `yes` (`src/rotation.rs:189-195`). Nói cách khác `--yes` của `rotate` không thực sự bỏ qua một lời nhắc nào. Đề xuất (không chặn): đổi thành "Accepted for compatibility; supported rotations do not prompt" hoặc bỏ câu confirmation. Không ảnh hưởng an toàn: các lời nhắc thật vẫn được mô tả đúng ở `kill`/`interrupt`/`cleanup`/`manage`.
+
+`chặn`: 0. `nên sửa`: 0. `nhỏ`: 1.

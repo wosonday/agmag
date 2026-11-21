@@ -52,3 +52,10 @@
 - CHANGELOG: `CHANGELOG.md:5-8` nằm đúng dưới `[Unreleased] → ### Thêm mới`, **không** nằm trong `[0.3.2]`; EOL LF (`git ls-files --eol` → `i/lf w/lf`).
 - `README.md:144` (thanh `cmd:` TUI) và `README.md:221` (bảng lệnh CLI) cập nhật đúng cú pháp; `README_vi.md:217` (bảng lệnh) cũng đúng.
 - **NÊN SỬA (F2)**: `README_vi.md:142` vẫn là `cmd: reply <#> <text> · done <#> · send …` trong khi bản Anh đã đổi thành `done <#|a-b|kind:K|term:T>`. Tệp tác vụ yêu cầu cập nhật dòng `done <#>` ở mục TUI trong **cả hai** README (`.agents/tasks/inbox-done-bulk.md:36`); phần này bị sót, chỉ mới sửa bảng lệnh.
+
+## 7. Lệnh kiểm & EOL — ĐẠT (trừ tệp log)
+
+- `cargo test --offline`: **325 passed, 0 failed** trên toàn workspace (riêng `actions_test` 23, `cli_test` 23, `dashboard_test` 25 — chạy lại riêng để chắc chắn).
+- `cargo clippy --offline --all-targets -- -D warnings`: sạch, exit 0.
+- `cargo fmt --check`: sạch, exit 0.
+- `git ls-files --eol` trên 13 tệp trong `git diff main...HEAD`: 12 tệp `i/lf w/lf`; duy nhất `.agents/log/inbox-done-bulk.md` là `i/mixed w/mixed` → **NÊN SỬA (F3)**. Kiểm byte: tệp có 20 LF và 1 CRLF, CRLF nằm ở cuối dòng 11; yêu cầu review là "phải lf" cho các tệp đã sửa.

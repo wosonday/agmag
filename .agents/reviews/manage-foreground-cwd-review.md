@@ -104,3 +104,26 @@ Kết luận mục 4: không đụng daemon/terminal_row_from; test phủ đúng
 - Nhánh có merge `60b60ba` (đưa release `0.3.2` từ `main` vào) và commit sửa `bffff7e manage-foreground-cwd: changelog entry back under [Unreleased] after 0.3.2 release`. Ở HEAD, mục mới nằm **trước** `## [0.3.2] - 2026-11-21` (`CHANGELOG.md:10`); phần `### Thay đổi` / `### Sửa lỗi` của `[0.3.2]` không bị thêm/sửa bởi diff này (chỉ bị đẩy xuống). Đúng yêu cầu nghiệm thu.
 
 Kết luận mục 5: đúng vị trí và đúng định dạng LF.
+
+---
+
+## Mục 6 — Lệnh kiểm (PowerShell, worktree `D:\Project\agmag.wt\manage-foreground-cwd`)
+
+**Mức: không có vấn đề (ĐẠT).** Chạy trên HEAD sản phẩm được duyệt `bffff7e`.
+
+| Lệnh | Kết quả |
+|---|---|
+| `cargo test --offline` | exit 0 — **318 passed / 0 failed / 0 ignored** (ĐẠT). Riêng `tests/daemon_test.rs`: 13 passed; `tests/rotation_test.rs`: 30 passed. Khớp log `.agents/log/manage-foreground-cwd.md:62`. |
+| `cargo clippy --offline --all-targets -- -D warnings` | exit 0, `Finished dev profile`, không warning/lỗi. |
+| `cargo fmt --check` | exit 0, không output — sạch. |
+
+- Không chạy `agm manage` / `agm rotate` trên terminal thật (đúng yêu cầu). Không push, không merge, không rời worktree. Không commit `.agents/.runtime/`.
+- Reviewer không sửa mã sản phẩm; chỉ tạo/cập nhật `.agents/reviews/manage-foreground-cwd-review.md` và commit review với tiền tố `manage-foreground-cwd-review:` sau từng mục (6 commit). `git diff main...HEAD` phần mã sản phẩm vẫn là 4 tệp như mục 4.
+
+---
+
+## Kết luận
+
+**ĐẠT** — HEAD sản phẩm `bffff7ed9e3e005ee388940384d34da8cb9856a6` (`bffff7e`) được duyệt.
+
+Tổng phát hiện: **chặn / nên sửa / nhỏ = 0 / 0 / 1**. Phát hiện duy nhất là nit ở mục 3d: `.filter` đặt sau `.or_else` trong `src/rotation.rs:220-226` làm `spec.cwd` rỗng cho `rotations.cwd = NULL` thay vì rơi về `terminals.cwd`. Không chặn nghiệm thu vì ca đó không phát sinh qua `agm manage` (`src/launch.rs:128-130`, `src/ops.rs:339` chặn cwd rỗng) và vẫn fail-soft ở bước `requested` (`src/rotation.rs:525-529`); đã gợi ý cách sửa 1 dòng kèm test nếu team muốn strict parity.

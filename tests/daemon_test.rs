@@ -1,5 +1,5 @@
 use agmag::daemon::apply_event;
-use agmag::hc::{app_from_argv, terminal_row_from};
+use agmag::hc::{app_from_argv, effective_cwd, terminal_row_from};
 use agmag::store::Store;
 use serde_json::json;
 
@@ -169,6 +169,44 @@ fn app_detection() {
     assert_eq!(app_from_argv(&["pwsh.exe".into()]).as_deref(), Some("pwsh"));
     let row = terminal_row_from(&json!({"address": "t1", "state": "live"}));
     assert_eq!((row.address.as_str(), row.app), ("t1", None));
+}
+
+#[test]
+fn effective_cwd_prefers_foreground_then_root() {
+    // Terminal t3p: hc mở pwsh ở agmag, người dùng cd sang dự án khác rồi gõ claude.
+    let moved = json!({
+        "address": "t3p",
+        "cwd": r"D:\Project\agmag",
+        "foreground": {"argv": ["pwsh"], "cwd": r"D:\Project\academic-writing"}
+    });
+    assert_eq!(
+        effective_cwd(&moved).as_deref(),
+        Some(r"D:\Project\academic-writing")
+    );
+    // `foreground.cwd` rỗng/chỉ khoảng trắng → dùng cwd gốc.
+    let blank_foreground = json!({"cwd": r"D:\Project\agmag", "foreground": {"cwd": "  "}});
+    assert_eq!(
+        effective_cwd(&blank_foreground).as_deref(),
+        Some(r"D:\Project\agmag")
+    );
+    // Không có `foreground` → cwd gốc.
+    let no_foreground = json!({"cwd": r"D:\Project\agmag"});
+    assert_eq!(
+        effective_cwd(&no_foreground).as_deref(),
+        Some(r"D:\Project\agmag")
+    );
+    // Cả hai đều thiếu → None.
+    assert_eq!(effective_cwd(&json!({"address": "t1"})), None);
+    // Cả hai đều rỗng → None.
+    assert_eq!(
+        effective_cwd(&json!({"cwd": "", "foreground": {"cwd": ""}})),
+        None
+    );
+    // `foreground` không phải đối tượng → bỏ qua, dùng cwd gốc.
+    assert_eq!(
+        effective_cwd(&json!({"cwd": r"D:\w", "foreground": "pwsh"})).as_deref(),
+        Some(r"D:\w")
+    );
 }
 
 #[test]

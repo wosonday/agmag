@@ -960,6 +960,94 @@ fn ctx_rotate_triggers_from_catalog_only_window() -> Result<()> {
     Ok(())
 }
 
+/// Terminal mở tay: shell `cwd` là gốc repo, người dùng `cd` sang dự án khác rồi gõ `claude`.
+/// `launch_spec.cwd` (thư mục người dùng đã xác nhận ở `agm manage`) phải thắng `terminals.cwd`.
+#[test]
+fn rotation_start_uses_launch_spec_cwd_over_terminal_cwd() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec("codex", &["codex".into()], r"D:\Project\other")?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("codex".into()),
+        cwd: Some(r"D:\Project\shell-root".into()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+
+    assert!(rotation::start(&store, "t1", None, true, 1_000)?);
+    let cwd: String = store
+        .conn()
+        .query_row("SELECT cwd FROM rotations", [], |r| r.get(0))?;
+    assert_eq!(cwd, r"D:\Project\other");
+    Ok(())
+}
+
+/// Terminal do hc sinh (OpenCode) không có `launch_spec`: giữ nguyên hành vi cũ — lấy `terminals.cwd`.
+#[test]
+fn rotation_start_without_launch_spec_keeps_terminal_cwd() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("opencode".into()),
+        cwd: Some(r"D:\w".into()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+
+    assert!(rotation::start(&store, "t1", None, true, 1_000)?);
+    let cwd: String = store
+        .conn()
+        .query_row("SELECT cwd FROM rotations", [], |r| r.get(0))?;
+    assert_eq!(cwd, r"D:\w");
+    Ok(())
+}
+
+/// Bàn giao của phiên managed phải ghi vào thư mục của `launch_spec`, không phải thư mục shell.
+#[test]
+fn managed_handoff_file_lands_in_launch_spec_cwd() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let shell_root = tmp.path().join("shell-root");
+    let project = tmp.path().join("project-a");
+    std::fs::create_dir_all(&shell_root)?;
+    std::fs::create_dir_all(&project)?;
+    let store = Store::open_in_memory()?;
+    let spec = agmag::launch::parse_launch_spec(
+        "codex",
+        &["codex".into()],
+        &project.to_string_lossy(),
+    )?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("codex".into()),
+        cwd: Some(shell_root.to_string_lossy().to_string()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("idle"), None, None, 1, 0)?;
+
+    assert!(rotation::start(&store, "t1", None, true, 1_000)?);
+    let hc = interactive_hc("codex", "idle");
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 1_500)?;
+    assert_eq!(state(&store), "requested");
+
+    let rel: String = store
+        .conn()
+        .query_row("SELECT handoff_path FROM rotations", [], |r| r.get(0))?;
+    assert!(
+        project.join(&rel).is_file(),
+        "tệp bàn giao phải nằm trong {}, rel={rel}",
+        project.display()
+    );
+    assert!(
+        !shell_root.join(&rel).exists(),
+        "không được ghi bàn giao vào thư mục shell {}",
+        shell_root.display()
+    );
+    Ok(())
+}
+
 #[test]
 fn requested_continues_when_handoff_file_ready_even_if_old_exited() -> Result<()> {
     let tmp = tempfile::tempdir()?;

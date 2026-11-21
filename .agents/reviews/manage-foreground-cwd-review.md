@@ -72,3 +72,21 @@ Kết luận mục 2: đúng brief, quy tắc xác nhận nguyên vẹn.
   (bỏ `.filter` cuối, hoặc giữ cả hai — miễn filter nằm trước `or_else`). Nên kèm 1 test "spec.cwd rỗng → `rotations.cwd == t.cwd`" nếu sửa.
 
 Kết luận mục 3: hai ca chính và hai bước requested/handoff_ready đúng; ca spec hỏng đúng; chỉ có 1 nit ở ca spec.cwd rỗng (nhỏ, không chặn).
+
+---
+
+## Mục 4 — daemon / `terminal_row_from` không đổi; tests đúng hành vi; test đỏ trước sửa
+
+**Mức: không có vấn đề (ĐẠT).**
+
+- `git diff main...HEAD --stat`: các tệp sản phẩm chỉ `src/hc.rs` (+11, thêm hàm), `src/ops.rs` (+6/−1), `src/rotation.rs` (+12/−1), `CHANGELOG.md` (+4); **không có `src/daemon.rs`, `src/store/**`, schema**. `terminal_row_from` (`src/hc.rs:268+`) chỉ được thêm hàm mới ở ngay trước đó, thân hàm không đổi — đúng điều cấm của brief (`...tasks/manage-foreground-cwd.md:36`).
+- Cách daemon lưu `terminals.cwd` vẫn như cũ: `set_terminal_launch` (`src/store/v2.rs:280-291`) không update cột `cwd`; bản sao `t.cwd` sửa trong `manage` chỉ dùng để dựng `LaunchSpec` (xem mục 2). Không có giá trị "nhảy qua lại" giữa sự kiện có/không có `foreground`. Các chỗ khác vẫn dùng `terminals.cwd` (`correlate`, `dashboard`, `advance_opencode`, fallback `hc get` lỗi) đã được ghi trong log `.agents/log/manage-foreground-cwd.md:45-58` đúng yêu cầu "chỉ ghi log, không sửa".
+- Test mới đúng hành vi, không phải test đúng implementation:
+  - `tests/daemon_test.rs:175` (7 assert) — bảng ca `effective_cwd` (xem mục 1).
+  - `tests/rotation_test.rs:966` — spec.cwd thắng terminals.cwd.
+  - `tests/rotation_test.rs:988` — không spec → terminals.cwd.
+  - `tests/rotation_test.rs:1008` — bàn giao trúng thư mục spec, tick tới `requested`, kiểm `handoff_path` tương đối + vắng `.agents` ở shell-root + lệnh gửi chứa `rel`.
+  - Cả 4 test chạy pass ở HEAD (`daemon_test` 13, `rotation_test` 30 — xem mục 6).
+- **Test đỏ trước sửa**: commit `c57e007 manage-foreground-cwd: red tests for effective cwd and rotation cwd source` chứa đủ 4 test (tên thứ ba lúc đó là `managed_handoff_file_lands_in_launch_spec_cwd`, đổi thành `managed_handoff_targets_launch_spec_cwd` ở `fd97620` với lý do do log `.agents/log/manage-foreground-cwd.md:37-40` giải thích — agent tự ghi tệp, agm chỉ gửi lệnh). Log ghi trạng thái đỏ đúng `error[E0432]: unresolved import agmag::hc::effective_cwd` (`.agents/log/manage-foreground-cwd.md:19-20`). Thứ tự commit `c57e007` → `fd97620` → ... → `bffff7e` khớp TDD đỏ→xanh.
+
+Kết luận mục 4: không đụng daemon/terminal_row_from; test phủ đúng và có bằng chứng đỏ trước sửa.

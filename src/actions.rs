@@ -166,7 +166,161 @@ pub fn parse_done_selectors(args: &[String]) -> Result<DoneSelectorParse> {
     }
     Ok(DoneSelectorParse { ids, legacy_single })
 }
-/// Đóng một mục hộp thư mà không gõ gì vào terminal nào.
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DoneFilters {
+    /// Canonical stored kind code (e.g. "BÁO CÁO"), if specified.
+    pub kind: Option<String>,
+    pub terminal: Option<String>,
+    /// One of "message", "context", "rotation", "blocked".
+    pub source: Option<String>,
+}
+
+impl DoneFilters {
+    pub fn is_empty(&self) -> bool {
+        self.kind.is_none() && self.terminal.is_none() && self.source.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DoneSkip {
+    pub id: i64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DoneReport {
+    pub done: Vec<i64>,
+    pub skipped: Vec<DoneSkip>,
+}
+
+/// Normalize a `--kind` filter value (English alias or Vietnamese code) to a stored code.
+pub fn normalize_done_kind(input: &str) -> Option<String> {
+    if let Some(code) = kind_from_english(input) {
+        return Some(code.to_string());
+    }
+    KINDS
+        .iter()
+        .find(|k| k.eq_ignore_ascii_case(input) || **k == input)
+        .map(|k| (*k).to_string())
+}
+
+/// Validate and normalize a `--source` filter value.
+pub fn normalize_done_source(input: &str) -> Option<String> {
+    match input.to_ascii_lowercase().as_str() {
+        "message" | "context" | "rotation" | "blocked" => Some(input.to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
+fn done_item_matches_filters(item: &crate::store::InboxRow, filters: &DoneFilters) -> bool {
+    if let Some(ref kind) = filters.kind {
+        let ok = item
+            .kind
+            .as_deref()
+            .is_some_and(|k| k == kind.as_str() || k.eq_ignore_ascii_case(kind.as_str()));
+        if !ok {
+            return false;
+        }
+    }
+    if let Some(ref term) = filters.terminal {
+        if item.terminal.as_deref() != Some(term.as_str()) {
+            return false;
+        }
+    }
+    if let Some(ref source) = filters.source {
+        if item.source != *source {
+            return false;
+        }
+    }
+    true
+}
+
+/// Bulk dismiss inbox items by explicit IDs and/or filters.
+///
+/// - `legacy_single`: plain legacy form (`agm done <N>` with no filters).
+/// - `explicit_source_blocked`: user explicitly selected `source=blocked`.
+pub fn dismiss_done(
+    store: &Store,
+    ids: Vec<i64>,
+    filters: DoneFilters,
+    explicit_source_blocked: bool,
+    legacy_single: bool,
+    now: i64,
+) -> Result<DoneReport> {
+    if ids.is_empty() && filters.is_empty() {
+        bail!("usage: agm done <ID...> [--kind K] [--terminal T] [--source S]");
+    }
+
+    let mut report = DoneReport {
+        done: Vec::new(),
+        skipped: Vec::new(),
+    };
+
+    if !ids.is_empty() {
+        for id in ids {
+            let item = store.inbox_item(id)?;
+            let Some(item) = item else {
+                if legacy_single {
+                    bail!("không có mục hộp thư #{id}");
+                }
+                report.skipped.push(DoneSkip {
+                    id,
+                    reason: "missing".into(),
+                });
+                continue;
+            };
+            if item.resolved_ms.is_some() {
+                // Legacy single-ID behavior only errors on missing; resolving again is idempotent.
+                if !legacy_single {
+                    report.skipped.push(DoneSkip {
+                        id,
+                        reason: "already done".into(),
+                    });
+                    continue;
+                }
+            }
+            if !done_item_matches_filters(&item, &filters) {
+                if legacy_single {
+                    // legacy path with filter is not expected, but be safe
+                    bail!("không có mục hộp thư #{id}");
+                }
+                report.skipped.push(DoneSkip {
+                    id,
+                    reason: "missing".into(),
+                });
+                continue;
+            }
+            if item.source == "blocked" && !explicit_source_blocked && !legacy_single {
+                report.skipped.push(DoneSkip {
+                    id,
+                    reason: "blocked (use --source blocked)".into(),
+                });
+                continue;
+            }
+            report.done.push(id);
+        }
+    } else {
+        for item in store.inbox(true)? {
+            if !done_item_matches_filters(&item, &filters) {
+                continue;
+            }
+            if item.source == "blocked" && !explicit_source_blocked {
+                report.skipped.push(DoneSkip {
+                    id: item.id,
+                    reason: "blocked (use --source blocked)".into(),
+                });
+                continue;
+            }
+            report.done.push(item.id);
+        }
+    }
+
+    store.resolve_inbox_many(&report.done, now)?;
+    Ok(report)
+}
+
+/// Dóng một mục hộp thư mà không gõ gì vào terminal nào (hành vi đơn lẻ cũ).
 pub fn dismiss(store: &Store, id: i64, now: i64) -> Result<()> {
     if store.inbox_item(id)?.is_none() {
         bail!("không có mục hộp thư #{id}");

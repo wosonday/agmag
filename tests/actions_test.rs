@@ -582,3 +582,150 @@ fn parse_done_id_selectors_rejects_bad_input() {
     // range too large (> 10000 items)
     assert!(parse_done_selectors(&["1-10002".into()]).is_err());
 }
+
+#[test]
+fn dismiss_done_bulk_range_skips_blocked_done_missing() -> anyhow::Result<()> {
+    use agmag::actions::{DoneFilters, dismiss_done, parse_done_selectors};
+    use agmag::store::Store;
+
+    let store = Store::open_in_memory()?;
+    let a = store
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r1", 1)?
+        .unwrap();
+    let b = store
+        .open_inbox(Some("t1"), "message", Some("HỎI"), "q1", 2)?
+        .unwrap();
+    let c = store
+        .open_inbox(Some("t1"), "blocked", Some("question"), "wait", 3)?
+        .unwrap();
+    let d = store
+        .open_inbox(Some("t2"), "context", Some("warn"), "ctx", 4)?
+        .unwrap();
+    store.resolve_inbox(b, None, 5)?; // already done
+
+    let sel = parse_done_selectors(&[format!("{a}-{d}")])?;
+    let report = dismiss_done(
+        &store,
+        sel.ids,
+        DoneFilters::default(),
+        false,
+        sel.legacy_single,
+        10,
+    )?;
+    assert_eq!(report.done, vec![a, d]);
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|s| s.id == b && s.reason == "already done")
+    );
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|s| s.id == c && s.reason == "blocked (use --source blocked)")
+    );
+    // missing in range? include an id beyond
+    let sel2 = parse_done_selectors(&[format!("{d}-{}", d + 1)])?;
+    let report2 = dismiss_done(
+        &store,
+        sel2.ids,
+        DoneFilters::default(),
+        false,
+        sel2.legacy_single,
+        11,
+    )?;
+    assert!(
+        report2
+            .skipped
+            .iter()
+            .any(|s| s.id == d + 1 && s.reason == "missing")
+    );
+    Ok(())
+}
+
+#[test]
+fn dismiss_done_filters_kind_terminal_source_and_blocked_rules() -> anyhow::Result<()> {
+    use agmag::actions::{DoneFilters, dismiss_done, normalize_done_kind};
+    use agmag::store::Store;
+
+    let store = Store::open_in_memory()?;
+    let r1 = store
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r1", 1)?
+        .unwrap();
+    let r2 = store
+        .open_inbox(Some("t2"), "message", Some("BÁO CÁO"), "r2", 2)?
+        .unwrap();
+    let q1 = store
+        .open_inbox(Some("t1"), "message", Some("HỎI"), "q1", 3)?
+        .unwrap();
+    let bl = store
+        .open_inbox(Some("t1"), "blocked", Some("question"), "wait", 4)?
+        .unwrap();
+
+    // --kind REPORT and Vietnamese same result
+    let f_en = DoneFilters {
+        kind: normalize_done_kind("REPORT"),
+        ..Default::default()
+    };
+    let rep_en = dismiss_done(&store, vec![], f_en, false, false, 10)?;
+    assert_eq!(rep_en.done.len(), 2);
+    assert!(rep_en.done.contains(&r1) && rep_en.done.contains(&r2));
+
+    // recreate for Vietnamese check
+    let store2 = Store::open_in_memory()?;
+    let r1b = store2
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r1", 1)?
+        .unwrap();
+    let r2b = store2
+        .open_inbox(Some("t2"), "message", Some("BÁO CÁO"), "r2", 2)?
+        .unwrap();
+    let _q1b = store2
+        .open_inbox(Some("t1"), "message", Some("HỎI"), "q1", 3)?
+        .unwrap();
+    let f_vi = DoneFilters {
+        kind: normalize_done_kind("BÁO CÁO"),
+        ..Default::default()
+    };
+    let rep_vi = dismiss_done(&store2, vec![], f_vi, false, false, 10)?;
+    assert_eq!(rep_vi.done, vec![r1b, r2b]);
+
+    // terminal + kind AND
+    let _ = (r1, r2, q1, bl);
+    let store3 = Store::open_in_memory()?;
+    let a = store3
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r1", 1)?
+        .unwrap();
+    let _b = store3
+        .open_inbox(Some("t2"), "message", Some("BÁO CÁO"), "r2", 2)?
+        .unwrap();
+    let f_and = DoneFilters {
+        kind: normalize_done_kind("REPORT"),
+        terminal: Some("t1".into()),
+        ..Default::default()
+    };
+    let rep_and = dismiss_done(&store3, vec![], f_and, false, false, 10)?;
+    assert_eq!(rep_and.done, vec![a]);
+
+    // --source blocked closes blocked; filter-only without explicit should skip (handled above) but explicit closes
+    let store4 = Store::open_in_memory()?;
+    let bl2 = store4
+        .open_inbox(Some("t1"), "blocked", Some("question"), "wait", 1)?
+        .unwrap();
+    let f_src = DoneFilters {
+        source: Some("blocked".into()),
+        ..Default::default()
+    };
+    let rep_src = dismiss_done(&store4, vec![], f_src, true, false, 10)?;
+    assert_eq!(rep_src.done, vec![bl2]);
+
+    // single ID of blocked item closes it (legacy single)
+    let store5 = Store::open_in_memory()?;
+    let bl3 = store5
+        .open_inbox(Some("t1"), "blocked", Some("question"), "wait", 1)?
+        .unwrap();
+    let rep_single = dismiss_done(&store5, vec![bl3], DoneFilters::default(), false, true, 10)?;
+    assert_eq!(rep_single.done, vec![bl3]);
+    assert!(store5.inbox_item(bl3)?.unwrap().resolved_ms.is_some());
+    Ok(())
+}

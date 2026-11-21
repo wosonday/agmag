@@ -408,6 +408,35 @@ impl Store {
         Ok(())
     }
 
+    /// Đóng nhiều mục hộp thư trong một transaction (không ghi đè `reply`).
+    pub fn resolve_inbox_many(&self, ids: &[i64], now: i64) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute_batch("SAVEPOINT agm_done_bulk")?;
+        let res: Result<()> = (|| {
+            for &id in ids {
+                self.conn.execute(
+                    "UPDATE inbox SET resolved_ms = ?2 WHERE id = ?1 AND resolved_ms IS NULL",
+                    params![id, now],
+                )?;
+            }
+            Ok(())
+        })();
+        match res {
+            Ok(()) => {
+                self.conn.execute_batch("RELEASE agm_done_bulk")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self
+                    .conn
+                    .execute_batch("ROLLBACK TO agm_done_bulk; RELEASE agm_done_bulk");
+                Err(e)
+            }
+        }
+    }
+
     pub fn inbox_item(&self, id: i64) -> Result<Option<InboxRow>> {
         Ok(self
             .conn

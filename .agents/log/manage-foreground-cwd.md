@@ -57,4 +57,14 @@ rồi mở agent:
 - `src/ops.rs::manage` khi `hc get` lỗi: vẫn dùng `t.cwd` đã lưu (có thể là thư mục shell);
   không có nguồn tốt hơn vì không đọc được foreground.
 
+## Bước 3 — kiểm lần cuối (2026-11-21)
+
+- `cargo test --offline`: **318 passed, 0 failed** (31 bộ test; `rotation_test` 30, `daemon_test` 13).
+- `cargo clippy --offline --all-targets -- -D warnings`: không cảnh báo/lỗi.
+- `cargo fmt --check`: sạch.
+- `git status`: sạch sau commit; không có thay đổi ngoài phạm vi tệp của tệp tác vụ.
+- Commit: `c57e007` (test đỏ) → `fd97620` (code xanh + CHANGELOG + log).
+- Không chạy `agm manage`/`agm rotate` trên terminal thật; không push/merge.
+
+
 

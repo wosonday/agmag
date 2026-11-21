@@ -45,3 +45,10 @@
 - `src/store/v2.rs:411-436`: `resolve_inbox_many` mở `SAVEPOINT agm_done_bulk`, thực hiện toàn bộ `UPDATE … WHERE resolved_ms IS NULL` rồi `RELEASE`; trên lỗi `ROLLBACK TO` + `RELEASE`. Tất cả đóng nằm trong **một** transaction; không ghi đè `reply`/`resolved_ms` cũ.
 - `resolve_inbox` cũ giữ nguyên (`src/actions.rs:328-333` vẫn gọi `store.resolve_inbox`); diff `main...HEAD` không đổi schema SQL (`src/store/schema*.sql` không xuất hiện trong danh sách tệp) và không đụng daemon — đúng phạm vi thiết kế điểm 5 của CEO.
 - `dismiss_done` (`src/actions.rs:323`) gọi `resolve_inbox_many` đúng một lần sau khi đã lọc xong danh sách `done`, kể cả khi danh sách rỗng (hàm trả về sớm, `src/store/v2.rs:412-414`).
+
+## 6. Help tiếng Anh / README / CHANGELOG — NÊN SỬA
+
+- Help: `src/main.rs:122-137` mô tả đúng cú pháp mới. Chạy `agm done --help` cho kết quả tiếng Anh, đủ `IDS...`, `--kind`, `--terminal`, `--source`; test `cli_help_is_english_for_every_command` xanh.
+- CHANGELOG: `CHANGELOG.md:5-8` nằm đúng dưới `[Unreleased] → ### Thêm mới`, **không** nằm trong `[0.3.2]`; EOL LF (`git ls-files --eol` → `i/lf w/lf`).
+- `README.md:144` (thanh `cmd:` TUI) và `README.md:221` (bảng lệnh CLI) cập nhật đúng cú pháp; `README_vi.md:217` (bảng lệnh) cũng đúng.
+- **NÊN SỬA (F2)**: `README_vi.md:142` vẫn là `cmd: reply <#> <text> · done <#> · send …` trong khi bản Anh đã đổi thành `done <#|a-b|kind:K|term:T>`. Tệp tác vụ yêu cầu cập nhật dòng `done <#>` ở mục TUI trong **cả hai** README (`.agents/tasks/inbox-done-bulk.md:36`); phần này bị sót, chỉ mới sửa bảng lệnh.

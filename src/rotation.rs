@@ -222,8 +222,8 @@ pub fn start(
         .as_deref()
         .and_then(|json| LaunchSpec::from_json(json).ok())
         .map(|spec| spec.cwd)
-        .or_else(|| t.cwd.clone())
-        .filter(|c| !c.trim().is_empty());
+        .filter(|c| !c.trim().is_empty())
+        .or_else(|| t.cwd.clone().filter(|c| !c.trim().is_empty()));
     store.conn().execute(
         "INSERT INTO rotations (task, old_terminal, app, cwd, state, ctx_pct, updated_ms)
          VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?6)",

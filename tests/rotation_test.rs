@@ -1003,6 +1003,29 @@ fn rotation_start_without_launch_spec_keeps_terminal_cwd() -> Result<()> {
     Ok(())
 }
 
+/// `launch_spec.cwd` rỗng (spec ghi tay/cũ) → rơi về `terminals.cwd`, không ghi `NULL`.
+#[test]
+fn rotation_start_blank_spec_cwd_falls_back_to_terminal_cwd() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let mut spec = agmag::launch::parse_launch_spec("codex", &["codex".into()], r"D:\x")?;
+    spec.cwd = "  ".into();
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("codex".into()),
+        cwd: Some(r"D:\Project\shell-root".into()),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+
+    assert!(rotation::start(&store, "t1", None, true, 1_000)?);
+    let cwd: Option<String> = store
+        .conn()
+        .query_row("SELECT cwd FROM rotations", [], |r| r.get(0))?;
+    assert_eq!(cwd.as_deref(), Some(r"D:\Project\shell-root"));
+    Ok(())
+}
+
 /// Bàn giao của phiên managed phải trỏ vào thư mục của `launch_spec`, không phải thư mục shell.
 #[test]
 fn managed_handoff_targets_launch_spec_cwd() -> Result<()> {

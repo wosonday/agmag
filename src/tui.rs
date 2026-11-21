@@ -409,11 +409,38 @@ pub fn run(
                     },
                 );
             }
-            Ok(TuiCmd::Done(id)) => {
-                note = Some(match actions::dismiss(store, id, now) {
-                    Ok(()) => (NoteKind::Ok, format!("dismissed #{id}")),
-                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                });
+            Ok(TuiCmd::Done {
+                ids,
+                filters,
+                explicit_source_blocked,
+                legacy_single,
+            }) => {
+                note = Some(
+                    match actions::dismiss_done(
+                        store,
+                        ids,
+                        filters,
+                        explicit_source_blocked,
+                        legacy_single,
+                        now,
+                    ) {
+                        Ok(report) => {
+                            if report.done.is_empty() && report.skipped.is_empty() {
+                                (NoteKind::Warn, "Nothing to dismiss.".into())
+                            } else {
+                                (
+                                    NoteKind::Ok,
+                                    format!(
+                                        "dismissed {} (skipped {})",
+                                        report.done.len(),
+                                        report.skipped.len()
+                                    ),
+                                )
+                            }
+                        }
+                        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                    },
+                );
             }
             Ok(TuiCmd::Policy(on)) => {
                 // Never swallow errors: the user must know whether policy actually toggled.

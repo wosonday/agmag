@@ -119,10 +119,20 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
-    /// Dismiss an inbox item without sending input to any terminal
+    /// Dismiss inbox item(s) without sending input to any terminal
     Done {
-        /// Inbox item ID
-        id: i64,
+        /// Inbox item ID(s) or selector(s): N, N-M, N,M-K
+        #[arg(value_name = "IDS", num_args = 0..)]
+        ids: Vec<String>,
+        /// Filter by message kind (Vietnamese code or English alias)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by terminal address
+        #[arg(long)]
+        terminal: Option<String>,
+        /// Filter by source (message, context, rotation, blocked)
+        #[arg(long)]
+        source: Option<String>,
     },
     /// Reply to an inbox item by sending input to its terminal
     Reply {
@@ -452,11 +462,91 @@ fn run(cli: Cli) -> Result<()> {
             now,
         ),
         Cmd::Inbox { all } => ops::inbox(&store, all, json),
-        Cmd::Done { id } => {
-            agmag::actions::dismiss(&store, id, now)?;
-            emit(json, &serde_json::json!({ "done": id }), || {
-                println!("Dismissed #{id}.")
-            })
+        Cmd::Done {
+            ids,
+            kind,
+            terminal,
+            source,
+        } => {
+            let has_filters = kind.is_some() || terminal.is_some() || source.is_some();
+            if ids.is_empty() && !has_filters {
+                anyhow::bail!("usage: agm done <ID...> [--kind K] [--terminal T] [--source S]");
+            }
+            let explicit_source_blocked = source
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case("blocked"));
+            let parsed = if ids.is_empty() {
+                None
+            } else {
+                Some(agmag::actions::parse_done_selectors(&ids)?)
+            };
+            let legacy_single = parsed.as_ref().is_some_and(|p| p.legacy_single) && !has_filters;
+            let sel_ids = parsed.map(|p| p.ids).unwrap_or_default();
+
+            let kind_filter = match kind {
+                Some(k) => Some(
+                    agmag::actions::normalize_done_kind(&k)
+                        .ok_or_else(|| anyhow::anyhow!("unknown kind: {k}"))?,
+                ),
+                None => None,
+            };
+            let source_filter = match source {
+                Some(s) => Some(
+                    agmag::actions::normalize_done_source(&s)
+                        .ok_or_else(|| anyhow::anyhow!("unknown source: {s}"))?,
+                ),
+                None => None,
+            };
+            let filters = agmag::actions::DoneFilters {
+                kind: kind_filter,
+                terminal,
+                source: source_filter,
+            };
+
+            let report = agmag::actions::dismiss_done(
+                &store,
+                sel_ids,
+                filters,
+                explicit_source_blocked,
+                legacy_single,
+                now,
+            )?;
+
+            if legacy_single {
+                let id = report.done.first().copied().unwrap_or(0);
+                emit(json, &serde_json::json!({ "done": id }), || {
+                    println!("Dismissed #{id}.")
+                })
+            } else if report.done.is_empty() && report.skipped.is_empty() {
+                emit(
+                    json,
+                    &serde_json::json!({ "done": [], "skipped": [] }),
+                    || {
+                        println!("Nothing to dismiss.");
+                    },
+                )
+            } else {
+                emit(json, &report, || {
+                    if !report.done.is_empty() {
+                        let list = report
+                            .done
+                            .iter()
+                            .map(|id| format!("#{id}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        println!("Dismissed {} item(s): {list}", report.done.len());
+                    }
+                    if !report.skipped.is_empty() {
+                        let parts = report
+                            .skipped
+                            .iter()
+                            .map(|s| format!("#{} ({})", s.id, s.reason))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        println!("Skipped {}: {parts}", report.skipped.len());
+                    }
+                })
+            }
         }
         Cmd::Reply { id, text } => ops::reply(&store, id, &text.join(" "), now),
         Cmd::Spawn {

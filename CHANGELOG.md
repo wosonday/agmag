@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Thêm mới
+
+- `agm done`: đóng hàng loạt mục hộp thư theo ID/khoảng/danh sách (`N`, `N-M`, `N,M-K`) và bộ lọc `--kind`/`--terminal`/`--source` (AND); bỏ qua mục `blocked` trừ khi chỉ định `--source blocked` hoặc đúng một ID đơn; TUI hỗ trợ `done`/`d` với cú pháp tương tự (`kind:K`, `term:T`).
+
 ### Thay đổi
 
 - `agm cost`: hàng **SUM** được tách khỏi các dòng dữ liệu bằng vạch kẻ đôi (như vạch dưới tiêu đề) cho dễ nhìn.

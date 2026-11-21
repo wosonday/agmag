@@ -141,7 +141,7 @@ agm tui
 ── » RECENT MESSAGES ─────────────────────────────────────────────
   (no messages)
 ──────────────────────────────────────────────────────────────────
-cmd: reply <#> <text> · done <#> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
+cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
      interrupt <terminal> · kill <terminal> · policy on|off · view <up to 3 sections> · quit
      TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
@@ -218,7 +218,7 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 | `agm sys` | Live machine load: CPU % with a grid of **every logical core** (`#0 ██████▏░ 76%`, busiest core and idle count on the CPU line), RAM (and swap), every disk (used/free, read/write per second) and each agent's **process tree** (`claude-code`, `codex`, `opencode`, `agy`; desktop apps as `claude-app`, `codex-app`, `agy-app`): process count, RAM, % of machine CPU, plus a **Σ SUM** row. Colored report in three sections (MACHINE · DISKS · AGENTS) opening with a load verdict: green `● OK` (room for more workers), yellow `● BUSY` (CPU or RAM ≥ 60%), red `● HIGH LOAD` (≥ 85%, hold off spawning) and `⚠ <disk> nearly full` at 90%. Each agent keeps its TERMINALS color and gets a RAM-share bar. Takes about 1–1.5 s (CPU % needs two readings, plus a scan of the process table); nothing is stored. `--json` for agents, `NO_COLOR=1` for plain text |
 | `agm tui [--refresh 2]` | Dashboard. The header always shows `cpu · ram · fullest disk` (green < 60%, yellow < 85%, red); `view system` adds the full SYSTEM section, with one colored column per core (`┊ cores ▆▃▆▅▅▅`) |
 | `agm ps [--all]` | herdr-core terminals known to agm |
-| `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <#>` | Inbox; answer an agent's question; dismiss an item |
+| `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <IDS...> [--kind K] [--terminal T] [--source S]` | Inbox; answer an agent's question; dismiss inbox item(s) |
 | `agm send <target> --type <TYPE> [--task ID] <text>` | Send a recorded message; target `user` → inbox |
 | `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <args…>` | Spawn an agent (`hc run --bg --outlive-parent`), keeping each argument after `--` intact; if `<template>` is an hc template, those arguments are joined into one task string. On Windows, when `hc run <template>` fails with `cannot start "sh"`, agm falls back to running the template's `command:` directly and sends the template body plus the task to the terminal. Checks `max_workers` and budgets |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Kill / interrupt — Codex, Claude, unknown apps: **you only**, always requires typing `y` (`--yes` doesn't apply) |

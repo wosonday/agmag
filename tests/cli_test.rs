@@ -744,3 +744,55 @@ fn cli_send_help_explains_existing_message_codes() {
         assert!(help.contains(description), "{help}");
     }
 }
+
+#[test]
+fn cli_done_bulk_and_legacy_cases() {
+    let tmp = sandbox(None);
+    // no args -> usage error
+    let out = agm_env(tmp.path(), &["done"], &[]);
+    assert!(!out.status.success());
+
+    // single nonexistent -> exit != 0
+    let out = agm_env(tmp.path(), &["done", "999999"], &[]);
+    assert!(!out.status.success());
+
+    // create inbox items directly for deterministic kinds/ids
+    let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+    let a = store
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r1", 1)
+        .unwrap()
+        .unwrap();
+    let b = store
+        .open_inbox(Some("t1"), "message", Some("HỎI"), "q1", 2)
+        .unwrap()
+        .unwrap();
+    let c = store
+        .open_inbox(Some("t2"), "message", Some("BÁO CÁO"), "r2", 3)
+        .unwrap()
+        .unwrap();
+    drop(store);
+
+    // legacy single JSON format
+    let out = agm_env(tmp.path(), &["done", &a.to_string(), "--json"], &[]);
+    assert!(
+        out.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = json(&out);
+    assert_eq!(v, serde_json::json!({"done": a}));
+
+    // bulk dismiss remaining by range
+    let range = format!("{b}-{c}");
+    let out = agm_env(tmp.path(), &["done", &range, "--json"], &[]);
+    assert!(
+        out.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = json(&out);
+    assert_eq!(v["done"], serde_json::json!([b, c]));
+    assert_eq!(v["skipped"], serde_json::json!([]));
+}

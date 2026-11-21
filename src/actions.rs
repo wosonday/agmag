@@ -223,15 +223,19 @@ fn done_item_matches_filters(item: &crate::store::InboxRow, filters: &DoneFilter
             return false;
         }
     }
-    if let Some(ref term) = filters.terminal {
-        if item.terminal.as_deref() != Some(term.as_str()) {
-            return false;
-        }
+    if filters
+        .terminal
+        .as_ref()
+        .is_some_and(|term| item.terminal.as_deref() != Some(term.as_str()))
+    {
+        return false;
     }
-    if let Some(ref source) = filters.source {
-        if item.source != *source {
-            return false;
-        }
+    if filters
+        .source
+        .as_ref()
+        .is_some_and(|source| &item.source != source)
+    {
+        return false;
     }
     true
 }

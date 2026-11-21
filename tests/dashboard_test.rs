@@ -280,7 +280,85 @@ fn parse_commands() {
     assert_eq!(parse_command("policy off"), Ok(TuiCmd::Policy(false)));
     assert_eq!(parse_command("quit"), Ok(TuiCmd::Quit));
     assert_eq!(parse_command(""), Ok(TuiCmd::Refresh));
-    assert_eq!(parse_command("done 4"), Ok(TuiCmd::Done(4)));
+    assert_eq!(
+        parse_command("done 4"),
+        Ok(TuiCmd::Done {
+            ids: vec![4],
+            filters: agmag::actions::DoneFilters::default(),
+            explicit_source_blocked: false,
+            legacy_single: true,
+        })
+    );
+    assert_eq!(
+        parse_command("done 150-179"),
+        Ok(TuiCmd::Done {
+            ids: (150..=179).collect(),
+            filters: agmag::actions::DoneFilters::default(),
+            explicit_source_blocked: false,
+            legacy_single: false,
+        })
+    );
+    assert_eq!(
+        parse_command("done 150,151 160-162"),
+        Ok(TuiCmd::Done {
+            ids: vec![150, 151, 160, 161, 162],
+            filters: agmag::actions::DoneFilters::default(),
+            explicit_source_blocked: false,
+            legacy_single: false,
+        })
+    );
+    assert_eq!(
+        parse_command("done kind:REPORT"),
+        Ok(TuiCmd::Done {
+            ids: vec![],
+            filters: agmag::actions::DoneFilters {
+                kind: agmag::actions::normalize_done_kind("REPORT"),
+                terminal: None,
+                source: None,
+            },
+            explicit_source_blocked: false,
+            legacy_single: false,
+        })
+    );
+    assert_eq!(
+        parse_command("done kind:\"BÁO CÁO\""),
+        Ok(TuiCmd::Done {
+            ids: vec![],
+            filters: agmag::actions::DoneFilters {
+                kind: agmag::actions::normalize_done_kind("BÁO CÁO"),
+                terminal: None,
+                source: None,
+            },
+            explicit_source_blocked: false,
+            legacy_single: false,
+        })
+    );
+    assert_eq!(
+        parse_command("done term:t4w"),
+        Ok(TuiCmd::Done {
+            ids: vec![],
+            filters: agmag::actions::DoneFilters {
+                kind: None,
+                terminal: Some("t4w".into()),
+                source: None,
+            },
+            explicit_source_blocked: false,
+            legacy_single: false,
+        })
+    );
+    assert_eq!(
+        parse_command("done 5 term:t4w kind:REPORT"),
+        Ok(TuiCmd::Done {
+            ids: vec![5],
+            filters: agmag::actions::DoneFilters {
+                kind: agmag::actions::normalize_done_kind("REPORT"),
+                terminal: Some("t4w".into()),
+                source: None,
+            },
+            explicit_source_blocked: false,
+            legacy_single: false,
+        })
+    );
     assert_eq!(parse_command("cleanup"), Ok(TuiCmd::Cleanup(None)));
     assert_eq!(
         parse_command("cleanup all"),
@@ -290,14 +368,19 @@ fn parse_commands() {
         parse_command("r x có").unwrap_err(),
         "usage: reply <#> <text>"
     );
-    assert_eq!(parse_command("done x").unwrap_err(), "usage: done <#>");
+    assert!(parse_command("done x").is_err());
+    assert!(parse_command("done 9-3").is_err());
+    assert!(parse_command("done 1-").is_err());
+    assert_eq!(
+        parse_command("done").unwrap_err(),
+        "usage: done <#|a-b|kind:K|term:T>"
+    );
     let unknown = parse_command("zzz").unwrap_err();
     assert!(
         unknown.starts_with("unknown command 'zzz'") && unknown.contains("reply, done, send"),
         "{unknown}"
     );
 }
-
 #[test]
 fn send_accepts_english_and_legacy_vietnamese_types() {
     let send = |t: &str, k: &str, m: &str| -> Result<TuiCmd, String> {

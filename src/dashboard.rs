@@ -1690,12 +1690,17 @@ pub fn bounded_styled_line(line: &str, max: usize) -> String {
     out
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TuiCmd {
     Refresh,
     Quit,
     Reply(i64, String),
-    Done(i64),
+    Done {
+        ids: Vec<i64>,
+        filters: crate::actions::DoneFilters,
+        explicit_source_blocked: bool,
+        legacy_single: bool,
+    },
     Send(String, String, String),
     Cleanup(Option<String>),
     Interrupt(String),
@@ -1708,7 +1713,7 @@ pub enum TuiCmd {
 /// TUI commands: full name shown in the `cmd:` bar, single-letter alias still accepted.
 pub const TUI_COMMANDS: [(&str, &str, &str); 9] = [
     ("reply", "r", "<#> <text>"),
-    ("done", "d", "<#>"),
+    ("done", "d", "<#|a-b|kind:K|term:T>"),
     ("send", "s", "<terminal> <TYPE> <message>"),
     ("cleanup", "c", "[1,2|all]"),
     ("interrupt", "i", "<terminal>"),
@@ -1757,6 +1762,105 @@ fn split_kind(after: &str) -> Option<(&'static str, &str)> {
     Some((kind, &after[kind.len()..]))
 }
 
+fn split_tui_tokens(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote: Option<char> = None;
+    for c in s.chars() {
+        match in_quote {
+            Some(q) => {
+                if c == q {
+                    in_quote = None;
+                } else {
+                    cur.push(c);
+                }
+            }
+            None => {
+                if c == '"' || c == '\'' {
+                    in_quote = Some(c);
+                } else if c.is_whitespace() {
+                    if !cur.is_empty() {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                } else {
+                    cur.push(c);
+                }
+            }
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn parse_done_tui(rest: &str) -> std::result::Result<TuiCmd, String> {
+    let tokens = split_tui_tokens(rest.trim());
+    if tokens.is_empty() {
+        return Err(usage("done"));
+    }
+    let mut id_args = Vec::new();
+    let mut filters = crate::actions::DoneFilters::default();
+    let mut explicit_source_blocked = false;
+    for tok in tokens {
+        if let Some(v) = tok
+            .strip_prefix("kind:")
+            .or_else(|| tok.strip_prefix("KIND:"))
+        {
+            if v.is_empty() {
+                return Err(usage("done"));
+            }
+            let Some(k) = crate::actions::normalize_done_kind(v) else {
+                return Err(format!("unknown kind: {v}"));
+            };
+            filters.kind = Some(k);
+        } else if let Some(v) = tok
+            .strip_prefix("term:")
+            .or_else(|| tok.strip_prefix("TERM:"))
+        {
+            if v.is_empty() {
+                return Err(usage("done"));
+            }
+            filters.terminal = Some(v.to_string());
+        } else if let Some(v) = tok
+            .strip_prefix("source:")
+            .or_else(|| tok.strip_prefix("SOURCE:"))
+            .or_else(|| tok.strip_prefix("src:"))
+            .or_else(|| tok.strip_prefix("SRC:"))
+        {
+            if v.is_empty() {
+                return Err(usage("done"));
+            }
+            let Some(s) = crate::actions::normalize_done_source(v) else {
+                return Err(format!("unknown source: {v}"));
+            };
+            if s == "blocked" {
+                explicit_source_blocked = true;
+            }
+            filters.source = Some(s);
+        } else {
+            id_args.push(tok);
+        }
+    }
+    let has_filters = !filters.is_empty();
+    if id_args.is_empty() && !has_filters {
+        return Err(usage("done"));
+    }
+    let (ids, legacy_single) = if id_args.is_empty() {
+        (Vec::new(), false)
+    } else {
+        let parsed =
+            crate::actions::parse_done_selectors(&id_args).map_err(|e| format!("{e:#}"))?;
+        let legacy = parsed.legacy_single && !has_filters;
+        (parsed.ids, legacy)
+    };
+    Ok(TuiCmd::Done {
+        ids,
+        filters,
+        explicit_source_blocked,
+        legacy_single,
+    })
+}
 pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
     let line = line.trim();
     let (head, rest) = line
@@ -1786,10 +1890,7 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
             }
             TuiCmd::Reply(id, text.trim().into())
         }
-        "done" => match rest.parse() {
-            Ok(id) => TuiCmd::Done(id),
-            Err(_) => return Err(usage("done")),
-        },
+        "done" => parse_done_tui(rest)?,
         "send" => {
             let (target, after) = rest.split_once(' ').unwrap_or((rest, ""));
             if target.is_empty() {

@@ -49,3 +49,21 @@ Các câu còn lại cũng khớp: `scan` (`src/main.rs:40` ↔ `:673-703`: Code
 `nhỏ` — `rotate --yes` mô tả hơi rộng so với code: `src/main.rs:175` ghi "Skip the interactive confirmation prompt", nhưng trong `src/ops.rs:241-287` biến `yes` chỉ được dùng ở nhánh app không được hỗ trợ (`:275`) qua `caller(store, yes, None)` — với `needs_confirm = None` hàm này trả về ngay, không hỏi (`src/ops.rs:43-45`). Hai nhánh được hỗ trợ (OpenCode `:246-255`, Claude/Codex managed `:256-273`) gọi `rotation::start`, hàm không nhận `yes` (`src/rotation.rs:189-195`). Nói cách khác `--yes` của `rotate` không thực sự bỏ qua một lời nhắc nào. Đề xuất (không chặn): đổi thành "Accepted for compatibility; supported rotations do not prompt" hoặc bỏ câu confirmation. Không ảnh hưởng an toàn: các lời nhắc thật vẫn được mô tả đúng ở `kill`/`interrupt`/`cleanup`/`manage`.
 
 `chặn`: 0. `nên sửa`: 0. `nhỏ`: 1.
+
+## 3. Phủ test help cho mọi lệnh/con lồng — ĐẠT
+
+Enum nguồn: `Cmd` có 24 variant (`src/main.rs:39-247`), `BudgetCmd` có 3 (`src/main.rs:249-272`: `Set`, `Ls`, `Rm`), `HookCmd` có 2 (`src/main.rs:274-280`: `Statusline`, `Install`) — tổng 29; cộng root `agm --help` → 30 đường cần kiểm.
+
+Danh sách ở `tests/cli_test.rs:661-692` có đúng 30 phần tử và khớp từng một:
+
+- Root `&[]` (`:662`).
+- 24 lệnh cấp một: `scan, ls, cost, quota, log, daemon, ps, send, inbox, done, reply, spawn, kill, interrupt, rotate, manage, cleanup, budget, policy, link, ask, hook, sys, tui` (`:663-680`, `:684-691`).
+- 5 lệnh con lồng: `budget set`, `budget ls`, `budget rm` (`:681-683`), `hook statusline`, `hook install` (`:688-689`).
+
+Đã đối chiếu cơ học (tách tên 29 variant bằng regex `^    ([A-Z]\w*)\s*(\{|,)` trên `src/main.rs:39-280`, so với 30 chuỗi trong mảng test): không có variant nào thiếu, không có đường lệnh nào trong test là lệnh không tồn tại. Các "khác biệt" chỉ là 5 con lồng được viết có tiền tố cha (`budget set`…), đúng kỳ vọng.
+
+Vòng lặp `tests/cli_test.rs:693-712`: thêm `--help`, assert exit success (`:697-701`); nếu help có `--json` thì assert chứa "Print JSON" (`:703-705`) — hợp lệ vì `--json` là cờ global (`src/main.rs:31-33`), và thực tế mọi help đều có; xóa 7 mã giao thức rồi assert ASCII (`:706-711`) — đúng cách loại trừ giá trị protocol theo brief mục 3/5.
+
+Hai test bổ sung đúng yêu cầu brief: `cli_stop_help_preserves_user_confirmation_warning` (`tests/cli_test.rs:715-727`) kiểm cả `kill` lẫn `interrupt`; `cli_send_help_explains_existing_message_codes` (`:729-746`) kiểm đủ 7 cặp "mã (giải nghĩa)". Test cũ `cli_cleanup_help_documents_mandatory_confirmation_even_with_yes` (`:600-609`) được giữ lại và pass — tiếp tục bảo vệ cảnh báo cleanup.
+
+`chặn`: 0. `nên sửa`: 0. `nhỏ`: 0.

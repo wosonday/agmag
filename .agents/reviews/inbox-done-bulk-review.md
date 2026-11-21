@@ -59,3 +59,22 @@
 - `cargo clippy --offline --all-targets -- -D warnings`: sạch, exit 0.
 - `cargo fmt --check`: sạch, exit 0.
 - `git ls-files --eol` trên 13 tệp trong `git diff main...HEAD`: 12 tệp `i/lf w/lf`; duy nhất `.agents/log/inbox-done-bulk.md` là `i/mixed w/mixed` → **NÊN SỬA (F3)**. Kiểm byte: tệp có 20 LF và 1 CRLF, CRLF nằm ở cuối dòng 11; yêu cầu review là "phải lf" cho các tệp đã sửa.
+
+## 8. Log & các điểm lệch so với tệp tác vụ — NHỎ
+
+- `.agents/log/inbox-done-bulk.md` **không có** mục "Lệch so với tệp tác vụ" (toàn tệp 20 dòng, kết thúc ở note dòng 20) dù brief reviewer kỳ vọng có mục này và yêu cầu "đánh giá từng điểm lệch". Các lệch thực tế tìm được (F2 README_vi, F3 EOL log) vì thế không được ghi nhận trong log. **NHỎ (F6)** — nên bổ sung mục này khi sửa log.
+- **NHỎ (F5)**: ký tự điều khiển lạ trong log (đọc byte UTF-8): TAB `0x09` tại dòng 15 (`kind:, <TAB>erm:`) và dòng 17 (`<TAB>ests/dashboard_test.rs`, `<TAB>ests/cli_test.rs`); BEL `0x07` tại dòng 16 (`<BEL>ctions::dismiss_done`) và dòng 20 (`<BEL>gm done`). Không ảnh hưởng mã nhưng làm sai lệch tên tệp/lệnh trong log; nên thay bằng chữ thường.
+- Tiến trình TDD/commit:log dòng 9-19 ghi đủ các bước 0→3 với kết quả `cargo test --offline` từng bước; lịch sử commit dùng đúng tiền tố `inbox-done-bulk:` (`ce3cf89`, `7d25bf1`, `a28e71e`, (sửa EOL) `686028e`). Không có lệch thiết kế nào khác so với "Quyết định của CEO" (điểm 1-7): bộ lọc AND, ID+filter giao, blocked protection, một transaction, TUI, docs — đều khớp; chỉ có các lệch F1-F3 ở trên.
+- Phạm vi tệp:diff `main...HEAD` chỉ chạm đúng các tệp được phép sửa cộng với `.agents/tasks/...`, `.agents/log/...`, review; không đụng schema/daemon/module khác. Không worktree khác, không merge/push trong lần review này.
+
+## Kết luận
+
+**CHƯA ĐẠT** — SHA HEAD được duyệt: `686028efece835f193433bdbc61c95cb625b0349` (`686028e`).
+
+Chặn / nên sửa / nhỏ = **1 / 3 / 2**.
+
+- Chặn: **F1** — panic tràn i64 tại `src/actions.rs:140` với khoảng `0-9223372036854775807` (exit 101 ở debug, vòng lặp vô hạn ở release); vi phạm yêu cầu chống overflow và lỗi rõ cho khoảng quá lớn.
+- Nên sửa: **F2** `README_vi.md:142` cú pháp TUI cũ; **F3** `.agents/log/inbox-done-bulk.md:11` CRLF/EOL mixed; **F4** thiếu test CLI/TUI cho quy tắc blocked.
+- Nhỏ: **F5** ký tự BEL/TAB trong log; **F6** log thiếu mục "Lệch so với tệp tác vụ".
+
+Sau khi sửa F1 (bắt buộc) và các mục nên sửa, cần chạy lại `cargo test --offline`, `cargo clippy --offline --all-targets -- -D warnings`, `cargo fmt --check` và `git ls-files --eol` trước khi trình duyệt lại.

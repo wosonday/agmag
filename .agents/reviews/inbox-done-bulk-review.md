@@ -32,3 +32,10 @@
 - Chạy tay: `done 999999` → exit 1; `done <id có>` → `{"done": <id>}`; single ID trùng với mục blocked → vẫn đóng (đúng ngoại lệ thiết kế).
 - Test `tests/cli_test.rs:748-790` xanh; hai test cũ `cli_done_dismisses_inbox_item` và `cli_help_is_english_for_every_command` vẫn xanh trong `cargo test --offline`.
 - Ghi chú nhỏ (không đủ mức lỗi): `done 5 --kind REPORT` với `#5` không tồn tại đi vào đường bulk và trả `{"done":[],"skipped":[…]}` thay vì exit ≠ 0; tuy nhiên "hành vi cũ" chỉ áp cho `done <ID>` không kèm filter, nên chấp nhận.
+
+## 4. `--kind` alias / AND / giao ID+bộ lọc — ĐẠT
+
+- `src/actions.rs:197-206` gọi lại `kind_from_english` và `KINDS` sẵn có (`src/actions.rs:12-39`) — **không** chép bảng mới, đúng yêu cầu. `REPORT` và `BÁO CÁO` cùng chuẩn hóa về `BÁO CÁO`; test tương đương ở `tests/actions_test.rs:648+`.
+- `done_item_matches_filters` (`src/actions.rs:216-241`) áp đồng thời kind/terminal/source → AND giữa các bộ lọc; đường có ID dùng chính hàm này (`src/actions.rs:287-297`) → ID và filter là giao. Test AND `terminal + kind` ở `tests/actions_test.rs:~675+`.
+- `normalize_done_source` (`src/actions.rs:208-214`) chấp nhận `message|context|rotation|blocked`, không phân biệt hoa thường ASCII; source lạ → lỗi rõ từ `src/main.rs:499-503`.
+- Nhận xét nhỏ (không phải lỗi theo spec): `eq_ignore_ascii_case` ở `src/actions.rs:204` và `src/actions.rs:221` không gập được dấu tiếng Việt, nên `báo cáo` viết thường không khớp `BÁO CÁO`. Yêu cầu chỉ bắt buộc "không phân biệt hoa thường với alias" (alias tiếng Anh), nên đạt.

@@ -139,7 +139,7 @@ agm tui
 ── » RECENT MESSAGES ─────────────────────────────────────────────
   (no messages)
 ──────────────────────────────────────────────────────────────────
-cmd: reply <#> <text> · done <#> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
+cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
      interrupt <terminal> · kill <terminal> · policy on|off · view <up to 3 sections> · quit
      TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```

@@ -359,6 +359,27 @@ fn parse_commands() {
             legacy_single: false,
         })
     );
+    // Only an explicit `source:blocked` (or alias `src:`) unlocks blocked items; ranges never do.
+    for cmd in ["done source:blocked", "done src:blocked 1-3"] {
+        let Ok(TuiCmd::Done {
+            filters,
+            explicit_source_blocked,
+            ..
+        }) = parse_command(cmd)
+        else {
+            panic!("{cmd}: not parsed as Done");
+        };
+        assert!(explicit_source_blocked, "{cmd}");
+        assert_eq!(filters.source.as_deref(), Some("blocked"), "{cmd}");
+    }
+    let Ok(TuiCmd::Done {
+        explicit_source_blocked,
+        ..
+    }) = parse_command("done 1-3 source:message")
+    else {
+        panic!("done 1-3 source:message: not parsed as Done");
+    };
+    assert!(!explicit_source_blocked);
     assert_eq!(parse_command("cleanup"), Ok(TuiCmd::Cleanup(None)));
     assert_eq!(
         parse_command("cleanup all"),

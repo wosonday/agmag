@@ -796,3 +796,50 @@ fn cli_done_bulk_and_legacy_cases() {
     assert_eq!(v["done"], serde_json::json!([b, c]));
     assert_eq!(v["skipped"], serde_json::json!([]));
 }
+
+#[test]
+fn cli_done_range_and_filters_never_close_blocked_items() {
+    let tmp = sandbox(None);
+    let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+    let r1 = store
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r1", 1)
+        .unwrap()
+        .unwrap();
+    let blk = store
+        .open_inbox(Some("t9"), "blocked", Some("permission"), "approve?", 2)
+        .unwrap()
+        .unwrap();
+    let r2 = store
+        .open_inbox(Some("t1"), "message", Some("BÁO CÁO"), "r2", 3)
+        .unwrap()
+        .unwrap();
+    drop(store);
+    let open_ids = |tmp: &std::path::Path| -> Vec<i64> {
+        let s = agmag::store::Store::open(&tmp.join("home/agm.db")).unwrap();
+        s.inbox(true).unwrap().iter().map(|i| i.id).collect()
+    };
+
+    // A range spanning the blocked item closes the others and reports it as skipped.
+    let out = agm_env(tmp.path(), &["done", &format!("{r1}-{r2}"), "--json"], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = json(&out);
+    assert_eq!(v["done"], serde_json::json!([r1, r2]));
+    assert_eq!(v["skipped"][0]["id"], serde_json::json!(blk));
+    assert_eq!(open_ids(tmp.path()), vec![blk]);
+
+    // A filter that matches it (terminal) still skips it.
+    let out = agm_env(tmp.path(), &["done", "--terminal", "t9", "--json"], &[]);
+    assert!(out.status.success());
+    assert_eq!(json(&out)["done"], serde_json::json!([]));
+    assert_eq!(open_ids(tmp.path()), vec![blk]);
+
+    // Only an explicit --source blocked closes it.
+    let out = agm_env(tmp.path(), &["done", "--source", "blocked", "--json"], &[]);
+    assert!(out.status.success());
+    assert_eq!(json(&out)["done"], serde_json::json!([blk]));
+    assert!(open_ids(tmp.path()).is_empty());
+}

@@ -581,6 +581,21 @@ fn parse_done_id_selectors_rejects_bad_input() {
     }
     // range too large (> 10000 items)
     assert!(parse_done_selectors(&["1-10002".into()]).is_err());
+    // boundary: exactly 10000 items is allowed, 10001 is not
+    assert_eq!(
+        parse_done_selectors(&["1-10000".into()]).unwrap().ids.len(),
+        10_000
+    );
+    assert!(parse_done_selectors(&["1-10001".into()]).is_err());
+    // huge bounds must be a clean error, never an overflow panic or a giant loop
+    assert!(parse_done_selectors(&["0-9223372036854775807".into()]).is_err());
+    assert_eq!(
+        parse_done_selectors(&["9223372036854775806-9223372036854775807".into()])
+            .unwrap()
+            .ids,
+        vec![i64::MAX - 1, i64::MAX]
+    );
+    assert!(parse_done_selectors(&["1-99999999999999999999".into()]).is_err());
 }
 
 #[test]

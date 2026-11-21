@@ -137,8 +137,8 @@ fn parse_selector_arg(arg: &str, out: &mut Vec<i64>) -> Result<()> {
             if end < start {
                 bail!("invalid id range: {part}");
             }
-            let count = end - start + 1;
-            if count > 10_000 {
+            // `end - start` cannot overflow (both are non-negative); `+ 1` could at i64::MAX.
+            if end - start >= 10_000 {
                 bail!("id range too large: {part}");
             }
             for id in start..=end {

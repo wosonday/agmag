@@ -27,3 +27,10 @@
 
 ### Step 3: CHANGELOG
 - Added Unreleased/### Thay đổi bullet: "Help CLI chuyển sang tiếng Anh."
+
+### Verification
+- cargo test --offline: all tests passed (full workspace, including 	ests/cli_test.rs help tests: 4/4). Key suites observed in run: cli 22, agy_quota 12, config 3, context 3, correlate 2, daemon 4, ingest 3, launch 6, model 5, opencode 15, opencode_go_quota 9, opencode_metrics 10, parse_claude 4, parse_codex 5, policy 12, report 8, rotation 27, safety 12, spawn_fallback 9, store 11, store_v2 11, sysmon 10, doc-tests 0.
+- cargo clippy --offline --all-targets -- -D warnings: clean (exit 0).
+- cargo fmt --check: clean.
+- git diff main -- src/main.rs: inspected with git diff --unified=0 main -- src/main.rs. All changes are clap help text only: /// doc comments and bout = string on Cli; no runtime strings, command/flag names, aliases, defaults, parsers, or JSON changed. Minimal structural reflow: Done and Link variants expanded from single-line to multi-line solely to attach per-field /// help (field names/types unchanged: id: i64, 	erminal: String, session: String). No other hunks alter logic.
+- Help spot-checks (also covered by cli_help_is_english_for_every_command over all commands/subcommands): gm --help, gm send --help, gm kill --help, gm budget set --help are English; send explains protocol codes with English gloss and aliases; kill/interrupt preserve "Codex/Claude and unknown apps still require a user to type y".

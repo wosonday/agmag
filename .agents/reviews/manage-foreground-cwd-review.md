@@ -33,3 +33,42 @@ Kết luận mục 1: đúng brief, không có ghi chú.
 - Lưu ý phạm vi (đã ghi trong log, không phải lỗi): không có test CLI giả `hc get` cho `manage` trên Windows; `manage` được phủ gián tiếp qua `effective_cwd` + các test rotation. Chấp nhận theo log `.agents/log/manage-foreground-cwd.md:22-24`.
 
 Kết luận mục 2: đúng brief, quy tắc xác nhận nguyên vẹn.
+
+---
+
+## Mục 3 — `src/rotation.rs::start`: nguồn `rotations.cwd`, nhất quán requested/handoff_ready, ca spec hỏng / cwd rỗng
+
+**Mức: 1 × NHỎ (spec.cwd rỗng), không có CHẶN / NÊN SỬA.**
+
+### 3a. Hai ca chính — ĐẠT
+
+- `src/rotation.rs:220-226` tính `rotation_cwd`, truyền vào `INSERT ... cwd` tại `src/rotation.rs:227-231` (thay `t.cwd` cũ).
+  - Có `launch_spec` parse được → `.map(|spec| spec.cwd)` (`src/rotation.rs:223-224`) → `rotations.cwd = spec.cwd` — thư mục người dùng đã xác nhận ở `manage`. Đúng brief.
+  - Không có `launch_spec` (OpenCode do hc sinh) → `.or_else(|| t.cwd.clone())` (`src/rotation.rs:225`) → `terminals.cwd` như cũ. Đúng brief.
+  - Test: `tests/rotation_test.rs:966` (spec.cwd `D:\Project\other` thắng `terminals.cwd = ...\shell-root`), `tests/rotation_test.rs:988` (không spec → giữ `D:\w`) — pass.
+- Không đọc `foreground` trong `start` (`src/rotation.rs:219` ghi chú rõ lý do: cần thư mục ổn định cho các bước sau). Đúng quyết định.
+
+### 3b. Nhất quán các bước — ĐẠT
+
+- Bước `pending → requested`: `src/rotation.rs:525-532` lấy `r.cwd.clone().or_else(|| t.cwd.clone()).filter(...)`. Vì `start` đã ghi `r.cwd = spec.cwd`, bàn giao được tạo dưới `<spec.cwd>/.agents/handoff/`; nếu `r.cwd` NULL thì mới rơi về `t.cwd` (hành vi cũ). Test `tests/rotation_test.rs:1008 managed_handoff_targets_launch_spec_cwd` kiểm cả `rotations.cwd`, `rel` nằm dưới `<project>/.agents/handoff/`, **không** tạo `.agents/` trong shell-root, và lệnh gửi chứa `rel` — pass.
+- Bước `handoff_ready`: `src/rotation.rs:678-680` `if let Some(cwd) = &r.cwd { spec.cwd = cwd.clone(); }`. Với `r.cwd = spec.cwd` từ `start`, phép gán này là no-op → `spec.cwd` giữ nguyên thư mục đã xác nhận; phiên kế nhiệm mở đúng dự án. Nhất quán với `requested`. Đúng như brief dự báo ("tự nhất quán").
+- `src/rotation.rs:669-677` vẫn fail-closed khi thiếu/hỏng `launch_spec` ở bước mở phiên mới — không bị nới.
+
+### 3c. Ca `launch_spec` hỏng — ĐẠT
+
+- JSON hỏng/version sai/thiếu executable → `LaunchSpec::from_json(...).ok()` (`src/rotation.rs:223`) trả `None` → `.or_else(|| t.cwd.clone())` → rơi về `terminals.cwd`. Đúng ý log `.agents/log/manage-foreground-cwd.md:34` ("spec hỏng → rơi về terminals.cwd"); không crash, không ghi cwd rỗng.
+
+### 3d. Ca `spec.cwd` rỗng — **NHỎ**
+
+- Vị trí: `src/rotation.rs:226` `.filter(|c| !c.trim().is_empty())` đặt **sau** `.or_else(...)` (`src/rotation.rs:225`). Chuỗi suy luận:
+  - spec parse được nhưng `cwd == ""` → `.map` cho `Some("")` → `.or_else` **không** chạy (đã có `Some`) → `.filter` loại `""` → `rotation_cwd = None` → `rotations.cwd = NULL`.
+  - Kỳ vọng theo mẫu "dữ liệu spec không dùng được → rơi về `t.cwd`" là `Some(t.cwd)`, nhưng ở đây không rơi.
+- **Đánh giá mức độ: NHỎ, không chặn**, vì:
+  1. Không thể phát sinh qua luồng sản phẩm: `agm manage` dựng spec bằng `parse_launch_spec`, hàm chặn cwd rỗng tại `src/launch.rs:128-130`; bản thân `manage` cũng đã chặn ở `src/ops.rs:339`. `set_managed_launch` (`src/actions.rs:562`) chỉ nhận spec từ `manage`.
+  2. `LaunchSpec::from_json` (`src/launch.rs:23-32`) không validate `cwd`, nên spec cwd-rỗng lý thuyết chỉ có thể xuất hiện nếu ghi trực tiếp vào CSDL / fixture test — không phải ca thực tế.
+  3. Hậu quả nếu xảy ra vẫn fail-soft, không crash: `requested` (`src/rotation.rs:525-529`) rơi về `t.cwd`, tức trở lại hành vi cũ (ghi bàn giao vào thư mục shell) — đúng là lỗi đang được sửa, nhưng chỉ trong ca dữ liệu hỏng ngoài luồng.
+- **Gợi ý (không bắt buộc nghiệm thu)**: chuyển filter lên trước `or_else` để "spec.cwd rỗng" cũng rơi về `t.cwd`, vd:
+  `.and_then(|json| LaunchSpec::from_json(json).ok()).map(|s| s.cwd).filter(|c| !c.trim().is_empty()).or_else(|| t.cwd.clone().filter(|c| !c.trim().is_empty()))`
+  (bỏ `.filter` cuối, hoặc giữ cả hai — miễn filter nằm trước `or_else`). Nên kèm 1 test "spec.cwd rỗng → `rotations.cwd == t.cwd`" nếu sửa.
+
+Kết luận mục 3: hai ca chính và hai bước requested/handoff_ready đúng; ca spec hỏng đúng; chỉ có 1 nit ở ca spec.cwd rỗng (nhỏ, không chặn).

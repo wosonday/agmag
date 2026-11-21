@@ -39,3 +39,9 @@
 - `done_item_matches_filters` (`src/actions.rs:216-241`) áp đồng thời kind/terminal/source → AND giữa các bộ lọc; đường có ID dùng chính hàm này (`src/actions.rs:287-297`) → ID và filter là giao. Test AND `terminal + kind` ở `tests/actions_test.rs:~675+`.
 - `normalize_done_source` (`src/actions.rs:208-214`) chấp nhận `message|context|rotation|blocked`, không phân biệt hoa thường ASCII; source lạ → lỗi rõ từ `src/main.rs:499-503`.
 - Nhận xét nhỏ (không phải lỗi theo spec): `eq_ignore_ascii_case` ở `src/actions.rs:204` và `src/actions.rs:221` không gập được dấu tiếng Việt, nên `báo cáo` viết thường không khớp `BÁO CÁO`. Yêu cầu chỉ bắt buộc "không phân biệt hoa thường với alias" (alias tiếng Anh), nên đạt.
+
+## 5. Một transaction SQLite / `resolve_inbox` cũ / schema / daemon — ĐẠT
+
+- `src/store/v2.rs:411-436`: `resolve_inbox_many` mở `SAVEPOINT agm_done_bulk`, thực hiện toàn bộ `UPDATE … WHERE resolved_ms IS NULL` rồi `RELEASE`; trên lỗi `ROLLBACK TO` + `RELEASE`. Tất cả đóng nằm trong **một** transaction; không ghi đè `reply`/`resolved_ms` cũ.
+- `resolve_inbox` cũ giữ nguyên (`src/actions.rs:328-333` vẫn gọi `store.resolve_inbox`); diff `main...HEAD` không đổi schema SQL (`src/store/schema*.sql` không xuất hiện trong danh sách tệp) và không đụng daemon — đúng phạm vi thiết kế điểm 5 của CEO.
+- `dismiss_done` (`src/actions.rs:323`) gọi `resolve_inbox_many` đúng một lần sau khi đã lọc xong danh sách `done`, kể cả khi danh sách rỗng (hàm trả về sớm, `src/store/v2.rs:412-414`).

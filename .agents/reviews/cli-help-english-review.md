@@ -67,3 +67,11 @@ Vòng lặp `tests/cli_test.rs:693-712`: thêm `--help`, assert exit success (`:
 Hai test bổ sung đúng yêu cầu brief: `cli_stop_help_preserves_user_confirmation_warning` (`tests/cli_test.rs:715-727`) kiểm cả `kill` lẫn `interrupt`; `cli_send_help_explains_existing_message_codes` (`:729-746`) kiểm đủ 7 cặp "mã (giải nghĩa)". Test cũ `cli_cleanup_help_documents_mandatory_confirmation_even_with_yes` (`:600-609`) được giữ lại và pass — tiếp tục bảo vệ cảnh báo cleanup.
 
 `chặn`: 0. `nên sửa`: 0. `nhỏ`: 0.
+
+## 4. `CHANGELOG.md` — ĐẠT
+
+`git diff main...HEAD -- CHANGELOG.md` chỉ có một dòng thêm: `CHANGELOG.md:8` = `- Help CLI chuyển sang tiếng Anh.`, nằm dưới `## [Unreleased]` (`:3`) → `### Thay đổi` (`:5`), ngay sau bullet `agm cost` có sẵn (`:7`). Đúng brief mục 6; không sửa mục bản phát hành nào khác.
+
+Kiểm trực tiếp trên byte: toàn tệp có 74 ký tự `0x0A` (LF) và **0** ký tự `0x0D` (CR) → LF thuần, không bị CRLF hóa. 3 byte đầu `23 20 43` = `# C` → không có BOM; 12 byte cuối kết thúc bằng `0A` → dòng cuối có newline.
+
+`chặn`: 0. `nên sửa`: 0. `nhỏ`: 0.

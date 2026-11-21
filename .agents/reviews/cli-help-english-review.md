@@ -75,3 +75,21 @@ Hai test bổ sung đúng yêu cầu brief: `cli_stop_help_preserves_user_confir
 Kiểm trực tiếp trên byte: toàn tệp có 74 ký tự `0x0A` (LF) và **0** ký tự `0x0D` (CR) → LF thuần, không bị CRLF hóa. 3 byte đầu `23 20 43` = `# C` → không có BOM; 12 byte cuối kết thúc bằng `0A` → dòng cuối có newline.
 
 `chặn`: 0. `nên sửa`: 0. `nhỏ`: 0.
+
+## 5. Lệnh kiểm — ĐẠT
+
+Chạy trong worktree `D:\Project\agmag.wt\cli-help-english` (PowerShell) trên HEAD `b66ee61`:
+
+| Lệnh | Kết quả |
+|---|---|
+| `cargo test --offline` | exit 0 — 31 suite, **313 passed / 0 failed / 0 ignored**. Riêng `tests/cli_test.rs`: 22/22, gồm `cli_help_is_english_for_every_command`, `cli_stop_help_preserves_user_confirmation_warning`, `cli_send_help_explains_existing_message_codes` và `cli_cleanup_help_documents_mandatory_confirmation_even_with_yes`. |
+| `cargo clippy --offline --all-targets -- -D warnings` | exit 0 (`Finished dev profile`), không warning. |
+| `cargo fmt --check` | exit 0, không output — sạch. |
+
+`git status --short --branch` chỉ còn `## feat/cli-help-english` và tệp review này; reviewer **không sửa mã sản phẩm**. Không push, không merge.
+
+## Kết luận
+
+**ĐẠT** — HEAD `b66ee613f8d80a011fe6aa90b5c4e6f65b55aa89` được duyệt.
+
+Tổng phát hiện: **chặn / nên sửa / nhỏ = 0 / 0 / 1**. Phát hiện duy nhất là gợi ý chỉnh câu help của `rotate --yes` (`src/main.rs:175`, phân tích ở mục 2): không chặn nghiệm thu, không làm yếu cảnh báo an toàn, và không bắt buộc phải sửa mã sản phẩm để đạt.

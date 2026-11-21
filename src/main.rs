@@ -172,7 +172,7 @@ enum Cmd {
     Rotate {
         /// Terminal address or target
         target: String,
-        /// Skip the interactive confirmation prompt
+        /// Accepted for compatibility; rotation queues a handoff and never prompts
         #[arg(long)]
         yes: bool,
     },

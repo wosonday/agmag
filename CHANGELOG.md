@@ -5,6 +5,7 @@
 ### Thay đổi
 
 - `agm cost`: hàng **SUM** được tách khỏi các dòng dữ liệu bằng vạch kẻ đôi (như vạch dưới tiêu đề) cho dễ nhìn.
+- Help CLI chuyển sang tiếng Anh.
 
 ### Sửa lỗi
 

@@ -25,10 +25,10 @@ mod tui;
 #[command(
     name = "agm",
     version,
-    about = "Theo dõi token, hạn mức gói và hội thoại của các agent trong herdr"
+    about = "Track agent tokens, subscription quotas, and conversations in herdr"
 )]
 struct Cli {
-    /// In JSON (mặc định khi đầu ra không phải terminal)
+    /// Print JSON (the default when stdout is not a terminal)
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -37,164 +37,210 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Quét log Codex/Claude/agy mới vào CSDL
+    /// Import new Codex/Claude/agy logs and OpenCode usage into the database
     Scan {
+        /// Number of days of logs to scan
         #[arg(long, default_value_t = 7)]
         days: i64,
-        /// Quét từ ngày địa phương YYYY-MM-DD
+        /// Scan from a local date (YYYY-MM-DD)
         #[arg(long, conflicts_with = "days")]
         since: Option<String>,
     },
-    /// Các phiên hoạt động gần đây
+    /// List recently active sessions
     Ls {
+        /// Number of days of session activity to include
         #[arg(long, default_value_t = 1)]
         days: i64,
     },
-    /// Tổng token (và USD cho model trả theo API) theo nhóm hoặc tóm tắt 24h/ngày/4 tháng
+    /// Group token totals and USD values (API-priced models) or show a usage summary
     Cost {
+        /// Group totals by model, local day, local month, source, or working directory
         #[arg(long, value_enum, default_value_t = GroupBy::Model)]
         by: GroupBy,
+        /// Number of days of usage to include
         #[arg(long, default_value_t = 1)]
         days: i64,
-        /// Phạm vi thời gian theo giờ máy (loại trừ với --days)
+        /// Time window in local time (mutually exclusive with --days)
         #[arg(long, value_enum, conflicts_with = "days")]
         window: Option<UsageWindow>,
-        /// Bảng tóm tắt 24h / Hôm nay / Tháng này kèm bar chart 4 tháng gần nhất
+        /// Show a summary table for 24h/today/this month and a 4-month bar chart
         #[arg(long)]
         summary: bool,
     },
-    /// Hạn mức gói theo cửa sổ thời gian (hiển thị phần còn lại)
+    /// Show subscription quotas by time window (displayed as remaining)
     Quota {
-        /// Đọc ngay hạn mức agy (`agy --print /usage`, khoảng 3 giây) trước khi in
+        /// Refresh agy, Codex, and OpenCode quota data before printing (agy read can take ~3s)
         #[arg(long)]
         refresh: bool,
     },
-    /// Các lượt hội thoại của một phiên (tiền tố session id)
+    /// Show conversation turns for a session ID prefix
     Log {
+        /// Session ID or unique prefix
         session: String,
+        /// Maximum number of turns to show
         #[arg(long, default_value_t = 50)]
         limit: usize,
-        /// In nguyên dòng log gốc của từng lượt
+        /// Print each turn's original log line (Codex/Claude only)
         #[arg(long)]
         full: bool,
     },
-    /// Theo dõi nền: sự kiện hc, quét log, ghép terminal, ngân sách, xoay vòng thợ
+    /// Monitor hc events, scan logs, link terminals, enforce budgets, and rotate workers
     Daemon {
+        /// Seconds between scans, linking, policy checks, and rotation
         #[arg(long, default_value_t = 10)]
         interval: u64,
-        /// Nạp sự kiện hc từ tệp (mỗi dòng một JSON) rồi thoát — để gỡ lỗi
+        /// Replay hc events from a JSONL file and exit (for debugging)
         #[arg(long)]
         replay: Option<PathBuf>,
     },
-    /// Các terminal của herdr-core mà agmag biết
+    /// List herdr-core terminals known to agmag
     Ps {
+        /// Include finished terminals
         #[arg(long)]
         all: bool,
     },
-    /// Gửi tin theo mẫu (GIAO, BÁO CÁO, LỖI, HỎI, CHẶN, ĐẠT, CHƯA ĐẠT); đích `user` → hộp thư
+    /// Send a structured message: GIAO (assign), "BÁO CÁO" (report), LỖI (error), HỎI (ask), CHẶN (blocked), ĐẠT (pass), "CHƯA ĐẠT" (fail). English aliases ASSIGN|REPORT|ERROR|QUESTION|BLOCKED|PASS|FAIL are also accepted. Use destination `user` for the inbox
     Send {
+        /// Destination terminal or `user`
         to: String,
+        /// Message code or English alias (see command help)
         #[arg(long = "type")]
         kind: String,
+        /// Task ID to attach to the message
         #[arg(long)]
         task: Option<String>,
+        /// Message text
         #[arg(required = true, num_args = 1..)]
         text: Vec<String>,
     },
-    /// Hộp thư người dùng: agent bị chặn, câu hỏi, đề nghị, cảnh báo
+    /// Show blocked agents, questions, requests, and warnings in the user inbox
     Inbox {
+        /// Include resolved inbox items
         #[arg(long)]
         all: bool,
     },
-    /// Đóng một mục hộp thư (không gõ gì vào terminal nào)
-    Done { id: i64 },
-    /// Trả lời một mục hộp thư (gõ vào terminal liên quan)
-    Reply {
+    /// Dismiss an inbox item without sending input to any terminal
+    Done {
+        /// Inbox item ID
         id: i64,
+    },
+    /// Reply to an inbox item by sending input to its terminal
+    Reply {
+        /// Inbox item ID
+        id: i64,
+        /// Reply text
         #[arg(required = true, num_args = 1..)]
         text: Vec<String>,
     },
-    /// Sinh agent qua hc, có kiểm hạn mức thợ và ngân sách
+    /// Spawn an agent through hc with worker-limit and budget checks
     Spawn {
+        /// herdr-core template name
         template: String,
+        /// Task ID for labels, budgets, and handoff records
         #[arg(long)]
         task: String,
+        /// Agent role label (for example `worker`)
         #[arg(long, default_value = "worker")]
         role: String,
+        /// Optional terminal name
         #[arg(long)]
         name: Option<String>,
+        /// Working directory for the spawned terminal
         #[arg(long)]
         cwd: Option<String>,
+        /// Initial prompt or text passed after `--`
         #[arg(last = true)]
         text: Vec<String>,
     },
-    /// Kết thúc một terminal (Codex/Claude: chỉ người dùng, có xác nhận)
+    /// Stop a terminal. Codex/Claude and unknown apps still require a user to type y
     Kill {
+        /// Terminal address or target
         target: String,
+        /// Skip the interactive confirmation prompt (still requires a user caller)
         #[arg(long)]
         yes: bool,
     },
-    /// Ngắt lượt đang chạy (cùng quy tắc với kill)
+    /// Interrupt the current turn. Codex/Claude and unknown apps still require a user to type y
     Interrupt {
+        /// Terminal address or target
         target: String,
+        /// Skip the interactive confirmation prompt (still requires a user caller)
         #[arg(long)]
         yes: bool,
     },
-    /// Xoay vòng phiên: OpenCode (bàn giao + kill + spawn) hoặc Claude/Codex đã quản lý (bàn giao + mở mới, không kill)
+    /// Rotate a session: OpenCode handoff+kill+spawn, or managed Claude/Codex handoff+open without kill
     Rotate {
+        /// Terminal address or target
         target: String,
+        /// Accepted for compatibility; rotation queues a handoff and never prompts
         #[arg(long)]
         yes: bool,
     },
-    /// Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay
+    /// Enable or disable managed rotation for a manually opened Claude Code or Codex session
     Manage {
+        /// Terminal address or target
         target: String,
+        /// Disable managed rotation for the target
         #[arg(long)]
         off: bool,
+        /// Launch command string (alternative to argv after `--`)
         #[arg(long)]
         cmd: Option<String>,
+        /// Launch argv passed after `--`
         #[arg(last = true)]
         argv: Vec<String>,
     },
-    /// Dọn dẹp thủ công các phiên cũ đã bàn giao (1 lần xác nhận y/N)
+    /// Manually clean up old handed-off sessions (requires one typed y/N confirmation)
     Cleanup {
+        /// Terminal addresses to clean up
         targets: Vec<String>,
+        /// Select all eligible handed-off terminals
         #[arg(long)]
         all: bool,
         /// Compatibility flag; cleanup still requires one typed confirmation
         #[arg(long)]
         yes: bool,
     },
-    /// Ngân sách: task:<ID> (token) hoặc provider:<tên>:<phút> (% hạn mức)
+    /// Manage budgets: task:<ID> (tokens) or provider:<name>:<minutes> (quota percent)
     Budget {
         #[command(subcommand)]
         cmd: BudgetCmd,
     },
-    /// Bật/tắt mọi hành động tự động (nút dừng khẩn)
+    /// Enable or disable all automatic actions (emergency stop)
     Policy {
+        /// One of `on`, `off`, or `status`
         #[arg(value_parser = ["on", "off", "status"])]
         state: String,
     },
-    /// Ghép tay terminal ↔ phiên
-    Link { terminal: String, session: String },
-    /// Hỏi agy (Gemini) một lần, chỉ đọc; ghi lại token
+    /// Manually link a terminal to a session
+    Link {
+        /// Terminal address
+        terminal: String,
+        /// Session ID or prefix
+        session: String,
+    },
+    /// Ask agy (Gemini) once in read-only mode and record token usage
     Ask {
+        /// agy model name
         #[arg(long)]
         model: Option<String>,
+        /// Timeout in seconds
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+        /// Question text
         #[arg(required = true, num_args = 1..)]
         question: Vec<String>,
     },
-    /// Hook cho Claude Code
+    /// Claude Code hooks
     Hook {
         #[command(subcommand)]
         cmd: HookCmd,
     },
     /// RAM / CPU / disk of this machine and how much each agent's process tree uses (live, not stored)
     Sys,
-    /// Giao diện theo dõi trong một pane của herdr
+    /// Run the monitoring UI in a herdr pane
     Tui {
+        /// Refresh interval in seconds
         #[arg(long, default_value_t = 2)]
         refresh: u64,
     },
@@ -202,26 +248,34 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum BudgetCmd {
+    /// Set a soft/hard budget for a scope
     Set {
+        /// Budget scope: `task:<ID>` or `provider:<name>:<minutes>`
         scope: String,
+        /// Soft limit (tokens or quota percent, depending on scope)
         #[arg(long)]
         soft: f64,
+        /// Hard limit (tokens or quota percent, depending on scope)
         #[arg(long)]
         hard: f64,
+        /// Action to take when a limit is hit (for example `notify`)
         #[arg(long, default_value = "notify")]
         action: String,
     },
+    /// List configured budgets
     Ls,
+    /// Remove a configured budget
     Rm {
+        /// Budget scope to remove
         scope: String,
     },
 }
 
 #[derive(Subcommand)]
 enum HookCmd {
-    /// Đọc JSON statusline từ stdin, ghi hạn mức/ngữ cảnh, in một dòng trạng thái
+    /// Read statusline JSON from stdin, record quota/context, and print one status line
     Statusline,
-    /// Thêm statusLine vào ~/.claude/settings.json (không ghi đè cái đã có)
+    /// Add statusLine to ~/.claude/settings.json without overwriting an existing one
     Install,
 }
 

@@ -545,3 +545,40 @@ fn set_managed_launch_blocks_agents_and_unconfirmed_users() -> Result<()> {
     assert!(store.terminal("t11")?.unwrap().managed);
     Ok(())
 }
+
+#[test]
+fn parse_done_id_selectors() {
+    use agmag::actions::parse_done_selectors;
+    assert_eq!(parse_done_selectors(&["5".into()]).unwrap().ids, vec![5]);
+    assert!(parse_done_selectors(&["5".into()]).unwrap().legacy_single);
+    assert_eq!(
+        parse_done_selectors(&["3-7".into()]).unwrap().ids,
+        vec![3, 4, 5, 6, 7]
+    );
+    assert!(!parse_done_selectors(&["3-7".into()]).unwrap().legacy_single);
+    assert_eq!(
+        parse_done_selectors(&["1,4-6".into()]).unwrap().ids,
+        vec![1, 4, 5, 6]
+    );
+    assert_eq!(
+        parse_done_selectors(&["150,151".into(), "160-162".into()])
+            .unwrap()
+            .ids,
+        vec![150, 151, 160, 161, 162]
+    );
+    assert!(
+        !parse_done_selectors(&["150,151".into(), "160-162".into()])
+            .unwrap()
+            .legacy_single
+    );
+}
+
+#[test]
+fn parse_done_id_selectors_rejects_bad_input() {
+    use agmag::actions::parse_done_selectors;
+    for bad in ["9-3", "a", "1-", ""] {
+        assert!(parse_done_selectors(&[bad.into()]).is_err(), "{bad}");
+    }
+    // range too large (> 10000 items)
+    assert!(parse_done_selectors(&["1-10002".into()]).is_err());
+}

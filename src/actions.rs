@@ -101,6 +101,71 @@ pub fn detect_caller(
     classify_caller(hc_terminal, is_agent, tty, confirmed)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoneSelectorParse {
+    pub ids: Vec<i64>,
+    pub legacy_single: bool,
+}
+
+fn is_plain_single_id(s: &str) -> bool {
+    !s.is_empty() && !s.contains(',') && !s.contains('-') && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn parse_id_token(token: &str) -> Result<i64> {
+    if token.is_empty() || !token.chars().all(|c| c.is_ascii_digit()) {
+        bail!("invalid id selector: {token:?}");
+    }
+    token
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("invalid id selector: {token:?}"))
+}
+
+fn parse_selector_arg(arg: &str, out: &mut Vec<i64>) -> Result<()> {
+    if arg.is_empty() {
+        bail!("invalid id selector: empty");
+    }
+    for part in arg.split(',') {
+        if part.is_empty() {
+            bail!("invalid id selector: empty token");
+        }
+        if let Some((a, b)) = part.split_once('-') {
+            if b.contains('-') {
+                bail!("invalid id selector: {part:?}");
+            }
+            let start = parse_id_token(a)?;
+            let end = parse_id_token(b)?;
+            if end < start {
+                bail!("invalid id range: {part}");
+            }
+            let count = end - start + 1;
+            if count > 10_000 {
+                bail!("id range too large: {part}");
+            }
+            for id in start..=end {
+                out.push(id);
+            }
+        } else {
+            out.push(parse_id_token(part)?);
+        }
+    }
+    Ok(())
+}
+
+/// Parse selectors for `agm done`: each arg is `N`, `N-M`, or `N,M-K`.
+pub fn parse_done_selectors(args: &[String]) -> Result<DoneSelectorParse> {
+    if args.is_empty() {
+        bail!("no id selectors");
+    }
+    let legacy_single = args.len() == 1 && is_plain_single_id(&args[0]);
+    let mut ids = Vec::new();
+    for arg in args {
+        parse_selector_arg(arg, &mut ids)?;
+    }
+    if ids.is_empty() {
+        bail!("no id selectors");
+    }
+    Ok(DoneSelectorParse { ids, legacy_single })
+}
 /// Đóng một mục hộp thư mà không gõ gì vào terminal nào.
 pub fn dismiss(store: &Store, id: i64, now: i64) -> Result<()> {
     if store.inbox_item(id)?.is_none() {

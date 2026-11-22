@@ -238,9 +238,13 @@ fn wall_ms() -> i64 {
 
 /// Khóa bằng `create_dir` (nguyên tử); khóa cũ hơn `stale_after` bị thu hồi.
 pub fn acquire_lock(dir: &Path, timeout: Duration, stale_after: Duration) -> Result<BranchLock> {
-    acquire_lock_with(dir, timeout, stale_after, &|from, to| {
-        std::fs::rename(from, to)
-    })
+    acquire_lock_with(
+        dir,
+        timeout,
+        stale_after,
+        &|d| std::fs::create_dir(d),
+        &|from, to| std::fs::rename(from, to),
+    )
 }
 
 /// Như `acquire_lock` nhưng cho phép thay bước đổi tên (để test lỗi đổi tên).
@@ -249,6 +253,7 @@ pub fn acquire_lock_with(
     dir: &Path,
     timeout: Duration,
     stale_after: Duration,
+    create: &dyn Fn(&Path) -> std::io::Result<()>,
     rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> Result<BranchLock> {
     let mut last_err: Option<std::io::Error> = None;
@@ -257,7 +262,7 @@ pub fn acquire_lock_with(
     }
     let start = std::time::Instant::now();
     loop {
-        match std::fs::create_dir(dir) {
+        match create(dir) {
             Ok(()) => {
                 let _ = std::fs::write(
                     dir.join("owner"),
@@ -268,6 +273,8 @@ pub fn acquire_lock_with(
                 });
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            // Windows: thư mục đang chờ xóa trả "access denied" — coi như tranh chấp, thử lại
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => last_err = Some(e),
             Err(e) => {
                 return Err(e).with_context(|| format!("không tạo được khóa {}", dir.display()));
             }

@@ -370,12 +370,18 @@ fn stale_lock_with_failing_rename_times_out_instead_of_spinning() {
     let ld = lock_dir(&dir.path().join("BRANCHES.md"));
     std::fs::create_dir_all(&ld).unwrap();
     let start = std::time::Instant::now();
-    let e = acquire_lock_with(&ld, Duration::from_millis(400), Duration::ZERO, &|_, _| {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "bị giữ handle",
-        ))
-    })
+    let e = acquire_lock_with(
+        &ld,
+        Duration::from_millis(400),
+        Duration::ZERO,
+        &|d| std::fs::create_dir(d),
+        &|_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "bị giữ handle",
+            ))
+        },
+    )
     .err()
     .unwrap();
     assert!(start.elapsed() < Duration::from_secs(5));
@@ -385,4 +391,44 @@ fn stale_lock_with_failing_rename_times_out_instead_of_spinning() {
         "{msg}"
     );
     assert!(ld.exists());
+}
+
+#[test]
+fn create_dir_permission_denied_is_retried_then_acquires() {
+    let dir = tempfile::tempdir().unwrap();
+    let ld = lock_dir(&dir.path().join("BRANCHES.md"));
+    let calls = std::cell::Cell::new(0);
+    let g = acquire_lock_with(
+        &ld,
+        Duration::from_secs(5),
+        Duration::from_secs(60),
+        &|d| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+            }
+            std::fs::create_dir(d)
+        },
+        &|a, b| std::fs::rename(a, b),
+    )
+    .unwrap();
+    assert_eq!(calls.get(), 2);
+    assert!(ld.exists());
+    drop(g);
+}
+
+#[test]
+fn create_dir_permission_denied_forever_times_out_with_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let ld = lock_dir(&dir.path().join("BRANCHES.md"));
+    let e = acquire_lock_with(
+        &ld,
+        Duration::from_millis(300),
+        Duration::from_secs(60),
+        &|_| Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        &|a, b| std::fs::rename(a, b),
+    )
+    .err()
+    .unwrap();
+    assert!(e.to_string().contains("đang bị khóa"));
 }

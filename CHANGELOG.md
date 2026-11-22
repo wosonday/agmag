@@ -9,6 +9,13 @@
 - `agm mcp`: MCP server qua stdio (JSON-RPC 2.0, mỗi dòng một thông điệp; giao thức 2025-06-18 / 2025-03-26 / 2024-11-05) với 7 tool: `agm_send`, `agm_inbox`, `agm_ps`, `agm_quota`, `agm_spawn`, `agm_branch_get`, `agm_branch_update`. Không có tool kill/interrupt/manage/cleanup/reply/done. Người gửi là `HC_TERMINAL_ID` của bên gọi hoặc `agent`, không bao giờ `user`; đối số lạ bị từ chối; `agm_quota` chỉ đọc DB do `agm daemon` giữ mới.
 - `agm branch get|set`: đọc/ghi mục `### <lane>/<slug>` trong `BRANCHES.md` dưới khóa `<thư mục BRANCHES.md>/.agents/.runtime/locks/branches` (cùng đường dẫn với khóa `mkdir` tay cũ; thu hồi khi cũ hơn 60 s, chờ tối đa 30 s), ghi bằng tệp tạm + đổi tên. Kiểm trạng thái và khóa hợp lệ; `status: ready` cần `head` hex 12–40 ký tự, `--worktree` sạch và HEAD khớp; terminal vai trò `worker` bị từ chối.
 
+### Sửa lỗi
+
+- `agm branch`: lệnh git kiểm `ready` chạy trước khi lấy khóa (git chậm không còn làm khóa bị thu hồi giữa chừng); kiểm `ready` cả khi đổi `head` của mục đã `ready`; khóa ghi mã chủ (`owner`) nên không xóa nhầm khóa của tiến trình khác và không cướp khóa vừa được tạo lại; đổi tên tệp thử lại khi Windows báo bận (Defender/indexer: mã 5, 32, 33); bỏ qua BOM UTF-8 và chú thích sau tiêu đề mục.
+- Mở CSDL mới tinh từ nhiều tiến trình cùng lúc (nhiều phiên `agm mcp`) không còn lỗi "database is locked".
+- `--role` được chuẩn hóa (bỏ khoảng trắng, chữ thường), nên `Worker`/`worker ` vẫn tính vào `max_workers`; role rỗng bị từ chối.
+- `agm reply` trên mục do MCP gửi mà không rõ terminal: báo rõ không có terminal để trả lời (dùng `agm done`).
+
 ## [0.3.3] - 2026-11-21
 
 ### Thêm mới

@@ -251,6 +251,8 @@ enum Cmd {
         #[command(subcommand)]
         cmd: HookCmd,
     },
+    /// Serve agm tools to MCP clients over stdio (JSON-RPC)
+    Mcp,
     /// RAM / CPU / disk of this machine and how much each agent's process tree uses (live, not stored)
     Sys,
     /// Run the monitoring UI in a herdr pane
@@ -618,6 +620,20 @@ fn run(cli: Cli) -> Result<()> {
             argv,
         } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
         Cmd::Cleanup { targets, all, yes } => ops::cleanup(&store, &targets, all, yes, json, now),
+        Cmd::Mcp => {
+            let hc = agmag::hc::HcCli::default();
+            let git = agmag::git::GitCli;
+            let ctx = agmag::mcp::McpCtx {
+                store: &store,
+                hc: &hc,
+                git: &git,
+                cfg_path: cfg_path.clone(),
+                caller_terminal: ops::hc_terminal(),
+                clock: now_ms,
+            };
+            let stdin = std::io::stdin();
+            agmag::mcp::serve(&ctx, stdin.lock(), std::io::stdout().lock())
+        }
         Cmd::Branch {
             cmd: BranchCmd::Get { entry, file },
         } => ops::branch_get(&file, &entry, json),

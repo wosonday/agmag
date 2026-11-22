@@ -13,6 +13,7 @@ pub mod hc;
 pub mod hook;
 pub mod ingest;
 pub mod launch;
+pub mod mcp;
 pub mod model;
 pub mod opencode;
 pub mod opencode_models;

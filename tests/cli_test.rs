@@ -908,3 +908,35 @@ fn branch_get_missing_entry_fails() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("không có mục a/nope"));
 }
+
+#[test]
+fn agm_mcp_answers_initialize_over_stdio() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let tmp = sandbox(None);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agm"))
+        .arg("mcp")
+        .env("AGM_HOME", tmp.path().join("home"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        writeln!(
+            stdin,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18"}}}}"#
+        )
+        .unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list"}}"#).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    for l in lines {
+        serde_json::from_str::<Value>(l).unwrap();
+    }
+}

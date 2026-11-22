@@ -22,20 +22,111 @@ pub struct McpCtx<'a> {
 }
 
 /// Lỗi khi chạy tool: tên lạ (→ lỗi JSON-RPC) hoặc tool chạy thất bại (→ isError).
-#[allow(dead_code)] // `Failed` sẽ được dùng khi có tool (Task 5-6)
 enum ToolError {
     Unknown,
     Failed(anyhow::Error),
 }
 
+impl From<anyhow::Error> for ToolError {
+    fn from(e: anyhow::Error) -> Self {
+        ToolError::Failed(e)
+    }
+}
+
+fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false,
+        },
+    })
+}
+
 pub fn tool_definitions() -> Vec<Value> {
-    Vec::new()
+    vec![
+        tool(
+            "agm_ps",
+            "List terminals (live only unless all=true).",
+            json!({"all": {"type": "boolean"}}),
+            &[],
+        ),
+        tool(
+            "agm_inbox",
+            "List inbox items (open only unless all=true).",
+            json!({"all": {"type": "boolean"}}),
+            &[],
+        ),
+        tool(
+            "agm_quota",
+            "Show provider quota from the DB; with task, also the task's token total.",
+            json!({"task": {"type": "string"}}),
+            &[],
+        ),
+        tool(
+            "agm_branch_get",
+            "Read one entry's fields from a BRANCHES.md file.",
+            json!({"branches_file": {"type": "string"}, "entry": {"type": "string"}}),
+            &["branches_file", "entry"],
+        ),
+    ]
+}
+
+/// Lấy tham số tùy chọn kiểu bool; sai kiểu → lỗi nêu tên tham số.
+fn opt_bool(args: &Value, key: &str) -> Result<bool, ToolError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(anyhow::anyhow!("Tham số `{key}` phải là boolean").into()),
+    }
+}
+
+fn opt_str<'v>(args: &'v Value, key: &str) -> Result<Option<&'v str>, ToolError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s)),
+        Some(_) => Err(anyhow::anyhow!("Tham số `{key}` phải là chuỗi").into()),
+    }
+}
+
+fn req_str<'v>(args: &'v Value, key: &str) -> Result<&'v str, ToolError> {
+    opt_str(args, key)?.ok_or_else(|| anyhow::anyhow!("Thiếu tham số bắt buộc `{key}`").into())
 }
 
 /// Nhánh cho từng tool; Task sau thêm arm trước `_`.
-#[allow(clippy::match_single_binding)]
-fn call_tool(_ctx: &McpCtx, name: &str, _args: &Value) -> Result<Value, ToolError> {
+fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError> {
     match name {
+        "agm_ps" => {
+            let all = opt_bool(args, "all")?;
+            Ok(json!({"terminals": ctx.store.terminals(!all)?}))
+        }
+        "agm_inbox" => {
+            let all = opt_bool(args, "all")?;
+            Ok(json!({"items": ctx.store.inbox(!all)?}))
+        }
+        "agm_quota" => {
+            let task = opt_str(args, "task")?;
+            let cfg = crate::config::Config::load(&ctx.cfg_path)?;
+            let quota = crate::report::quota_with_config(ctx.store, &cfg, (ctx.clock)() / 1000)?;
+            let task = match task {
+                Some(t) => json!({"id": t, "tokens": crate::policy::task_tokens(ctx.store, t)?}),
+                None => Value::Null,
+            };
+            Ok(json!({"quota": quota, "task": task}))
+        }
+        "agm_branch_get" => {
+            let file = req_str(args, "branches_file")?;
+            let entry = req_str(args, "entry")?;
+            let got = crate::branches::get(std::path::Path::new(file), entry)?;
+            Ok(json!({
+                "entry": entry,
+                "found": got.is_some(),
+                "fields": got.unwrap_or_default(),
+            }))
+        }
         _ => Err(ToolError::Unknown),
     }
 }
@@ -101,16 +192,22 @@ fn write_line(output: &mut impl Write, v: &Value) -> Result<()> {
     Ok(())
 }
 
-pub fn serve(ctx: &McpCtx, input: impl BufRead, mut output: impl Write) -> Result<()> {
-    for line in input.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+pub fn serve(ctx: &McpCtx, mut input: impl BufRead, mut output: impl Write) -> Result<()> {
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if input.read_until(b'\n', &mut buf)? == 0 {
+            break;
         }
-        let reply = match serde_json::from_str::<Value>(&line) {
+        let reply = match std::str::from_utf8(&buf) {
             Err(e) => Some(err(&Value::Null, -32700, &format!("parse error: {e}"))),
-            Ok(Value::Array(_)) => Some(err(&Value::Null, -32600, "batch not supported")),
-            Ok(msg) => handle_message(ctx, &msg),
+            Ok(line) if line.trim().is_empty() => continue,
+            Ok(line) => match serde_json::from_str::<Value>(line) {
+                Err(e) => Some(err(&Value::Null, -32700, &format!("parse error: {e}"))),
+                Ok(Value::Array(_)) => Some(err(&Value::Null, -32600, "batch not supported")),
+                Ok(msg @ Value::Object(_)) => handle_message(ctx, &msg),
+                Ok(_) => Some(err(&Value::Null, -32600, "invalid request")),
+            },
         };
         if let Some(r) = reply {
             write_line(&mut output, &r)?;

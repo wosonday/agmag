@@ -2,7 +2,7 @@ mod common;
 
 use agmag::git::Git;
 use agmag::mcp::{McpCtx, handle_message, serve};
-use agmag::store::Store;
+use agmag::store::{Store, TerminalRow};
 use anyhow::Result;
 use common::FakeHc;
 use serde_json::{Value, json};
@@ -109,4 +109,190 @@ fn tools_list_is_an_array() {
 #[test]
 fn mcp_source_never_builds_user_caller() {
     assert!(!include_str!("../src/mcp.rs").contains("Caller::User"));
+}
+
+fn call(ctx: &McpCtx, name: &str, args: Value) -> Value {
+    handle_message(
+        ctx,
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}),
+    )
+    .unwrap()
+}
+
+fn live_term(store: &Store, addr: &str, state: &str, task: Option<&str>) {
+    store
+        .upsert_terminal(&TerminalRow {
+            address: addr.into(),
+            state: state.into(),
+            task: task.map(String::from),
+            ..Default::default()
+        })
+        .unwrap();
+}
+
+#[test]
+fn ps_lists_live_terminals_only_by_default() {
+    with_ctx(|ctx| {
+        live_term(ctx.store, "t1", "live", None);
+        live_term(ctx.store, "t2", "exited", None);
+        let r = call(ctx, "agm_ps", json!({}));
+        assert_eq!(r["result"]["isError"], false);
+        assert_eq!(
+            r["result"]["structuredContent"]["terminals"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let r = call(ctx, "agm_ps", json!({"all": true}));
+        assert_eq!(
+            r["result"]["structuredContent"]["terminals"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    });
+}
+
+#[test]
+fn inbox_returns_open_items() {
+    with_ctx(|ctx| {
+        let id = ctx
+            .store
+            .open_inbox(Some("t1"), "blocked", None, "hoi", 1)
+            .unwrap()
+            .unwrap();
+        ctx.store
+            .open_inbox(Some("t2"), "blocked", None, "khac", 1)
+            .unwrap();
+        agmag::actions::dismiss(ctx.store, id, 2).unwrap();
+        let r = call(ctx, "agm_inbox", json!({}));
+        assert_eq!(
+            r["result"]["structuredContent"]["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let r = call(ctx, "agm_inbox", json!({"all": true}));
+        assert_eq!(
+            r["result"]["structuredContent"]["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    });
+}
+
+#[test]
+fn quota_includes_task_tokens_when_task_given() {
+    with_ctx(|ctx| {
+        let r = call(ctx, "agm_quota", json!({}));
+        let sc = &r["result"]["structuredContent"];
+        assert!(sc["quota"].is_array());
+        assert!(sc["task"].is_null());
+        let r = call(ctx, "agm_quota", json!({"task": "a"}));
+        let sc = &r["result"]["structuredContent"];
+        assert_eq!(sc["task"]["id"], "a");
+        assert_eq!(sc["task"]["tokens"], 0);
+    });
+}
+
+#[test]
+fn branch_get_reports_found_false_for_missing_entry() {
+    with_ctx(|ctx| {
+        let dir = std::env::temp_dir().join(format!("agm-mcp-bg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("BRANCHES.md");
+        std::fs::write(&file, "").unwrap();
+        let r = call(
+            ctx,
+            "agm_branch_get",
+            json!({"branches_file": file.to_string_lossy(), "entry": "feat/x"}),
+        );
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        let sc = &r["result"]["structuredContent"];
+        assert_eq!(sc["entry"], "feat/x");
+        assert_eq!(sc["found"], false);
+        assert_eq!(sc["fields"], json!([]));
+        let r = call(ctx, "agm_branch_get", json!({"entry": "feat/x"}));
+        assert_eq!(r["result"]["isError"], true);
+        assert!(
+            r["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("branches_file")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    });
+}
+
+#[test]
+fn wrong_argument_type_is_tool_error() {
+    with_ctx(|ctx| {
+        let r = call(ctx, "agm_ps", json!({"all": "yes"}));
+        assert_eq!(r["result"]["isError"], true);
+        assert!(
+            r["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("all")
+        );
+    });
+}
+
+#[test]
+fn tools_list_has_schema_for_each_tool() {
+    with_ctx(|ctx| {
+        let r =
+            handle_message(ctx, &json!({"jsonrpc":"2.0","id":4,"method":"tools/list"})).unwrap();
+        let tools = r["result"]["tools"].as_array().unwrap();
+        for n in ["agm_ps", "agm_inbox", "agm_quota", "agm_branch_get"] {
+            let t = tools
+                .iter()
+                .find(|t| t["name"] == n)
+                .unwrap_or_else(|| panic!("{n}"));
+            assert!(t["description"].as_str().is_some_and(|d| !d.is_empty()));
+            assert_eq!(t["inputSchema"]["type"], "object");
+            assert_eq!(t["inputSchema"]["additionalProperties"], false);
+        }
+    });
+}
+
+#[test]
+fn serve_answers_invalid_utf8_line_and_keeps_going() {
+    with_ctx(|ctx| {
+        let mut input: Vec<u8> = b"\xff\xfe\n".to_vec();
+        input.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}\n");
+        let mut out = Vec::new();
+        serve(ctx, &input[..], &mut out).unwrap();
+        let lines: Vec<Value> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["error"]["code"], -32700);
+        assert_eq!(lines[1]["id"], 9);
+    });
+}
+
+#[test]
+fn non_object_json_gets_invalid_request() {
+    with_ctx(|ctx| {
+        let mut out = Vec::new();
+        serve(ctx, "5\n\"x\"\n".as_bytes(), &mut out).unwrap();
+        let lines: Vec<Value> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        for l in &lines {
+            assert_eq!(l["error"]["code"], -32600);
+            assert_eq!(l["id"], Value::Null);
+        }
+    });
 }

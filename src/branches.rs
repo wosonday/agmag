@@ -112,10 +112,26 @@ fn strip_comment(v: &str) -> &str {
 /// Tìm khối của `entry`: `(chỉ số dòng tiêu đề, chỉ số dòng kết thúc không gồm)`.
 fn find_block(lines: &[&str], entry: &str) -> Result<Option<(usize, usize)>> {
     let heading = format!("### {entry}");
+    let is_heading = |i: usize, l: &str| {
+        let c = content(l);
+        // BOM đầu tệp không tính vào dòng đầu
+        let c = if i == 0 {
+            c.strip_prefix('\u{feff}').unwrap_or(c)
+        } else {
+            c
+        };
+        let Some(rest) = c.strip_prefix(heading.as_str()) else {
+            return false;
+        };
+        let t = rest.trim_start();
+        // chỉ chấp nhận khoảng trắng rồi (tùy chọn) chú thích `# ...` sau tên mục
+        rest.trim().is_empty()
+            || (rest.starts_with([' ', '\t']) && (t == "#" || t.starts_with("# ")))
+    };
     let mut hits = lines
         .iter()
         .enumerate()
-        .filter(|(_, l)| content(l).trim_end() == heading)
+        .filter(|(i, l)| is_heading(*i, l))
         .map(|(i, _)| i);
     let Some(start) = hits.next() else {
         return Ok(None);
@@ -225,18 +241,41 @@ pub fn lock_dir(file: &Path) -> PathBuf {
 #[derive(Debug)]
 pub struct BranchLock {
     path: PathBuf,
+    token: String,
 }
 
 impl Drop for BranchLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        // chỉ xóa khi khóa vẫn là của ta; nếu bị thu hồi và người khác giữ thì để yên
+        let mine = std::fs::read_to_string(self.path.join("owner")).is_ok_and(|t| t == self.token);
+        if mine {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }
 
-fn wall_ms() -> i64 {
-    SystemTime::now()
+static LOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn new_token() -> String {
+    let n = LOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
+        .map_or(0, |d| d.as_nanos());
+    format!("{} {nanos} {n}", std::process::id())
+}
+
+/// Tuổi của khóa: lấy mốc mới nhất giữa thư mục khóa và tệp `owner` bên trong.
+fn lock_age(dir: &Path) -> Option<Duration> {
+    let mtime = |p: PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let newest = [mtime(dir.to_path_buf()), mtime(dir.join("owner"))]
+        .into_iter()
+        .flatten()
+        .max()?;
+    Some(
+        SystemTime::now()
+            .duration_since(newest)
+            .unwrap_or(Duration::ZERO),
+    )
 }
 
 /// Khóa bằng `create_dir` (nguyên tử); khóa cũ hơn `stale_after` bị thu hồi.
@@ -267,12 +306,15 @@ pub fn acquire_lock_with(
     loop {
         match create(dir) {
             Ok(()) => {
-                let _ = std::fs::write(
-                    dir.join("owner"),
-                    format!("{} {}", std::process::id(), wall_ms()),
-                );
+                let token = new_token();
+                if let Err(e) = std::fs::write(dir.join("owner"), &token) {
+                    let _ = std::fs::remove_dir_all(dir);
+                    return Err(e)
+                        .with_context(|| format!("không ghi được chủ khóa {}", dir.display()));
+                }
                 return Ok(BranchLock {
                     path: dir.to_path_buf(),
+                    token,
                 });
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -282,15 +324,7 @@ pub fn acquire_lock_with(
                 return Err(e).with_context(|| format!("không tạo được khóa {}", dir.display()));
             }
         }
-        let age = std::fs::metadata(dir)
-            .and_then(|m| m.modified())
-            .ok()
-            .map(|t| {
-                SystemTime::now()
-                    .duration_since(t)
-                    .unwrap_or(Duration::ZERO)
-            });
-        if age.is_some_and(|a| a >= stale_after) {
+        if lock_age(dir).is_some_and(|a| a >= stale_after) {
             // đổi tên để chỉ một tiến trình thắng; kẻ thua gặp lỗi rồi thử lại
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -298,8 +332,14 @@ pub fn acquire_lock_with(
             let gone = dir.with_extension(format!("stale-{}-{nanos}", std::process::id()));
             match rename(dir, &gone) {
                 Ok(()) => {
-                    let _ = std::fs::remove_dir_all(&gone);
-                    continue;
+                    // giữa lúc kiểm tra và đổi tên, người khác có thể đã tạo khóa mới: kiểm lại
+                    if lock_age(&gone).is_some_and(|a| a < stale_after) {
+                        // trả về chỗ cũ; nếu `dir` đã có khóa khác thì để nguyên bản đã dời
+                        let _ = std::fs::rename(&gone, dir);
+                    } else {
+                        let _ = std::fs::remove_dir_all(&gone);
+                        continue;
+                    }
                 }
                 // thư mục đã biến mất (tiến trình khác thu hồi trước): thử lại ngay
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -362,8 +402,16 @@ fn is_sha(s: &str) -> bool {
     (12..=40).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// Kết quả git lấy trước khi giữ khóa: (worktree sạch, HEAD thật).
+struct GitSnapshot {
+    wt: String,
+    clean: bool,
+    head: String,
+}
+
 /// Bảo vệ ready: head hợp lệ, có worktree, worktree sạch và HEAD khớp head đã khai.
-fn check_ready(git: &dyn Git, merged: &[(String, String)], worktree: Option<&str>) -> Result<()> {
+/// Chỉ so sánh chuỗi — mọi lệnh git đã chạy xong trước khi giữ khóa.
+fn check_ready(merged: &[(String, String)], snap: Option<&GitSnapshot>) -> Result<()> {
     let head = merged
         .iter()
         .find(|(k, _)| k == "head")
@@ -372,17 +420,50 @@ fn check_ready(git: &dyn Git, merged: &[(String, String)], worktree: Option<&str
     if !is_sha(head) {
         bail!("không thể đặt ready: head phải là SHA 12-40 ký tự hex thường (đang là {head:?})");
     }
-    let Some(wt) = worktree else {
+    let Some(snap) = snap else {
         bail!("không thể đặt ready: thiếu worktree để kiểm tra git");
     };
-    if !git.is_clean(wt)? {
-        bail!("không thể đặt ready: worktree {wt} còn thay đổi chưa commit");
+    if !snap.clean {
+        bail!(
+            "không thể đặt ready: worktree {} còn thay đổi chưa commit",
+            snap.wt
+        );
     }
-    let actual = git.head(wt)?;
-    if !actual.starts_with(head) {
-        bail!("không thể đặt ready: head khai {head} không khớp HEAD thật {actual}");
+    if !snap.head.starts_with(head) {
+        bail!(
+            "không thể đặt ready: head khai {head} không khớp HEAD thật {}",
+            snap.head
+        );
     }
     Ok(())
+}
+
+/// Ghi tệp qua tệp tạm rồi đổi tên; `PermissionDenied` (Defender/indexer giữ tệp) thử lại.
+#[doc(hidden)]
+pub fn write_atomic_with(
+    file: &Path,
+    text: &str,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
+    let tmp = file.with_file_name(format!("BRANCHES.md.tmp-{}", std::process::id()));
+    if let Err(e) = std::fs::write(&tmp, text) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("ghi tệp tạm {}", tmp.display()));
+    }
+    let mut retries = 0;
+    loop {
+        match rename(&tmp, file) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && retries < 10 => {
+                retries += 1;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e).with_context(|| format!("không ghi được {}", file.display()));
+            }
+        }
+    }
 }
 
 fn do_update(
@@ -411,6 +492,26 @@ fn do_update(
     if !req.file.exists() {
         return Err(missing());
     }
+    // git có thể chậm hơn LOCK_STALE: chạy trước khi giữ khóa, trong khóa chỉ so sánh chuỗi
+    let last_status = req
+        .fields
+        .iter()
+        .rfind(|(k, _)| k == "status")
+        .map(|(_, v)| v.trim());
+    let sets_head = req.fields.iter().any(|(k, _)| k == "head");
+    let to_ready = last_status == Some("ready");
+    let may_guard = match last_status {
+        Some(s) => s == "ready",
+        None => sets_head,
+    };
+    let snap = match req.worktree.as_deref() {
+        Some(wt) if may_guard => Some(GitSnapshot {
+            wt: wt.to_string(),
+            clean: git.is_clean(wt)?,
+            head: git.head(wt)?,
+        }),
+        _ => None,
+    };
     let _lock = acquire_lock(&lock_dir(&req.file), timeout, LOCK_STALE)?;
     let text = match std::fs::read_to_string(&req.file) {
         Ok(t) => t,
@@ -421,22 +522,11 @@ fn do_update(
     };
     let (new_text, created) = upsert_entry(&text, &req.entry, &req.fields)?;
     let merged = read_entry(&new_text, &req.entry)?.unwrap_or_default();
-    let to_ready = req
-        .fields
-        .iter()
-        .rfind(|(k, _)| k == "status")
-        .is_some_and(|(_, v)| v.trim() == "ready");
-    if to_ready {
-        check_ready(git, &merged, req.worktree.as_deref())?;
+    let merged_ready = merged.iter().any(|(k, v)| k == "status" && v == "ready");
+    if merged_ready && (to_ready || sets_head) {
+        check_ready(&merged, snap.as_ref())?;
     }
-    let tmp = req
-        .file
-        .with_file_name(format!("BRANCHES.md.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, &new_text)?;
-    if let Err(e) = std::fs::rename(&tmp, &req.file) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e).with_context(|| format!("không ghi được {}", req.file.display()));
-    }
+    write_atomic_with(&req.file, &new_text, &|a, b| std::fs::rename(a, b))?;
     Ok(UpdateOutcome {
         entry: req.entry.clone(),
         created,
@@ -460,13 +550,15 @@ pub fn update(
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let _ = store.log_action(
+    if let Err(e) = store.log_action(
         caller_terminal.unwrap_or("user"),
         "branch",
         &req.entry,
         &detail,
         result.is_ok(),
         now_ms,
-    );
+    ) {
+        eprintln!("agm: không ghi được nhật ký branch: {e:#}");
+    }
     result
 }

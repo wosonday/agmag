@@ -471,3 +471,285 @@ fn create_dir_permission_denied_forever_times_out_with_reason() {
     .unwrap();
     assert!(e.to_string().contains("đang bị khóa"));
 }
+
+// ---- Follow-up A: khóa và git, ghi tệp, BOM ----
+
+struct LockSpyGit {
+    file: PathBuf,
+    head: String,
+}
+
+impl Git for LockSpyGit {
+    fn head(&self, _: &str) -> anyhow::Result<String> {
+        assert!(
+            !lock_dir(&self.file).exists(),
+            "git head chạy khi đang giữ khóa"
+        );
+        Ok(self.head.clone())
+    }
+    fn is_clean(&self, _: &str) -> anyhow::Result<bool> {
+        assert!(
+            !lock_dir(&self.file).exists(),
+            "git is_clean chạy khi đang giữ khóa"
+        );
+        Ok(true)
+    }
+    fn touched_since(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+}
+
+struct FailGit;
+
+impl Git for FailGit {
+    fn head(&self, _: &str) -> anyhow::Result<String> {
+        anyhow::bail!("git hỏng")
+    }
+    fn is_clean(&self, _: &str) -> anyhow::Result<bool> {
+        anyhow::bail!("git hỏng")
+    }
+    fn touched_since(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn git_calls_happen_outside_the_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(&file, "### a/x\n- status: wip\n").unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let git = LockSpyGit {
+        file: file.clone(),
+        head: "deadbeef0000ffff".into(),
+    };
+    update(
+        &store,
+        &git,
+        None,
+        &req(
+            &file,
+            "a/x",
+            &[("status", "ready"), ("head", "deadbeef0000")],
+            Some("/wt"),
+        ),
+        T,
+        1,
+    )
+    .unwrap();
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("- status: ready")
+    );
+}
+
+#[test]
+fn git_error_before_lock_writes_nothing_and_leaves_no_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    let before = "### a/x\n- status: wip\n";
+    std::fs::write(&file, before).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let e = update(
+        &store,
+        &FailGit,
+        None,
+        &req(
+            &file,
+            "a/x",
+            &[("status", "ready"), ("head", "deadbeef0000")],
+            Some("/wt"),
+        ),
+        T,
+        1,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("git hỏng"), "{e}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    assert!(!dir.path().join(".agents").exists());
+}
+
+#[test]
+fn head_change_on_ready_entry_runs_the_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    let before = "### a/x\n- status: ready\n- head: cafebabe0000\n";
+    std::fs::write(&file, before).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let e = update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &[("head", "deadbeef0000")], None),
+        T,
+        1,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("worktree"), "{e}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    // worktree bẩn cũng bị chặn
+    assert!(
+        update(
+            &store,
+            &fake(false),
+            None,
+            &req(&file, "a/x", &[("head", "deadbeef0000")], Some("/wt")),
+            T,
+            1
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &[("head", "deadbeef0000")], Some("/wt")),
+        T,
+        1,
+    )
+    .unwrap();
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("- head: deadbeef0000")
+    );
+}
+
+#[test]
+fn head_change_on_non_ready_entry_needs_no_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(&file, "### a/x\n- status: wip\n").unwrap();
+    let store = Store::open_in_memory().unwrap();
+    update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &[("head", "abc")], None),
+        T,
+        1,
+    )
+    .unwrap();
+}
+
+#[test]
+fn drop_does_not_remove_a_lock_owned_by_someone_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let ld = lock_dir(&dir.path().join("BRANCHES.md"));
+    let g = acquire_lock(&ld, T, Duration::from_secs(60)).unwrap();
+    std::fs::write(ld.join("owner"), "người khác").unwrap();
+    drop(g);
+    assert!(ld.exists());
+    assert_eq!(
+        std::fs::read_to_string(ld.join("owner")).unwrap(),
+        "người khác"
+    );
+}
+
+#[test]
+fn reclaim_gives_back_a_lock_that_became_fresh_before_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    let ld = lock_dir(&dir.path().join("BRANCHES.md"));
+    std::fs::create_dir_all(&ld).unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    let fired = std::cell::Cell::new(false);
+    let e = acquire_lock_with(
+        &ld,
+        Duration::from_millis(150),
+        Duration::from_millis(300),
+        &|d| std::fs::create_dir(d),
+        &|from, to| {
+            if !fired.replace(true) {
+                // tiến trình khác thu hồi rồi tạo khóa mới ngay trước khi ta đổi tên
+                std::fs::remove_dir_all(from)?;
+                std::fs::create_dir(from)?;
+                std::fs::write(from.join("owner"), "tươi")?;
+            }
+            std::fs::rename(from, to)
+        },
+    )
+    .err()
+    .unwrap();
+    assert!(e.to_string().contains("đang bị khóa"), "{e}");
+    assert!(ld.exists());
+    assert_eq!(std::fs::read_to_string(ld.join("owner")).unwrap(), "tươi");
+}
+
+fn tmp_leftovers(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+        .count()
+}
+
+#[test]
+fn write_retries_permission_denied_then_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(&file, "cũ").unwrap();
+    let calls = std::cell::Cell::new(0);
+    write_atomic_with(&file, "mới", &|a, b| {
+        calls.set(calls.get() + 1);
+        if calls.get() <= 2 {
+            return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        }
+        std::fs::rename(a, b)
+    })
+    .unwrap();
+    assert_eq!(calls.get(), 3);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "mới");
+    assert_eq!(tmp_leftovers(dir.path()), 0);
+}
+
+#[test]
+fn write_gives_up_with_path_and_removes_tmp() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(&file, "cũ").unwrap();
+    let e = write_atomic_with(&file, "mới", &|_, _| {
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+    })
+    .unwrap_err();
+    assert!(e.to_string().contains("BRANCHES.md"), "{e}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "cũ");
+    assert_eq!(tmp_leftovers(dir.path()), 0);
+}
+
+#[test]
+fn write_tmp_failure_names_tmp_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("không-có-thư-mục").join("BRANCHES.md");
+    let e = write_atomic_with(&file, "x", &|a, b| std::fs::rename(a, b)).unwrap_err();
+    assert!(e.to_string().contains("tệp tạm"), "{e}");
+    assert!(e.to_string().contains(".tmp-"), "{e}");
+}
+
+#[test]
+fn bom_is_ignored_for_matching_and_preserved_in_output() {
+    let t = "\u{feff}### a/x\n- status: wip\n";
+    assert_eq!(
+        read_entry(t, "a/x").unwrap().unwrap(),
+        vec![kv("status", "wip")]
+    );
+    let (out, created) = upsert_entry(t, "a/x", &[kv("status", "blocked")]).unwrap();
+    assert!(!created);
+    assert_eq!(out, "\u{feff}### a/x\n- status: blocked\n");
+    let (out, created) = upsert_entry("\u{feff}# Sổ\n", "a/x", &[kv("status", "wip")]).unwrap();
+    assert!(created);
+    assert_eq!(out, "\u{feff}# Sổ\n\n### a/x\n- status: wip\n");
+}
+
+#[test]
+fn heading_with_trailing_comment_matches_entry() {
+    let t = "### a/x   # chú thích\n- status: wip\n\n### a/xy\n- status: ready\n";
+    assert_eq!(
+        read_entry(t, "a/x").unwrap().unwrap(),
+        vec![kv("status", "wip")]
+    );
+    let (out, created) = upsert_entry(t, "a/x", &[kv("status", "blocked")]).unwrap();
+    assert!(!created);
+    assert!(out.starts_with("### a/x   # chú thích\n- status: blocked\n"));
+}

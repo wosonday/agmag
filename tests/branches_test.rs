@@ -363,3 +363,26 @@ fn concurrent_updates_lose_nothing() {
         .collect();
     assert!(leftovers.is_empty());
 }
+
+#[test]
+fn stale_lock_with_failing_rename_times_out_instead_of_spinning() {
+    let dir = tempfile::tempdir().unwrap();
+    let ld = lock_dir(&dir.path().join("BRANCHES.md"));
+    std::fs::create_dir_all(&ld).unwrap();
+    let start = std::time::Instant::now();
+    let e = acquire_lock_with(&ld, Duration::from_millis(400), Duration::ZERO, &|_, _| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "bị giữ handle",
+        ))
+    })
+    .err()
+    .unwrap();
+    assert!(start.elapsed() < Duration::from_secs(5));
+    let msg = e.to_string();
+    assert!(
+        msg.contains("đang bị khóa") && msg.contains("bị giữ handle"),
+        "{msg}"
+    );
+    assert!(ld.exists());
+}

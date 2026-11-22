@@ -238,6 +238,20 @@ fn wall_ms() -> i64 {
 
 /// Khóa bằng `create_dir` (nguyên tử); khóa cũ hơn `stale_after` bị thu hồi.
 pub fn acquire_lock(dir: &Path, timeout: Duration, stale_after: Duration) -> Result<BranchLock> {
+    acquire_lock_with(dir, timeout, stale_after, &|from, to| {
+        std::fs::rename(from, to)
+    })
+}
+
+/// Như `acquire_lock` nhưng cho phép thay bước đổi tên (để test lỗi đổi tên).
+#[doc(hidden)]
+pub fn acquire_lock_with(
+    dir: &Path,
+    timeout: Duration,
+    stale_after: Duration,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<BranchLock> {
+    let mut last_err: Option<std::io::Error> = None;
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -272,14 +286,23 @@ pub fn acquire_lock(dir: &Path, timeout: Duration, stale_after: Duration) -> Res
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| d.as_nanos());
             let gone = dir.with_extension(format!("stale-{}-{nanos}", std::process::id()));
-            if std::fs::rename(dir, &gone).is_ok() {
-                let _ = std::fs::remove_dir_all(&gone);
+            match rename(dir, &gone) {
+                Ok(()) => {
+                    let _ = std::fs::remove_dir_all(&gone);
+                    continue;
+                }
+                // thư mục đã biến mất (tiến trình khác thu hồi trước): thử lại ngay
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                // không đổi tên được: rơi xuống kiểm timeout và ngủ, không quay vòng
+                Err(e) => last_err = Some(e),
             }
-            continue;
         }
         if start.elapsed() >= timeout {
+            let why = last_err
+                .map(|e| format!("; không thu hồi được khóa cũ: {e}"))
+                .unwrap_or_default();
             bail!(
-                "BRANCHES.md đang bị khóa tại {} (quá {}s)",
+                "BRANCHES.md đang bị khóa tại {} (quá {}s){why}",
                 dir.display(),
                 timeout.as_secs()
             );

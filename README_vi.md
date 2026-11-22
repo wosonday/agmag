@@ -44,7 +44,7 @@ Cần [Rust](https://rustup.rs) (có `cargo`).
 git clone <địa chỉ repo này> agmag
 cd agmag
 cargo install --path .          # chép agm.exe vào ~/.cargo/bin (đã có trong PATH)
-agm --version                   # agm 0.3.0
+agm --version                   # agm 0.4.0
 ```
 
 > `cargo build --release` **chỉ** tạo `target\release\agm.exe` — gõ `agm` sẽ báo "not recognized". Hãy dùng `cargo install --path .`.
@@ -222,14 +222,14 @@ claude mcp add -s user agm -- agm mcp
 | `agm_ps` | Liệt kê terminal của herdr-core |
 | `agm_quota` | Hạn mức gói như đang lưu trong DB, do `agm daemon` giữ mới (không quét log, không refresh) |
 | `agm_spawn` | Sinh agent (kiểm tra như `agm spawn`) |
-| `agm_branch_get` | Đọc một mục trong `BRANCHES.md` |
-| `agm_branch_update` | Cập nhật một mục trong `BRANCHES.md` (cùng quy tắc với `agm branch set`) |
+| `agm_branch_get` | Đọc một mục trong `BRANCHES.md` (`branches_file` phải là đường dẫn tuyệt đối) |
+| `agm_branch_update` | Cập nhật một mục trong `BRANCHES.md` đã tồn tại (`branches_file` tuyệt đối; cùng quy tắc với `agm branch set`) |
 
-Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không bao giờ là `user`. Đối số lạ của tool bị từ chối. `agm mcp` không có tool kill/interrupt/manage/cleanup (cũng không có reply/done); những việc đó chỉ người dùng làm.
+Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không bao giờ là `user`. Đối số lạ của tool bị từ chối. Chỉ bật MCP server `agm` trong profile quản lý/review (BOT-CEO, Copilot, reviewer), không bật trong profile thợ thường: `agm_spawn` có thể mở terminal giống `agm spawn`. `agm mcp` không có tool kill/interrupt/manage/cleanup (cũng không có reply/done); những việc đó chỉ người dùng làm.
 
 ### BRANCHES.md
 
-`agm branch get <ENTRY> [--file PATH]` in một mục; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` cập nhật mục đó. `--file` mặc định `BRANCHES.md`; mục là khối `### <lane>/<slug>` gồm các dòng `- key: value`. Khi ghi, agm giữ thư mục khóa `<thư mục chứa BRANCHES.md>/.agents/.runtime/locks/branches` (cùng đường dẫn với cách `mkdir` tay trước đây, nên script cũ và agm loại trừ lẫn nhau; khóa cũ hơn 60 s bị thu hồi, chờ tối đa 30 s) và ghi bằng tệp tạm + đổi tên. Trạng thái hợp lệ: `wip blocked ready merging merged deployed needs-rebase failed`. Khóa hợp lệ: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` cần `head` hex 12–40 ký tự, `--worktree`, worktree sạch và HEAD khớp; terminal có vai trò `worker` bị từ chối.
+`agm branch get <ENTRY> [--file PATH]` in một mục; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` cập nhật mục đó. `--file` mặc định `BRANCHES.md`, tệp này phải có sẵn (agm không tự tạo; hãy tạo trước với một dòng tiêu đề); tool MCP cần đường dẫn tuyệt đối. Mục là khối `### <lane>/<slug>` gồm các dòng `- key: value`. Khi ghi, agm giữ thư mục khóa `<thư mục chứa BRANCHES.md>/.agents/.runtime/locks/branches` (agm chỉ giữ vài mili-giây, chờ tối đa 30 s và thu hồi khóa cũ hơn 60 s, nên không được tự `mkdir` khóa bằng tay: giữ tay quá 60 s có thể bị thu hồi và mất cập nhật) và ghi bằng tệp tạm + đổi tên. Trạng thái hợp lệ: `wip blocked ready merging merged deployed needs-rebase failed`. Khóa hợp lệ: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` cần `head` hex 12–40 ký tự, `--worktree`, worktree sạch và HEAD khớp; terminal có vai trò `worker` bị từ chối.
 
 ## 7. Tất cả lệnh
 
@@ -375,7 +375,7 @@ Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.
 **Dữ liệu**
 
 - agm **chỉ đọc** log của Claude/Codex, `transcript.jsonl` + `conversation_summaries.db` của agy, và `opencode.db` (chỉ hai bảng phiên/tin nhắn — không bao giờ đọc bảng chứa thông tin đăng nhập). CSDL của các công cụ đó được mở ở chế độ `READ_ONLY`.
-- Ngoài `~/.agmag/`, agm chỉ ghi ở năm chỗ: `BRANCHES.md` và thư mục khóa `.agents/.runtime/locks/branches` (chỉ qua `agm branch set`), `statusLine` trong `~/.claude/settings.json` (khi bạn chạy `agm hook install`), dòng `.agents/handoff/` trong `info/exclude` của repo (khi xoay vòng phiên Claude/Codex đã `manage`; tệp bàn giao do chính agent ghi), và thư mục tạm `agmag-ask` cho `agm ask`.
+- Ngoài `~/.agmag/`, agm chỉ ghi ở năm chỗ: `BRANCHES.md` và thư mục khóa `.agents/.runtime/locks/branches` (qua `agm branch set` hoặc tool MCP `agm_branch_update`), `statusLine` trong `~/.claude/settings.json` (khi bạn chạy `agm hook install`), dòng `.agents/handoff/` trong `info/exclude` của repo (khi xoay vòng phiên Claude/Codex đã `manage`; tệp bàn giao do chính agent ghi), và thư mục tạm `agmag-ask` cho `agm ask`.
 - Mọi thứ agm lưu nằm ở `~/.agmag/agm.db` trên máy bạn: token, hạn mức, tóm tắt ≤ 200 ký tự mỗi lượt, tin nhắn qua `agm send`, hộp thư, nhật ký can thiệp. Không gửi đi đâu.
 
 ## 12. Giới hạn đã biết

@@ -46,7 +46,7 @@ Requires [Rust](https://rustup.rs) (with `cargo`).
 git clone <this repo URL> agmag
 cd agmag
 cargo install --path .          # copies agm.exe into ~/.cargo/bin (already on PATH)
-agm --version                   # agm 0.3.0
+agm --version                   # agm 0.4.0
 ```
 
 > `cargo build --release` **only** produces `target\release\agm.exe` — typing `agm` will say "not recognized". Use `cargo install --path .`.
@@ -226,14 +226,14 @@ claude mcp add -s user agm -- agm mcp
 | `agm_ps` | List herdr-core terminals |
 | `agm_quota` | Subscription quota as stored in the DB, kept fresh by `agm daemon` (no log scan, no refresh) |
 | `agm_spawn` | Spawn an agent (same checks as `agm spawn`) |
-| `agm_branch_get` | Read an entry of `BRANCHES.md` |
-| `agm_branch_update` | Update an entry of `BRANCHES.md` (same rules as `agm branch set`) |
+| `agm_branch_get` | Read an entry of `BRANCHES.md` (`branches_file` must be an absolute path) |
+| `agm_branch_update` | Update an entry of an existing `BRANCHES.md` (absolute `branches_file`; same rules as `agm branch set`) |
 
-The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknown tool arguments are rejected. `agm mcp` has no kill/interrupt/manage/cleanup tools (nor reply/done); those stay with the user.
+The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknown tool arguments are rejected. Enable the `agm` MCP server only in manager/review profiles (BOT-CEO, Copilot, reviewers), not in ordinary worker profiles: `agm_spawn` can start terminals the same way `agm spawn` can. `agm mcp` has no kill/interrupt/manage/cleanup tools (nor reply/done); those stay with the user.
 
 ### BRANCHES.md
 
-`agm branch get <ENTRY> [--file PATH]` prints one entry; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` updates it. `--file` defaults to `BRANCHES.md`; entries are `### <lane>/<slug>` blocks of `- key: value` lines. Writes take the lock directory `<dir of BRANCHES.md>/.agents/.runtime/locks/branches` (the same path as the old manual `mkdir` protocol, so old scripts and agm exclude each other; a lock older than 60 s is reclaimed, waiting up to 30 s) and write via temp file + rename. Valid statuses: `wip blocked ready merging merged deployed needs-rebase failed`. Valid keys: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` requires a 12–40 hex `head`, `--worktree`, a clean worktree and a matching HEAD; terminals with role `worker` are refused.
+`agm branch get <ENTRY> [--file PATH]` prints one entry; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` updates it. `--file` defaults to `BRANCHES.md`, which must already exist (agm never creates it; create it with a title line first); the MCP tools need an absolute path. Entries are `### <lane>/<slug>` blocks of `- key: value` lines. Writes take the lock directory `<dir of BRANCHES.md>/.agents/.runtime/locks/branches` (agm holds it for milliseconds, waits up to 30 s and reclaims a lock older than 60 s, so do not take it by hand with `mkdir`: a manual hold over 60 s can be reclaimed and lose an update) and write via temp file + rename. Valid statuses: `wip blocked ready merging merged deployed needs-rebase failed`. Valid keys: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` requires a 12–40 hex `head`, `--worktree`, a clean worktree and a matching HEAD; terminals with role `worker` are refused.
 
 ## 7. All commands
 
@@ -379,7 +379,7 @@ Models without a declared price or context window show `?` — agm never invents
 **Data**
 
 - agm **only reads** Claude/Codex logs, agy's `transcript.jsonl` + `conversation_summaries.db`, and `opencode.db` (only the two session/message tables — never the table holding credentials). Those tools' databases are opened `READ_ONLY`.
-- Outside `~/.agmag/`, agm writes in only five places: `BRANCHES.md` and its lock directory `.agents/.runtime/locks/branches` (only via `agm branch set`), the `statusLine` in `~/.claude/settings.json` (when you run `agm hook install`), a `.agents/handoff/` line in the repo's `info/exclude` (when rotating a managed Claude/Codex session; the hand-off file itself is written by the agent), and the `agmag-ask` temp directory for `agm ask`.
+- Outside `~/.agmag/`, agm writes in only five places: `BRANCHES.md` and its lock directory `.agents/.runtime/locks/branches` (via `agm branch set` or the MCP tool `agm_branch_update`), the `statusLine` in `~/.claude/settings.json` (when you run `agm hook install`), a `.agents/handoff/` line in the repo's `info/exclude` (when rotating a managed Claude/Codex session; the hand-off file itself is written by the agent), and the `agmag-ask` temp directory for `agm ask`.
 - Everything agm stores lives in `~/.agmag/agm.db` on your machine: tokens, quotas, ≤ 200-character summaries per turn, messages sent via `agm send`, the inbox, the intervention log. Nothing is sent anywhere.
 
 ## 12. Known limitations

@@ -17,7 +17,7 @@ GitHub Copilot CLI (`copilot-git`) is the **only agent** permitted to integrate 
 ## 2. Handoff Prerequisites (Before Merging)
 
 Depending on project mode, `copilot-git` receives work from:
-- **Multi-lane (`BOT-CEO.md`):** read entries with **`status: ready`** in `BRANCHES.md` (under lock `.agents/.runtime/locks/branches`, inside `.gitignore` so the main checkout stays clean), checking that all `depends_on` branches are `merged`/`deployed`.
+- **Multi-lane (`BOT-CEO.md`):** read entries with **`status: ready`** via `agm branch get <lane>/<slug> --file <abs>/BRANCHES.md` (or the MCP tool `agm_branch_get`), checking that all `depends_on` branches are `merged`/`deployed`.
 - **Single-lane (`AGENTS-TUTORIAL.md`):** receive a handoff packet from `codex-mgr` / Architect (branch name, full `head` SHA, test commands + real counts, Audit + Review reports, and Hydrogen Medium docs confirmation).
 
 **Immediately reject and return `needs-rebase` / `failed` if:**
@@ -30,7 +30,7 @@ Depending on project mode, `copilot-git` receives work from:
 
 ## 3. Six-Step Integration Workflow
 
-1. **Mark `merging`** in `BRANCHES.md` (holding the `mkdir` lock) so all BOT-CEOs see it is in progress.
+1. **Mark `merging`** with `agm branch set <lane>/<slug> status=merging --file <abs>/BRANCHES.md` (or `agm_branch_update`; `agm` takes the lock itself, never `mkdir` it by hand: it reclaims locks older than 60 s) so all BOT-CEOs see it is in progress.
 2. **Verify exact SHA and merge sequentially** into `main` at the main checkout.
    - On merge conflicts, business logic conflicts, or >1 migration head: **stop immediately—never edit feature code to force a pass**; set `status: needs-rebase` in `BRANCHES.md` and notify the lane's BOT-CEO via `agm send <lane> --type LỖI --task <ID> "..."`.
 3. **Re-run post-merge Audit/CI gates** on `main` (ESLint `--max-warnings 0`, typecheck, tests, build). If any check fails: log the failure, set `failed` (or `git revert` if already pushed further), and return to the manager/BOT-CEO.

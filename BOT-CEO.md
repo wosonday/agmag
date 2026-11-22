@@ -1,6 +1,6 @@
 # BOT-CEO — Điều phối đa mảng (lane) và kinh phí AI
 
-Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (phiên bản 3.6) và [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md). Lấy ý tưởng từ mô hình `HARNESSING.md` + `BRANCHES.md` của dự án `MATHY-AI` (`/mnt/d/Project/MATHY-AI/`), chuẩn hóa lại để dùng chung cho mọi dự án chạy cùng **`agm` (`agmag` v0.3.0)**, **`hc` (`herdr-core`)**, **Antigravity CLI (`agy`)** và **GitHub Copilot**.
+Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (phiên bản 3.6) và [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md). Lấy ý tưởng từ mô hình `HARNESSING.md` + `BRANCHES.md` của dự án `MATHY-AI` (`/mnt/d/Project/MATHY-AI/`), chuẩn hóa lại để dùng chung cho mọi dự án chạy cùng **`agm` (`agmag` v0.4.0)**, **`hc` (`herdr-core`)**, **Antigravity CLI (`agy`)** và **GitHub Copilot**.
 
 > **Thứ tự ưu tiên tài liệu:** `AGENTS.md` / `CLAUDE.md` của dự án **>** `AGENTS-TUTORIAL.md` (quy tắc cứng & cổng phát hành) **>** `BOT-CEO.md` (mở rộng cơ chế đa lane & `BRANCHES.md`) **>** `HERDR-CORE-BOT.md` (hạ tầng `agm`/`hc`).
 
@@ -47,7 +47,7 @@ Trong dự án chỉ có 1–2 tính năng nhỏ, một phiên Kiến trúc sư 
           ├──► Cập nhật docs & báo cáo cuối (nếu cần): agy Gemini 4 Hydrogen Medium
           └──► NVIDIA nền: tổng hợp/đề xuất/log cho đợt sau, chỉ đọc, không chặn merge
                                     │
-          ▼  Khóa nguyên tử (mkdir) khi ghi BRANCHES.md (status: wip -> ready)
+          ▼  Ghi BRANCHES.md qua `agm branch set` / `agm_branch_update` (khóa tự động, status: wip -> ready)
       BRANCHES.md  ◄── sổ đăng ký nhánh & điểm chạm mã giữa các lane
           │
           ▼  Đúng 1 phiên GitHub Copilot (copilot-git) đọc hàng đợi tuần tự
@@ -64,7 +64,7 @@ Trong dự án chỉ có 1–2 tính năng nhỏ, một phiên Kiến trúc sư 
 
 1. **Cô lập ngữ cảnh:** BOT-CEO của lane A **không** đọc lịch sử chat hay code chi tiết của lane B; nó chỉ đọc trạng thái `wip`/`ready` và trường `touches_hotspot` / `depends_on` trong `BRANCHES.md`.
 2. **Cô lập cây làm việc:**
-   - Checkout chính (trên nhánh chung `main`): BOT-CEO **chỉ đọc mã** và **chỉ được ghi `BRANCHES.md` dưới khóa**; chỉ `copilot-git` được merge/ghi mã vào checkout chính.
+   - Checkout chính (trên nhánh chung `main`): BOT-CEO **chỉ đọc mã** và **chỉ được ghi `BRANCHES.md` qua `agm branch set`**; chỉ `copilot-git` được merge/ghi mã vào checkout chính.
    - Worktree tách rời: đặt ngoài thư mục quét (hoặc trong `.wt/` đã thêm vào `.gitignore`), theo quy ước `<lane>--<slug>` (ví dụ `/mnt/d/Project/<repo>.wt/tap-hoa--low-stock`), nhánh `<lane>/<slug>`.
 3. **Mỗi lane một nhóm tệp/điểm nóng ưu tiên:** gom các tính năng chạm cùng nhóm tệp vào **cùng một BOT-CEO** để nó tự xếp nối tiếp (`depends_on`), tránh hai lane sửa cùng một tệp rồi kẹt `needs-rebase`.
 
@@ -122,19 +122,25 @@ Mỗi nhánh là một khối `### <lane>/<slug>` dùng cặp `- khóa: giá tr�
 | `needs-rebase` | `copilot-git` | Xung đột merge, SHA lệch hoặc >1 migration head → trả về đúng `lane` của BOT-CEO xử lý. |
 | `failed` | `copilot-git` | Cổng kiểm sau merge hoặc deploy lỗi (kèm đường dẫn log) → trả về BOT-CEO giao lại thợ sửa. |
 
-### 4.3. Khóa nguyên tử khi nhiều BOT-CEO và Copilot cùng ghi `BRANCHES.md`
+### 4.3. Ghi `BRANCHES.md` an toàn khi nhiều BOT-CEO và Copilot cùng ghi
 
-Dùng thao tác tạo thư mục (nguyên tử trên cả Windows và Linux/WSL) tại **`.agents/.runtime/locks/branches`** (hoặc `.harness/locks/branches` — bắt buộc nằm trong thư mục đã khai báo ở `.gitignore` để không làm bẩn `git status` trên checkout chính):
+Không tự khóa bằng tay. **Mọi thao tác ghi `BRANCHES.md` đi qua `agm`**, lệnh tự lấy khóa, sửa đúng một mục, ghi nguyên tử và nhả khóa:
 
 ```bash
-mkdir -p .agents/.runtime/locks
-# Lấy khóa (thử lại tối đa 30 giây)
-for i in $(seq 30); do mkdir .agents/.runtime/locks/branches 2>/dev/null && break; sleep 1; done
-# ... chỉ sửa đúng mục của lane mình trong BRANCHES.md ...
-rmdir .agents/.runtime/locks/branches   # nhả khóa ngay sau khi ghi xong
+# Ghi/cập nhật một mục (tạo mục nếu chưa có; BRANCHES.md phải tồn tại sẵn, dùng đường dẫn tuyệt đối)
+agm branch set <lane>/<slug> status=wip lane=<lane> touches_hotspot=none   --file /abs/path/BRANCHES.md
+# Chốt ready: cần --worktree để agm kiểm worktree sạch và HEAD khớp head đã khai
+agm branch set <lane>/<slug> status=ready head=$HEAD_SHA verify="..." review="..."   --file /abs/path/BRANCHES.md --worktree /abs/path/worktree
+# Đọc một mục
+agm branch get <lane>/<slug> --file /abs/path/BRANCHES.md
 ```
 
-Nếu thư mục khóa tồn tại quá 10 phút (do tiến trình chết giữa chừng), người dùng kiểm tra không có agent nào đang ghi rồi xóa tay.
+Agent có MCP server `agm` dùng tool tương đương: `agm_branch_update` (ghi, `branches_file` là đường dẫn tuyệt đối) và `agm_branch_get` (đọc).
+
+- Khóa là thư mục `.agents/.runtime/locks/branches` cạnh `BRANCHES.md` (nằm trong `.gitignore`); `agm` chỉ giữ nó vài mili-giây, chờ tối đa 30 giây và **thu hồi khóa cũ hơn 60 giây**.
+- **Cấm `mkdir`/`rmdir` khóa bằng tay**: một lần giữ tay quá 60 giây có thể bị `agm` thu hồi và làm mất cập nhật của lane khác.
+- Terminal vai trò `worker` bị `agm` từ chối ghi `BRANCHES.md`.
+- Khuôn mục (§4.1) và bảng trạng thái (§4.2) giữ nguyên.
 
 ---
 
@@ -180,7 +186,7 @@ Mỗi BOT-CEO vận hành theo 9 bước gọn:
 2. **Research & Bàn thiết kế (chỉ đọc, trong checkout chính):**
    - Dùng GitNexus (`query`, `context`, `impact`) để giảm tối đa số tệp phải đọc; kiểm `BRANCHES.md` xem các lane khác có mục `wip`/`ready` nào chạm cùng điểm nóng không.
    - Tra cứu web: `agm ask` qua `agy`; đọc mã/tóm tắt cần sớm: Flash Go trong mức cấp. Tổng hợp không gấp có thể giao NVIDIA chỉ đọc sau kiểm dữ liệu/quota/qualification; không chờ nó để sang các cổng chính. Bàn thiết kế sâu: phiên `agy` Opus High khi còn hạn mức.
-3. **Giữ chỗ trên `BRANCHES.md`:** ghi mục `status: wip`, `lane`, `touches_hotspot`, `depends_on` (dưới khóa thư mục `.agents/.runtime/locks/branches`).
+3. **Giữ chỗ trên `BRANCHES.md`:** ghi mục `status: wip`, `lane`, `touches_hotspot`, `depends_on` (qua `agm branch set <lane>/<slug> status=wip ... --file <abs>/BRANCHES.md` hoặc tool MCP `agm_branch_update`).
 4. **Tạo worktree & giao thợ trực tiếp qua `agm spawn` (ưu tiên model nhẹ trước):**
      - Tạo `.agents/tasks/<ID>.md` (mục tiêu, phạm vi, `tier:`, `skills:` tối đa 2, lệnh kiểm, nguồn/model, mức cấp và yêu cầu tương tác/nền). Fast/mid ưu tiên Flash Go đã qualification; việc vượt năng lực chuyển Pro phù hợp hoặc Codex ca khó trong mức cấp, không chỉ đổi template cùng model. Miễn phí/local đủ năng lực đã duyệt là dự phòng.
     - CEO kiểm [Go Console](https://opencode.ai/console/go) và ngân sách trước khi giao, đổi nguồn hoặc mở phiên lại. Nếu Go cạn/không rõ hạn mức, chọn nguồn đã duyệt đủ năng lực hoặc chuyển `blocked`; không chuyển tự động sang API ngoài gói.
@@ -194,7 +200,7 @@ Mỗi BOT-CEO vận hành theo 9 bước gọn:
    - **Cập nhật docs & tổng hợp báo cáo (ưu tiên model nhẹ):** với báo cáo cuối `.agents/reports/<ID>.md` và 1–2 mục docs ngắn, dùng **`gemini-3.8-flash-medium` hoặc `gemini-4-hydrogen-low`**; chỉ dùng **`gemini-4-hydrogen-medium`** khi sửa tài liệu kiến trúc dài/nhiều tệp, rồi commit trên nhánh.
 7. **Rebase & chốt `ready`:**
    - Rebase nhánh lên `main` mới nhất (nếu xung đột hoặc lệch migration head thì xử lý ngay trong worktree), chạy lại lệnh kiểm chứng, lấy `HEAD_SHA=$(git rev-parse --short=12 HEAD)`.
-   - Cập nhật mục trên `BRANCHES.md` (dưới khóa): `status: ready`, `head: $HEAD_SHA`, `verify`, `review`, `docs`, `registered`.
+   - Cập nhật mục trên `BRANCHES.md` bằng `agm branch set ... status=ready head=$HEAD_SHA verify=... review=... docs=... registered=... --worktree <đường dẫn worktree>` (hoặc `agm_branch_update`): `status: ready`, `head: $HEAD_SHA`, `verify`, `review`, `docs`, `registered`.
 8. **Bàn giao cho `copilot-git` & cập nhật GitNexus:**
    - Nhắn ngắn qua `agm send copilot-git --type GIAO --task <ID> "Nhánh <lane>/<slug> ready tại SHA $HEAD_SHA, xem BRANCHES.md"`.
    - Nếu `copilot-git` trả `needs-rebase` hoặc `failed`, BOT-CEO chuyển về `wip`, xử lý trên worktree và đăng ký `ready` lại với SHA mới.
@@ -220,7 +226,7 @@ Mỗi BOT-CEO vận hành theo 9 bước gọn:
 
 ### Điều BOT-CEO không bao giờ làm
 - Không đọc sâu mã của lane khác nếu không liên quan điểm chạm (tránh phình ngữ cảnh).
-- Không sửa `BRANCHES.md` khi chưa giữ khóa thư mục.
+- Không sửa `BRANCHES.md` bằng tay hoặc tự `mkdir` khóa; chỉ ghi qua `agm branch set` / `agm_branch_update`.
 - Không đặt `ready` khi chưa có kết quả Audit + Reviewer (+ cập nhật docs của Hydrogen Medium nếu có thay đổi).
 - Không tự merge, push `main` hoặc deploy (giao `copilot-git`).
 - Không tự bật Extra Usage, tăng trần/nâng gói hoặc dùng nguồn phát sinh phí chưa duyệt. Không coi số liệu Go thiếu là còn hạn mức.
@@ -243,7 +249,7 @@ Làm đúng theo thứ tự Goal First -> Process Second -> Then Routines (Mục
 1. [goal.first & process.dump] Thu thập steps, watch_outs (điểm nóng), tools, check_work (eslint/test), info_from, feedback_from; xác định việc này phục vụ revenue hay cost.
 2. [hold] Diễn đạt lại (/restate) goal + process, đi qua 3 ví dụ (gồm ca lỗi/biên), chốt nguồn và dự phòng, xuất { goal, process, rules, routine, budget, next_step } và hỏi tôi ĐÚNG 1 CÂU mỗi lượt nếu còn quyết định ẩn.
 3. KHÔNG gọi agm spawn hay sửa mã cho tới khi tôi xác nhận kế hoạch.
-4. Khi tôi chốt "chạy": giữ chỗ wip có khóa. Kiểm hạn mức: DeepSeek Flash Go cho fast/mid/explore, Pro Go cho review/strong phù hợp sau qualification; script/CI cho việc xác định. NVIDIA nền chỉ đọc, không chặn merge. Không tự bật Extra Usage hoặc dùng API ngoài gói; thiếu hạn mức thì nguồn đã duyệt đủ năng lực hoặc CHẶN. Done khi qua Audit -> Reviewer -> Docs (nếu cần) -> copilot-git.
+4. Khi tôi chốt "chạy": giữ chỗ wip bằng `agm branch set`. Kiểm hạn mức: DeepSeek Flash Go cho fast/mid/explore, Pro Go cho review/strong phù hợp sau qualification; script/CI cho việc xác định. NVIDIA nền chỉ đọc, không chặn merge. Không tự bật Extra Usage hoặc dùng API ngoài gói; thiếu hạn mức thì nguồn đã duyệt đủ năng lực hoặc CHẶN. Done khi qua Audit -> Reviewer -> Docs (nếu cần) -> copilot-git.
 ```
 
 ---
@@ -251,6 +257,6 @@ Làm đúng theo thứ tự Goal First -> Process Second -> Then Routines (Mục
 ## Nguồn tham khảo
 
 - Khung xác định mục tiêu `Automate Anything` (`goal + process + routines`): Lauren Tan (`poteto`)
-- Mô hình gốc đa lane + `BRANCHES.md` + khóa thư mục: `/mnt/d/Project/MATHY-AI/HARNESSING.md`, `/mnt/d/Project/MATHY-AI/BRANCHES.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CEO_BOT.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CAI_TIEN_HARNESS.md`
-- Bộ điều phối `agm` (`agmag` v0.3.0): `/mnt/d/Project/agmag/README_vi.md` (hoặc https://github.com/wosonday/agmag/)
+- Mô hình gốc đa lane + `BRANCHES.md` + khóa thư mục (bản gốc; `agm` đã thay bằng `agm branch set`): `/mnt/d/Project/MATHY-AI/HARNESSING.md`, `/mnt/d/Project/MATHY-AI/BRANCHES.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CEO_BOT.md`, `/mnt/d/Project/MATHY-AI/docs/harness/CAI_TIEN_HARNESS.md`
+- Bộ điều phối `agm` (`agmag` v0.4.0): `/mnt/d/Project/agmag/README_vi.md` (hoặc https://github.com/wosonday/agmag/)
 - Tài liệu cùng bộ: [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md), [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md)

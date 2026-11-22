@@ -35,7 +35,7 @@ When receiving a new request from the user (even as a messy brain dump / voice n
 | Understand requirements, set the plan and budget, analyze risks, split small branches (< ~400 diff lines) | Manually grep/read dozens of files before querying `GitNexus` (`query`, `context`, `impact`) |
 | Converse directly with the user for its lane (max 1 hidden-decision question per turn) | Write long code/tests instead of workers (`worker-fast` / `mid` / Codex) |
 | Define acceptance criteria (`saved` + `confirmed`), write briefs / `.agents/tasks/<ID>.md` | Read raw long logs: use `explore` Flash Go within allocation; qualified NVIDIA for nonurgent synthesis |
-| Reserve `wip` / mark `ready` in `BRANCHES.md` (holding `.agents/.runtime/locks/branches`) | Review routine branches: qualified Pro Go, different family when Pro authored code; `agy` Opus High for hard cases |
+| Reserve `wip` / mark `ready` in `BRANCHES.md` via `agm branch set ... --file <abs>/BRANCHES.md` or MCP `agm_branch_update` (agm locks internally; no manual `mkdir` lock) | Review routine branches: qualified Pro Go, different family when Pro authored code; `agy` Opus High for hard cases |
 | Escalate diagnosis when workers + Codex fail twice | Merge into `main`, push, or deploy (handled by `copilot-git`) |
 
 ## 4. Saving Tokens & Preventing Context Bloat

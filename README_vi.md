@@ -14,7 +14,7 @@
 
 Và cho bạn can thiệp có kiểm soát: giao việc có giới hạn số thợ và ngân sách, trả lời agent, dừng agent (Codex/Claude chỉ khi **bạn** ra lệnh), tự **xoay vòng** thợ OpenCode khi ngữ cảnh đầy, và **bàn giao sang phiên mới** cho Claude Code/Codex mà không bao giờ tự kill phiên cũ.
 
-> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime. Phiên bản hiện tại: **0.3.0** — xem [CHANGELOG.md](CHANGELOG.md).
+> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime. Phiên bản hiện tại: **0.4.0** — xem [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -201,6 +201,36 @@ Thêm đoạn này vào `AGENTS.md` (Codex, OpenCode đọc) và `CLAUDE.md` (Cl
 
 agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt trong mỗi terminal. Mọi lệnh in JSON khi đầu ra không phải terminal (hoặc thêm `--json`) để agent đọc được. Xem thêm hướng dẫn chi tiết cho agent ở [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md).
 
+### MCP server
+
+`agm mcp` là MCP server qua stdio (JSON-RPC 2.0, mỗi dòng một thông điệp; phiên bản giao thức 2025-06-18, 2025-03-26, 2024-11-05) để Claude Code và OpenCode gọi agm như tool. Đăng ký:
+
+```bash
+# Claude Code
+claude mcp add -s user agm -- agm mcp
+```
+
+```json
+// opencode.json
+{"mcp":{"agm":{"type":"local","command":["agm","mcp"]}}}
+```
+
+| Tool | Việc |
+|---|---|
+| `agm_send` | Gửi tin có ghi lại (`kind`: `ASSIGN\|REPORT\|ERROR\|QUESTION\|BLOCKED\|PASS\|FAIL`; vẫn nhận mã tiếng Việt) |
+| `agm_inbox` | Đọc hộp thư |
+| `agm_ps` | Liệt kê terminal của herdr-core |
+| `agm_quota` | Hạn mức gói như đang lưu trong DB, do `agm daemon` giữ mới (không quét log, không refresh) |
+| `agm_spawn` | Sinh agent (kiểm tra như `agm spawn`) |
+| `agm_branch_get` | Đọc một mục trong `BRANCHES.md` |
+| `agm_branch_update` | Cập nhật một mục trong `BRANCHES.md` (cùng quy tắc với `agm branch set`) |
+
+Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không bao giờ là `user`. Đối số lạ của tool bị từ chối. `agm mcp` không có tool kill/interrupt/manage/cleanup (cũng không có reply/done); những việc đó chỉ người dùng làm.
+
+### BRANCHES.md
+
+`agm branch get <ENTRY> [--file PATH]` in một mục; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` cập nhật mục đó. `--file` mặc định `BRANCHES.md`; mục là khối `### <lane>/<slug>` gồm các dòng `- key: value`. Khi ghi, agm giữ thư mục khóa `<thư mục chứa BRANCHES.md>/.agents/.runtime/locks/branches` (cùng đường dẫn với cách `mkdir` tay trước đây, nên script cũ và agm loại trừ lẫn nhau; khóa cũ hơn 60 s bị thu hồi, chờ tối đa 30 s) và ghi bằng tệp tạm + đổi tên. Trạng thái hợp lệ: `wip blocked ready merging merged deployed needs-rebase failed`. Khóa hợp lệ: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` cần `head` hex 12–40 ký tự, `--worktree`, worktree sạch và HEAD khớp; terminal có vai trò `worker` bị từ chối.
+
 ## 7. Tất cả lệnh
 
 | Lệnh | Việc |
@@ -217,6 +247,8 @@ agm tự biết ai gửi nhờ biến `HC_TERMINAL_ID` mà herdr-core đặt tro
 | `agm inbox [--all]` • `agm reply <#> <text>` • `agm done <IDS...> [--kind K] [--terminal T] [--source S]` | Hộp thư; trả lời câu hỏi của agent; đóng một hoặc nhiều mục |
 | `agm send <đích> --type <LOẠI> [--task ID] <tin>` | Gửi tin có ghi lại; đích `user` → hộp thư |
 | `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <đối số…>` | Sinh agent (`hc run --bg --outlive-parent`), giữ nguyên từng đối số sau `--`; nếu `<template>` là template của hc, các đối số được gộp thành một chuỗi nhiệm vụ. Trên Windows, khi `hc run <template>` lỗi `cannot start "sh"`, agm dự phòng chạy thẳng `command:` của template và gửi thân template cùng nhiệm vụ vào terminal. Kiểm `max_workers` và ngân sách |
+| `agm branch get <ENTRY> \| set <ENTRY> <KEY=VALUE>...` `[--file PATH] [--worktree PATH]` | Đọc / cập nhật một mục của `BRANCHES.md` dưới khóa, ghi nguyên tử |
+| `agm mcp` | MCP server qua stdio với 7 tool (xem [MCP server](#mcp-server)) |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Dừng / ngắt — Codex, Claude, app chưa rõ: **chỉ bạn**, luôn phải gõ `y` (`--yes` không áp dụng) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay |
 | `agm rotate <t> [--yes]` | Xoay vòng ngay: OpenCode worker (bàn giao + dừng + sinh mới) hoặc Claude/Codex đã `manage` (bàn giao + mở mới, **không** dừng phiên cũ) |
@@ -343,7 +375,7 @@ Model chưa khai giá hoặc cửa sổ → agm hiện `?`, không bịa số 0.
 **Dữ liệu**
 
 - agm **chỉ đọc** log của Claude/Codex, `transcript.jsonl` + `conversation_summaries.db` của agy, và `opencode.db` (chỉ hai bảng phiên/tin nhắn — không bao giờ đọc bảng chứa thông tin đăng nhập). CSDL của các công cụ đó được mở ở chế độ `READ_ONLY`.
-- Ngoài `~/.agmag/`, agm chỉ ghi ở ba chỗ: `statusLine` trong `~/.claude/settings.json` (khi bạn chạy `agm hook install`), dòng `.agents/handoff/` trong `info/exclude` của repo (khi xoay vòng phiên Claude/Codex đã `manage`; tệp bàn giao do chính agent ghi), và thư mục tạm `agmag-ask` cho `agm ask`.
+- Ngoài `~/.agmag/`, agm chỉ ghi ở năm chỗ: `BRANCHES.md` và thư mục khóa `.agents/.runtime/locks/branches` (chỉ qua `agm branch set`), `statusLine` trong `~/.claude/settings.json` (khi bạn chạy `agm hook install`), dòng `.agents/handoff/` trong `info/exclude` của repo (khi xoay vòng phiên Claude/Codex đã `manage`; tệp bàn giao do chính agent ghi), và thư mục tạm `agmag-ask` cho `agm ask`.
 - Mọi thứ agm lưu nằm ở `~/.agmag/agm.db` trên máy bạn: token, hạn mức, tóm tắt ≤ 200 ký tự mỗi lượt, tin nhắn qua `agm send`, hộp thư, nhật ký can thiệp. Không gửi đi đâu.
 
 ## 12. Giới hạn đã biết

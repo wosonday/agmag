@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
+### Thêm mới
+
+- `agm mcp`: MCP server qua stdio (JSON-RPC 2.0, mỗi dòng một thông điệp; giao thức 2025-06-18 / 2025-03-26 / 2024-11-05) với 7 tool: `agm_send`, `agm_inbox`, `agm_ps`, `agm_quota`, `agm_spawn`, `agm_branch_get`, `agm_branch_update`. Không có tool kill/interrupt/manage/cleanup/reply/done. Người gửi là `HC_TERMINAL_ID` của bên gọi hoặc `agent`, không bao giờ `user`; đối số lạ bị từ chối; `agm_quota` chỉ đọc DB do `agm daemon` giữ mới.
+- `agm branch get|set`: đọc/ghi mục `### <lane>/<slug>` trong `BRANCHES.md` dưới khóa `<thư mục BRANCHES.md>/.agents/.runtime/locks/branches` (cùng đường dẫn với khóa `mkdir` tay cũ; thu hồi khi cũ hơn 60 s, chờ tối đa 30 s), ghi bằng tệp tạm + đổi tên. Kiểm trạng thái và khóa hợp lệ; `status: ready` cần `head` hex 12–40 ký tự, `--worktree` sạch và HEAD khớp; terminal vai trò `worker` bị từ chối.
+
 ## [0.3.3] - 2026-11-21
 
 ### Thêm mới

@@ -14,7 +14,7 @@
 
 It also lets you intervene in a controlled way: assign work with worker-count and budget limits, answer agents, stop agents (Codex/Claude only when **you** say so), automatically **rotate** OpenCode workers when their context fills up, and **hand off to a fresh session** for Claude Code/Codex without ever killing the old one automatically.
 
-> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.3.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.4.0** — see [CHANGELOG.md](CHANGELOG.md).
 >
 > Tables and command output are in **English**. Message types stored by `agm send` are still the Vietnamese codes listed below; `agm tui` also accepts their English names.
 
@@ -205,6 +205,36 @@ Message types: `GIAO` assign · `BÁO CÁO` report · `LỖI` error · `HỎI` q
 
 agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets in each terminal. Every command prints JSON when output is not a terminal (or with `--json`) so agents can parse it. See [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (Vietnamese) for a detailed agent guide.
 
+### MCP server
+
+`agm mcp` is an MCP server over stdio (newline-delimited JSON-RPC 2.0; protocol versions 2025-06-18, 2025-03-26, 2024-11-05) so Claude Code and OpenCode can call agm as tools. Register it:
+
+```bash
+# Claude Code
+claude mcp add -s user agm -- agm mcp
+```
+
+```json
+// opencode.json
+{"mcp":{"agm":{"type":"local","command":["agm","mcp"]}}}
+```
+
+| Tool | Purpose |
+|---|---|
+| `agm_send` | Send a recorded message (`kind`: `ASSIGN\|REPORT\|ERROR\|QUESTION\|BLOCKED\|PASS\|FAIL`; Vietnamese codes also accepted) |
+| `agm_inbox` | Read the inbox |
+| `agm_ps` | List herdr-core terminals |
+| `agm_quota` | Subscription quota as stored in the DB, kept fresh by `agm daemon` (no log scan, no refresh) |
+| `agm_spawn` | Spawn an agent (same checks as `agm spawn`) |
+| `agm_branch_get` | Read an entry of `BRANCHES.md` |
+| `agm_branch_update` | Update an entry of `BRANCHES.md` (same rules as `agm branch set`) |
+
+The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknown tool arguments are rejected. `agm mcp` has no kill/interrupt/manage/cleanup tools (nor reply/done); those stay with the user.
+
+### BRANCHES.md
+
+`agm branch get <ENTRY> [--file PATH]` prints one entry; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` updates it. `--file` defaults to `BRANCHES.md`; entries are `### <lane>/<slug>` blocks of `- key: value` lines. Writes take the lock directory `<dir of BRANCHES.md>/.agents/.runtime/locks/branches` (the same path as the old manual `mkdir` protocol, so old scripts and agm exclude each other; a lock older than 60 s is reclaimed, waiting up to 30 s) and write via temp file + rename. Valid statuses: `wip blocked ready merging merged deployed needs-rebase failed`. Valid keys: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` requires a 12–40 hex `head`, `--worktree`, a clean worktree and a matching HEAD; terminals with role `worker` are refused.
+
 ## 7. All commands
 
 | Command | Purpose |
@@ -221,6 +251,8 @@ agm knows who is sending via the `HC_TERMINAL_ID` variable that herdr-core sets 
 | `agm inbox [--all]` · `agm reply <#> <text>` · `agm done <IDS...> [--kind K] [--terminal T] [--source S]` | Inbox; answer an agent's question; dismiss inbox item(s) |
 | `agm send <target> --type <TYPE> [--task ID] <text>` | Send a recorded message; target `user` → inbox |
 | `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <args…>` | Spawn an agent (`hc run --bg --outlive-parent`), keeping each argument after `--` intact; if `<template>` is an hc template, those arguments are joined into one task string. On Windows, when `hc run <template>` fails with `cannot start "sh"`, agm falls back to running the template's `command:` directly and sends the template body plus the task to the terminal. Checks `max_workers` and budgets |
+| `agm branch get <ENTRY> \| set <ENTRY> <KEY=VALUE>...` `[--file PATH] [--worktree PATH]` | Read / update an entry of `BRANCHES.md` under a lock, atomically |
+| `agm mcp` | MCP server over stdio exposing 7 tools (see [MCP server](#mcp-server)) |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Kill / interrupt — Codex, Claude, unknown apps: **you only**, always requires typing `y` (`--yes` doesn't apply) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Enable/disable rotation management for a hand-opened Claude Code or Codex session |
 | `agm rotate <t> [--yes]` | Rotate now: OpenCode worker (hand-off + kill + respawn) or a managed Claude/Codex session (hand-off + new session, old one is **not** killed) |
@@ -347,7 +379,7 @@ Models without a declared price or context window show `?` — agm never invents
 **Data**
 
 - agm **only reads** Claude/Codex logs, agy's `transcript.jsonl` + `conversation_summaries.db`, and `opencode.db` (only the two session/message tables — never the table holding credentials). Those tools' databases are opened `READ_ONLY`.
-- Outside `~/.agmag/`, agm writes in only three places: the `statusLine` in `~/.claude/settings.json` (when you run `agm hook install`), a `.agents/handoff/` line in the repo's `info/exclude` (when rotating a managed Claude/Codex session; the hand-off file itself is written by the agent), and the `agmag-ask` temp directory for `agm ask`.
+- Outside `~/.agmag/`, agm writes in only five places: `BRANCHES.md` and its lock directory `.agents/.runtime/locks/branches` (only via `agm branch set`), the `statusLine` in `~/.claude/settings.json` (when you run `agm hook install`), a `.agents/handoff/` line in the repo's `info/exclude` (when rotating a managed Claude/Codex session; the hand-off file itself is written by the agent), and the `agmag-ask` temp directory for `agm ask`.
 - Everything agm stores lives in `~/.agmag/agm.db` on your machine: tokens, quotas, ≤ 200-character summaries per turn, messages sent via `agm send`, the inbox, the intervention log. Nothing is sent anywhere.
 
 ## 12. Known limitations

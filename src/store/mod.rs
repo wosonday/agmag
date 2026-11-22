@@ -32,7 +32,7 @@ pub struct SessionStats {
     pub bad_lines: u64,
 }
 
-/// Chạy `f`, thử lại khi SQLITE_BUSY/LOCKED (có lệnh không tôn trọng busy_timeout): lùi 20 ms tăng dần, tối đa ~5 s.
+/// Chạy `f`, thử lại khi SQLITE_BUSY/LOCKED (có lệnh không tôn trọng busy_timeout): lùi 20 ms tăng dần; cửa sổ thử lại ~5 s, và mỗi lần thử có thể chờ thêm tới một busy_timeout (5 s).
 fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
     use rusqlite::ErrorCode::{DatabaseBusy, DatabaseLocked};
     let start = std::time::Instant::now();

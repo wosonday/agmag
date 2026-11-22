@@ -403,7 +403,11 @@ fn verify_and_respawn(
     let mut req = SpawnReq {
         template,
         task: task.clone(),
-        role: t.role.clone().unwrap_or_else(|| "worker".into()),
+        role: t
+            .role
+            .clone()
+            .filter(|r| !r.trim().is_empty())
+            .unwrap_or_else(|| "worker".into()),
         name: None,
         cwd: t.cwd.clone(),
         text: vec![resume_text(&task)],

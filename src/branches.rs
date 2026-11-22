@@ -237,7 +237,8 @@ pub fn lock_dir(file: &Path) -> PathBuf {
     parent.join(".agents/.runtime/locks/branches")
 }
 
-/// Giữ khóa; thả (xóa thư mục khóa) khi bị drop.
+/// Giữ khóa; khi drop chỉ xóa thư mục khóa nếu `owner` vẫn chứa token của ta
+/// (khóa đã bị thu hồi và người khác giữ thì để yên).
 #[derive(Debug)]
 pub struct BranchLock {
     path: PathBuf,
@@ -334,8 +335,13 @@ pub fn acquire_lock_with(
                 Ok(()) => {
                     // giữa lúc kiểm tra và đổi tên, người khác có thể đã tạo khóa mới: kiểm lại
                     if lock_age(&gone).is_some_and(|a| a < stale_after) {
-                        // trả về chỗ cũ; nếu `dir` đã có khóa khác thì để nguyên bản đã dời
-                        let _ = std::fs::rename(&gone, dir);
+                        // Trả về chỗ cũ. Còn một khe cực nhỏ chỉ có trên POSIX (rename đè lên thư
+                        // mục rỗng vừa được tạo giữa kiểm tra và đổi tên); `Drop` kiểm token nên
+                        // không xóa nhầm. Nếu trả về thất bại, thư mục `branches.stale-*` còn lại
+                        // vô hại (không phải đường dẫn khóa).
+                        if !dir.exists() {
+                            let _ = std::fs::rename(&gone, dir);
+                        }
                     } else {
                         let _ = std::fs::remove_dir_all(&gone);
                         continue;
@@ -454,7 +460,12 @@ pub fn write_atomic_with(
     loop {
         match rename(&tmp, file) {
             Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && retries < 10 => {
+            Err(e)
+                if retries < 10
+                    && (e.kind() == std::io::ErrorKind::PermissionDenied
+                        // Windows: sharing/lock violation (Defender, indexer) không map thành PermissionDenied
+                        || matches!(e.raw_os_error(), Some(32 | 33))) =>
+            {
                 retries += 1;
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -504,6 +515,15 @@ fn do_update(
         Some(s) => s == "ready",
         None => sets_head,
     };
+    if last_status == Some("ready")
+        && let Some((_, h)) = req.fields.iter().rfind(|(k, _)| k == "head")
+        && !is_sha(h.trim())
+    {
+        bail!(
+            "không thể đặt ready: head phải là SHA 12-40 ký tự hex thường (đang là {:?})",
+            h.trim()
+        );
+    }
     let snap = match req.worktree.as_deref() {
         Some(wt) if may_guard => Some(GitSnapshot {
             wt: wt.to_string(),

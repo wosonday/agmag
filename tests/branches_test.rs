@@ -653,12 +653,12 @@ fn reclaim_gives_back_a_lock_that_became_fresh_before_rename() {
     let dir = tempfile::tempdir().unwrap();
     let ld = lock_dir(&dir.path().join("BRANCHES.md"));
     std::fs::create_dir_all(&ld).unwrap();
-    std::thread::sleep(Duration::from_millis(400));
+    std::thread::sleep(Duration::from_millis(2200));
     let fired = std::cell::Cell::new(false);
     let e = acquire_lock_with(
         &ld,
         Duration::from_millis(150),
-        Duration::from_millis(300),
+        Duration::from_millis(2000),
         &|d| std::fs::create_dir(d),
         &|from, to| {
             if !fired.replace(true) {
@@ -752,4 +752,46 @@ fn heading_with_trailing_comment_matches_entry() {
     let (out, created) = upsert_entry(t, "a/x", &[kv("status", "blocked")]).unwrap();
     assert!(!created);
     assert!(out.starts_with("### a/x   # chú thích\n- status: blocked\n"));
+}
+
+#[test]
+fn write_retries_sharing_and_lock_violations() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(&file, "cũ").unwrap();
+    let calls = std::cell::Cell::new(0);
+    write_atomic_with(&file, "mới", &|a, b| {
+        calls.set(calls.get() + 1);
+        match calls.get() {
+            1 => Err(std::io::Error::from_raw_os_error(32)),
+            2 => Err(std::io::Error::from_raw_os_error(33)),
+            _ => std::fs::rename(a, b),
+        }
+    })
+    .unwrap();
+    assert_eq!(calls.get(), 3);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "mới");
+    assert_eq!(tmp_leftovers(dir.path()), 0);
+}
+
+#[test]
+fn ready_without_head_update_checks_head_from_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    let before = "### a/x\n- status: wip\n- head: deadbeef0000\n";
+    std::fs::write(&file, before).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let r = req(&file, "a/x", &[("status", "ready")], Some("/wt"));
+    let other = FakeGit {
+        head: "cafebabe0000ffff".into(),
+        clean: true,
+    };
+    assert!(update(&store, &other, None, &r, T, 1).is_err());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    update(&store, &fake(true), None, &r, T, 1).unwrap();
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("- status: ready")
+    );
 }

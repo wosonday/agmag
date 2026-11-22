@@ -106,6 +106,33 @@ fn validate_fields_rejects_value_that_would_be_cut_as_comment() {
 }
 
 #[test]
+fn validate_fields_rejects_value_that_reads_back_empty() {
+    assert!(validate_fields(&[kv("summary", "# x")]).is_err());
+    assert!(validate_fields(&[kv("summary", "  # x")]).is_err());
+    assert!(validate_fields(&[kv("summary", "#")]).is_err());
+    assert!(validate_fields(&[kv("summary", "#12")]).is_ok());
+}
+
+#[test]
+fn update_missing_file_errors_and_creates_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    let store = Store::open_in_memory().unwrap();
+    let e = update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &[("status", "wip")], None),
+        T,
+        1,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("không thấy"), "{e}");
+    assert!(!file.exists());
+    assert!(!dir.path().join(".agents").exists());
+}
+
+#[test]
 fn upsert_duplicate_update_keys_last_wins() {
     let t = "### a/x\n- status: wip\n";
     let (out, _) = upsert_entry(t, "a/x", &[kv("lane", "1"), kv("lane", "2")]).unwrap();
@@ -176,6 +203,12 @@ const T: Duration = Duration::from_secs(5);
 fn update_writes_entry_and_logs_action() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("BRANCHES.md");
+    std::fs::write(
+        &file,
+        "# Branches
+",
+    )
+    .unwrap();
     let store = Store::open_in_memory().unwrap();
     let out = update(
         &store,
@@ -324,6 +357,12 @@ fn stale_lock_is_reclaimed_fresh_lock_times_out() {
 fn concurrent_updates_lose_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("BRANCHES.md");
+    std::fs::write(
+        &file,
+        "# Branches
+",
+    )
+    .unwrap();
     let db = dir.path().join("agm.db");
     // mỗi thread một Store riêng, nhưng mở tuần tự: khởi tạo schema đồng thời là chuyện của store, không phải của khóa nhánh
     let stores: Vec<Store> = (0..8).map(|_| Store::open(&db).unwrap()).collect();

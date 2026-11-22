@@ -73,6 +73,9 @@ pub fn validate_fields(fields: &[(String, String)]) -> Result<()> {
         if v.contains(" # ") || v.contains("\t# ") {
             bail!("giá trị của {k} không được chứa ' # ' (sẽ bị cắt như chú thích khi đọc lại)");
         }
+        if v.trim() == "#" || v.trim().starts_with("# ") {
+            bail!("giá trị của {k} không được bắt đầu bằng '# ' (sẽ đọc lại thành rỗng)");
+        }
         if k == "status" && !STATUSES.contains(&v.trim()) {
             bail!(
                 "trạng thái không hợp lệ: {v:?} (hợp lệ: {})",
@@ -398,10 +401,20 @@ fn do_update(
         );
     }
     ensure_writer(store, caller_terminal)?;
+    // Không tự tạo BRANCHES.md: thiếu tệp là lỗi, và không để lại khóa/thư mục nào.
+    let missing = || {
+        anyhow::anyhow!(
+            "không thấy {} — tạo tệp BRANCHES.md trước (vd một dòng tiêu đề) rồi chạy lại",
+            req.file.display()
+        )
+    };
+    if !req.file.exists() {
+        return Err(missing());
+    }
     let _lock = acquire_lock(&lock_dir(&req.file), timeout, LOCK_STALE)?;
     let text = match std::fs::read_to_string(&req.file) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(missing()),
         Err(e) => {
             return Err(e).with_context(|| format!("không đọc được {}", req.file.display()));
         }

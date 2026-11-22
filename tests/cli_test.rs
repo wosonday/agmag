@@ -849,6 +849,12 @@ fn branch_set_then_get_roundtrip() {
     let tmp = sandbox(None);
     let file = tmp.path().join("BRANCHES.md");
     let f = file.to_str().unwrap();
+    std::fs::write(
+        &file,
+        "# Branches
+",
+    )
+    .unwrap();
     let out = agm(
         tmp.path(),
         &[

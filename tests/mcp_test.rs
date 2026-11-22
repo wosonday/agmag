@@ -439,6 +439,7 @@ fn branch_update_writes_for_non_worker() {
         let dir = std::env::temp_dir().join(format!("agm-mcp-bw-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("BRANCHES.md");
+        std::fs::write(&file, "").unwrap();
         let r = call(
             ctx,
             "agm_branch_update",
@@ -471,6 +472,7 @@ fn no_tool_call_ever_kills() {
     };
     let dir = std::env::temp_dir().join(format!("agm-mcp-nk-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("BRANCHES.md"), "").unwrap();
     let file = dir.join("BRANCHES.md").to_string_lossy().to_string();
     live_term(&store, "t1", "live", None);
     let calls = [
@@ -558,6 +560,7 @@ fn branch_update_without_terminal_logs_actor_agent() {
         let dir = std::env::temp_dir().join(format!("agm-mcp-la-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("BRANCHES.md");
+        std::fs::write(&file, "").unwrap();
         let r = call(
             ctx,
             "agm_branch_update",
@@ -576,4 +579,67 @@ fn branch_update_without_terminal_logs_actor_agent() {
         assert_eq!(actor, "agent");
         let _ = std::fs::remove_dir_all(&dir);
     });
+}
+
+#[test]
+fn branch_tools_reject_relative_path_and_update_rejects_missing_file() {
+    with_ctx(|ctx| {
+        for (n, a) in [
+            (
+                "agm_branch_get",
+                json!({"branches_file": "BRANCHES.md", "entry": "feat/x"}),
+            ),
+            (
+                "agm_branch_update",
+                json!({"branches_file": "BRANCHES.md", "entry": "feat/x", "fields": {"status": "wip"}}),
+            ),
+        ] {
+            let r = call(ctx, n, a);
+            assert_eq!(r["result"]["isError"], true, "{r}");
+            assert!(err_text(&r).contains("branches_file"), "{r}");
+        }
+        let dir = std::env::temp_dir().join(format!("agm-mcp-miss-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("BRANCHES.md");
+        let r = call(
+            ctx,
+            "agm_branch_update",
+            json!({"branches_file": file.to_string_lossy(), "entry": "feat/x", "fields": {"status": "wip"}}),
+        );
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        assert!(!file.exists());
+        let r = call(
+            ctx,
+            "agm_branch_get",
+            json!({"branches_file": file.to_string_lossy(), "entry": "feat/x"}),
+        );
+        assert_eq!(r["result"]["structuredContent"]["found"], false, "{r}");
+        let _ = std::fs::remove_dir_all(&dir);
+    });
+}
+
+#[test]
+fn send_failed_delivery_is_tool_error() {
+    let store = Store::open_in_memory().unwrap();
+    let hc = FakeHc {
+        fail_send: true,
+        ..Default::default()
+    };
+    let git = FakeGit;
+    let ctx = McpCtx {
+        store: &store,
+        hc: &hc,
+        git: &git,
+        cfg_path: std::path::PathBuf::from("providers.toml"),
+        caller_terminal: None,
+        clock: || 0,
+    };
+    live_term(&store, "t1", "live", None);
+    let r = call(
+        &ctx,
+        "agm_send",
+        json!({"to": "t1", "kind": "ASSIGN", "text": "x"}),
+    );
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(err_text(&r).contains("refused"), "{r}");
 }

@@ -93,14 +93,14 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "agm_branch_get",
             "Read one entry's fields from a BRANCHES.md file.",
-            json!({"branches_file": {"type": "string"}, "entry": {"type": "string"}}),
+            json!({"branches_file": {"type": "string", "description": "absolute path to BRANCHES.md"}, "entry": {"type": "string"}}),
             &["branches_file", "entry"],
         ),
         tool(
             "agm_branch_update",
-            "Update (or create) one entry in a BRANCHES.md file under a lock; refused for worker terminals.",
+            "Update (or create) one entry in an existing BRANCHES.md file under a lock; refused for worker terminals.",
             json!({
-                "branches_file": {"type": "string"},
+                "branches_file": {"type": "string", "description": "absolute path to BRANCHES.md"},
                 "entry": {"type": "string"},
                 "fields": {"type": "object", "additionalProperties": {"type": "string"}},
                 "worktree": {"type": "string"},
@@ -139,6 +139,18 @@ fn mcp_actor<'a>(ctx: &'a McpCtx) -> &'a str {
     }
 }
 
+/// `branches_file` phải là đường dẫn tuyệt đối (cwd của máy chủ MCP không đáng tin).
+fn abs_branches_file(file: &str) -> Result<PathBuf, ToolError> {
+    let p = PathBuf::from(file);
+    if !p.is_absolute() {
+        return Err(anyhow::anyhow!(
+            "Tham số `branches_file` phải là đường dẫn tuyệt đối tới BRANCHES.md (nhận {file})"
+        )
+        .into());
+    }
+    Ok(p)
+}
+
 /// Từ chối khóa tham số không có trong schema của tool (additionalProperties: false).
 fn reject_unknown_keys(name: &str, args: &Value) -> Result<(), ToolError> {
     let Some(def) = tool_definitions().into_iter().find(|t| t["name"] == name) else {
@@ -175,6 +187,14 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
             let from = mcp_actor(ctx);
             let now = (ctx.clock)();
             let row = crate::actions::send(ctx.store, ctx.hc, from, to, stored, task, text, now)?;
+            if row.status == "failed" {
+                // Giống CLI: gửi thất bại thì báo lỗi, không báo thành công.
+                return Err(anyhow::anyhow!(
+                    "gửi tới {to} thất bại: {}",
+                    row.detail.as_deref().unwrap_or("không rõ lý do")
+                )
+                .into());
+            }
             Ok(serde_json::to_value(row).map_err(anyhow::Error::from)?)
         }
         "agm_spawn" => {
@@ -194,7 +214,7 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
             Ok(json!({"address": address}))
         }
         "agm_branch_update" => {
-            let file = req_str(args, "branches_file")?;
+            let file = abs_branches_file(req_str(args, "branches_file")?)?;
             let entry = req_str(args, "entry")?;
             let Some(Value::Object(map)) = args.get("fields") else {
                 return Err(anyhow::anyhow!("Tham số `fields` phải là object").into());
@@ -207,7 +227,7 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
                 fields.push((k.clone(), s.clone()));
             }
             let req = crate::branches::BranchUpdate {
-                file: PathBuf::from(file),
+                file,
                 entry: entry.into(),
                 fields,
                 worktree: opt_str(args, "worktree")?.map(String::from),
@@ -241,18 +261,16 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
             Ok(json!({"quota": quota, "task": task}))
         }
         "agm_branch_get" => {
-            let file = req_str(args, "branches_file")?;
+            let file = abs_branches_file(req_str(args, "branches_file")?)?;
             let entry = req_str(args, "entry")?;
-            if std::path::Path::new(file)
-                .file_name()
-                .and_then(|n| n.to_str())
-                != Some("BRANCHES.md")
-            {
-                return Err(
-                    anyhow::anyhow!("chỉ được đọc tệp tên BRANCHES.md (nhận {file})").into(),
-                );
+            if file.file_name().and_then(|n| n.to_str()) != Some("BRANCHES.md") {
+                return Err(anyhow::anyhow!(
+                    "chỉ được đọc tệp tên BRANCHES.md (nhận {})",
+                    file.display()
+                )
+                .into());
             }
-            let got = crate::branches::get(std::path::Path::new(file), entry)?;
+            let got = crate::branches::get(&file, entry)?;
             Ok(json!({
                 "entry": entry,
                 "found": got.is_some(),

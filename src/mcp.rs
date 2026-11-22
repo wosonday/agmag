@@ -131,6 +131,14 @@ fn req_str<'v>(args: &'v Value, key: &str) -> Result<&'v str, ToolError> {
     opt_str(args, key)?.ok_or_else(|| anyhow::anyhow!("Thiếu tham số bắt buộc `{key}`").into())
 }
 
+/// Danh tính người gọi MCP: terminal gọi, hoặc "agent" nếu thiếu/rỗng/"user" (không bao giờ giả danh người dùng).
+fn mcp_actor<'a>(ctx: &'a McpCtx) -> &'a str {
+    match ctx.caller_terminal.as_deref().map(str::trim) {
+        Some(t) if !t.is_empty() && !t.eq_ignore_ascii_case("user") => t,
+        _ => "agent",
+    }
+}
+
 /// Từ chối khóa tham số không có trong schema của tool (additionalProperties: false).
 fn reject_unknown_keys(name: &str, args: &Value) -> Result<(), ToolError> {
     let Some(def) = tool_definitions().into_iter().find(|t| t["name"] == name) else {
@@ -164,7 +172,7 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
                     )
                 })?;
             // Người gửi luôn là terminal gọi hoặc "agent"; không bao giờ là "user".
-            let from = ctx.caller_terminal.as_deref().unwrap_or("agent");
+            let from = mcp_actor(ctx);
             let now = (ctx.clock)();
             let row = crate::actions::send(ctx.store, ctx.hc, from, to, stored, task, text, now)?;
             Ok(serde_json::to_value(row).map_err(anyhow::Error::from)?)
@@ -207,7 +215,7 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
             let out = crate::branches::update(
                 ctx.store,
                 ctx.git,
-                ctx.caller_terminal.as_deref(),
+                Some(mcp_actor(ctx)),
                 &req,
                 crate::branches::LOCK_TIMEOUT,
                 (ctx.clock)(),

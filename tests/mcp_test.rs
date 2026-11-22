@@ -527,3 +527,53 @@ fn unknown_argument_keys_are_rejected() {
         assert!(ctx.store.inbox(false).unwrap().is_empty());
     });
 }
+
+#[test]
+fn caller_terminal_user_is_never_used_as_sender() {
+    let store = Store::open_in_memory().unwrap();
+    let hc = FakeHc::default();
+    let git = FakeGit;
+    let ctx = McpCtx {
+        store: &store,
+        hc: &hc,
+        git: &git,
+        cfg_path: std::path::PathBuf::from("providers.toml"),
+        caller_terminal: Some("User".into()),
+        clock: || 0,
+    };
+    let r = call(
+        &ctx,
+        "agm_send",
+        json!({"to": "user", "kind": "REPORT", "text": "x"}),
+    );
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(r["result"]["structuredContent"]["from"], "agent");
+    let items = store.inbox(true).unwrap();
+    assert_eq!(items[0].terminal.as_deref(), Some("agent"));
+}
+
+#[test]
+fn branch_update_without_terminal_logs_actor_agent() {
+    with_ctx(|ctx| {
+        let dir = std::env::temp_dir().join(format!("agm-mcp-la-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("BRANCHES.md");
+        let r = call(
+            ctx,
+            "agm_branch_update",
+            json!({"branches_file": file.to_string_lossy(), "entry": "feat/x", "fields": {"status": "wip"}}),
+        );
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        let actor: String = ctx
+            .store
+            .conn()
+            .query_row(
+                "SELECT actor FROM actions WHERE kind = 'branch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(actor, "agent");
+        let _ = std::fs::remove_dir_all(&dir);
+    });
+}

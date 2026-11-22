@@ -1,7 +1,14 @@
 //! Đọc và sửa khối `### <nhánh>` trong BRANCHES.md — chỉ là hàm thuần trên văn bản,
 //! không đụng tệp, không khóa.
 
-use anyhow::{Result, bail};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result, bail};
+use serde::Serialize;
+
+use crate::git::Git;
+use crate::store::Store;
 
 pub const STATUSES: [&str; 8] = [
     "wip",
@@ -62,6 +69,9 @@ pub fn validate_fields(fields: &[(String, String)]) -> Result<()> {
         }
         if v.contains('\n') || v.contains('\r') {
             bail!("giá trị của {k} không được chứa xuống dòng");
+        }
+        if v.contains(" # ") || v.contains("\t# ") {
+            bail!("giá trị của {k} không được chứa ' # ' (sẽ bị cắt như chú thích khi đọc lại)");
         }
         if k == "status" && !STATUSES.contains(&v.trim()) {
             bail!(
@@ -136,6 +146,14 @@ pub fn upsert_entry(
     entry: &str,
     updates: &[(String, String)],
 ) -> Result<(String, bool)> {
+    // khóa trùng trong `updates`: giữ bản cuối cùng
+    let deduped: Vec<(String, String)> = updates
+        .iter()
+        .enumerate()
+        .filter(|(i, (k, _))| !updates[i + 1..].iter().any(|(k2, _)| k2 == k))
+        .map(|(_, kv)| kv.clone())
+        .collect();
+    let updates = deduped.as_slice();
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let field_line = |k: &str, v: &str| format!("- {k}: {}{eol}", v.trim());
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
@@ -186,4 +204,226 @@ pub fn upsert_entry(
         out[last_field].push_str(&new_lines);
     }
     Ok((out.concat(), false))
+}
+
+pub const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+pub const LOCK_STALE: Duration = Duration::from_secs(60);
+
+/// Thư mục khóa: `<thư mục chứa BRANCHES.md>/.agents/.runtime/locks/branches`.
+pub fn lock_dir(file: &Path) -> PathBuf {
+    let parent = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    parent.join(".agents/.runtime/locks/branches")
+}
+
+/// Giữ khóa; thả (xóa thư mục khóa) khi bị drop.
+#[derive(Debug)]
+pub struct BranchLock {
+    path: PathBuf,
+}
+
+impl Drop for BranchLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn wall_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// Khóa bằng `create_dir` (nguyên tử); khóa cũ hơn `stale_after` bị thu hồi.
+pub fn acquire_lock(dir: &Path, timeout: Duration, stale_after: Duration) -> Result<BranchLock> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let start = std::time::Instant::now();
+    loop {
+        match std::fs::create_dir(dir) {
+            Ok(()) => {
+                let _ = std::fs::write(
+                    dir.join("owner"),
+                    format!("{} {}", std::process::id(), wall_ms()),
+                );
+                return Ok(BranchLock {
+                    path: dir.to_path_buf(),
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("không tạo được khóa {}", dir.display()));
+            }
+        }
+        let age = std::fs::metadata(dir)
+            .and_then(|m| m.modified())
+            .ok()
+            .map(|t| {
+                SystemTime::now()
+                    .duration_since(t)
+                    .unwrap_or(Duration::ZERO)
+            });
+        if age.is_some_and(|a| a >= stale_after) {
+            // đổi tên để chỉ một tiến trình thắng; kẻ thua gặp lỗi rồi thử lại
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let gone = dir.with_extension(format!("stale-{}-{nanos}", std::process::id()));
+            if std::fs::rename(dir, &gone).is_ok() {
+                let _ = std::fs::remove_dir_all(&gone);
+            }
+            continue;
+        }
+        if start.elapsed() >= timeout {
+            bail!(
+                "BRANCHES.md đang bị khóa tại {} (quá {}s)",
+                dir.display(),
+                timeout.as_secs()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Thợ không được ghi sổ nhánh; terminal khác hoặc người dùng thì được.
+pub fn ensure_writer(store: &Store, caller_terminal: Option<&str>) -> Result<()> {
+    if let Some(t) = caller_terminal
+        && let Some(row) = store.terminal(t)?
+        && row.role.as_deref() == Some("worker")
+    {
+        bail!("thợ ({t}) không được ghi BRANCHES.md — báo BOT-CEO qua agm send");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct BranchUpdate {
+    pub file: PathBuf,
+    pub entry: String,
+    pub fields: Vec<(String, String)>,
+    pub worktree: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateOutcome {
+    pub entry: String,
+    pub created: bool,
+    pub fields: Vec<(String, String)>,
+}
+
+/// Đọc một mục từ tệp; tệp thiếu coi như không có mục.
+pub fn get(file: &Path, entry: &str) -> Result<Option<Vec<(String, String)>>> {
+    validate_entry(entry)?;
+    let text = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("không đọc được {}", file.display())),
+    };
+    read_entry(&text, entry)
+}
+
+fn is_sha(s: &str) -> bool {
+    (12..=40).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Bảo vệ ready: head hợp lệ, có worktree, worktree sạch và HEAD khớp head đã khai.
+fn check_ready(git: &dyn Git, merged: &[(String, String)], worktree: Option<&str>) -> Result<()> {
+    let head = merged
+        .iter()
+        .find(|(k, _)| k == "head")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    if !is_sha(head) {
+        bail!("không thể đặt ready: head phải là SHA 12-40 ký tự hex thường (đang là {head:?})");
+    }
+    let Some(wt) = worktree else {
+        bail!("không thể đặt ready: thiếu worktree để kiểm tra git");
+    };
+    if !git.is_clean(wt)? {
+        bail!("không thể đặt ready: worktree {wt} còn thay đổi chưa commit");
+    }
+    let actual = git.head(wt)?;
+    if !actual.starts_with(head) {
+        bail!("không thể đặt ready: head khai {head} không khớp HEAD thật {actual}");
+    }
+    Ok(())
+}
+
+fn do_update(
+    store: &Store,
+    git: &dyn Git,
+    caller_terminal: Option<&str>,
+    req: &BranchUpdate,
+    timeout: Duration,
+) -> Result<UpdateOutcome> {
+    validate_entry(&req.entry)?;
+    validate_fields(&req.fields)?;
+    if req.file.file_name().and_then(|n| n.to_str()) != Some("BRANCHES.md") {
+        bail!(
+            "chỉ được ghi tệp tên BRANCHES.md (nhận {})",
+            req.file.display()
+        );
+    }
+    ensure_writer(store, caller_terminal)?;
+    let _lock = acquire_lock(&lock_dir(&req.file), timeout, LOCK_STALE)?;
+    let text = match std::fs::read_to_string(&req.file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err(e).with_context(|| format!("không đọc được {}", req.file.display()));
+        }
+    };
+    let (new_text, created) = upsert_entry(&text, &req.entry, &req.fields)?;
+    let merged = read_entry(&new_text, &req.entry)?.unwrap_or_default();
+    let to_ready = req
+        .fields
+        .iter()
+        .rfind(|(k, _)| k == "status")
+        .is_some_and(|(_, v)| v.trim() == "ready");
+    if to_ready {
+        check_ready(git, &merged, req.worktree.as_deref())?;
+    }
+    let tmp = req
+        .file
+        .with_file_name(format!("BRANCHES.md.tmp-{}", std::process::id()));
+    std::fs::write(&tmp, &new_text)?;
+    if let Err(e) = std::fs::rename(&tmp, &req.file) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("không ghi được {}", req.file.display()));
+    }
+    Ok(UpdateOutcome {
+        entry: req.entry.clone(),
+        created,
+        fields: merged,
+    })
+}
+
+/// Cập nhật một mục có khóa, bảo vệ ready và ghi nhật ký (cả khi lỗi).
+pub fn update(
+    store: &Store,
+    git: &dyn Git,
+    caller_terminal: Option<&str>,
+    req: &BranchUpdate,
+    timeout: Duration,
+    now_ms: i64,
+) -> Result<UpdateOutcome> {
+    let result = do_update(store, git, caller_terminal, req, timeout);
+    let detail = req
+        .fields
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let _ = store.log_action(
+        caller_terminal.unwrap_or("user"),
+        "branch",
+        &req.entry,
+        &detail,
+        result.is_ok(),
+        now_ms,
+    );
+    result
 }

@@ -429,6 +429,11 @@ pub fn reply(store: &Store, hc: &dyn Hc, inbox_id: i64, text: &str, now: i64) ->
     let Some(term) = item.terminal.as_deref() else {
         bail!("mục #{inbox_id} không gắn với terminal nào để trả lời")
     };
+    if term == "agent" {
+        bail!(
+            "mục #{inbox_id} do một agent không rõ terminal gửi qua MCP — không có terminal để trả lời; dùng `agm done {inbox_id}` để đóng"
+        );
+    }
     let res = hc.send(term, text, false, item.source == "blocked");
     store.log_action("user", "reply", term, text, res.is_ok(), now)?;
     res?;
@@ -445,6 +450,14 @@ pub struct SpawnReq {
     pub name: Option<String>,
     pub cwd: Option<String>,
     pub text: Vec<String>,
+}
+
+fn normalize_role(role: &str) -> Result<String> {
+    let r = role.trim().to_ascii_lowercase();
+    if r.is_empty() {
+        bail!("vai trò (role) không được rỗng");
+    }
+    Ok(r)
 }
 
 fn valid_name(s: &str) -> bool {
@@ -470,12 +483,18 @@ pub fn spawn_precheck(
     if req.template.trim().is_empty() {
         bail!("thiếu template");
     }
-    if req.role == "worker" {
+    let role = normalize_role(&req.role)?;
+    if role == "worker" {
         let workers = store
             .terminals(true)?
             .iter()
             .filter(|t| {
-                t.role.as_deref() == Some("worker") && Some(t.address.as_str()) != replacing
+                t.role
+                    .as_deref()
+                    .map(|r| r.trim().to_ascii_lowercase())
+                    .as_deref()
+                    == Some("worker")
+                    && Some(t.address.as_str()) != replacing
             })
             .count();
         if workers as u32 >= cfg.policy.max_workers {
@@ -572,6 +591,12 @@ pub fn spawn_successor_precheck(
 
 /// Sinh agent qua `hc run --bg --outlive-parent` sau khi kiểm hạn mức. Trả địa chỉ terminal mới.
 pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64) -> Result<String> {
+    let role = normalize_role(&req.role)?;
+    let normalized = SpawnReq {
+        role: role.clone(),
+        ..req.clone()
+    };
+    let req = &normalized;
     let name = spawn_precheck(store, cfg, req, None)?;
     let listed = hc
         .templates()

@@ -32,6 +32,25 @@ pub struct SessionStats {
     pub bad_lines: u64,
 }
 
+/// Chạy `f`, thử lại khi SQLITE_BUSY/LOCKED (có lệnh không tôn trọng busy_timeout): lùi 20 ms tăng dần, tối đa ~5 s.
+fn retry_busy<T>(mut f: impl FnMut() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+    use rusqlite::ErrorCode::{DatabaseBusy, DatabaseLocked};
+    let start = std::time::Instant::now();
+    let mut delay = 20u64;
+    loop {
+        match f() {
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if matches!(e.code, DatabaseBusy | DatabaseLocked)
+                    && start.elapsed() < std::time::Duration::from_secs(5) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                delay = (delay * 2).min(200);
+            }
+            other => return other,
+        }
+    }
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -48,14 +67,15 @@ impl Store {
         // Daemon và CLI cùng ghi: chờ khóa thay vì lỗi ngay (đặt trước mọi lệnh có thể cần khóa).
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // WAL và foreign_keys phải chạy ngoài transaction.
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        // Trên DB mới, PRAGMA journal_mode=WAL có thể trả BUSY mà không chờ busy_timeout: thử lại.
+        retry_busy(|| conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;"))?;
         // CSDL đã ở bản mới nhất (trường hợp thường gặp): không lấy khóa ghi, để lệnh chỉ đọc không phải chờ daemon.
         let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if current >= SCHEMA_VERSION {
             return Ok(Self { conn });
         }
         // Còn phải migrate: khóa ghi rồi đọc lại phiên bản (tiến trình khác có thể vừa migrate xong).
-        conn.execute_batch("BEGIN IMMEDIATE;")?;
+        retry_busy(|| conn.execute_batch("BEGIN IMMEDIATE;"))?;
         let migrate = || -> Result<()> {
             let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             if version < 2 {

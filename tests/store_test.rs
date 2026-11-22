@@ -314,3 +314,31 @@ fn dedupe_is_scoped_to_session_and_no_future_tables_exist() -> anyhow::Result<()
     );
     Ok(())
 }
+
+#[test]
+fn concurrent_open_on_fresh_db_all_succeed() -> anyhow::Result<()> {
+    use std::sync::{Arc, Barrier};
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("fresh").join("agm.db");
+    let barrier = Arc::new(Barrier::new(8));
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let (p, b) = (path.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                b.wait();
+                Store::open(&p).map(|_| ()).map_err(|e| format!("{e:#}"))
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap().expect("Store::open phải thành công");
+    }
+    let store = Store::open(&path)?;
+    assert_eq!(
+        store
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
+        4
+    );
+    Ok(())
+}

@@ -643,3 +643,33 @@ fn send_failed_delivery_is_tool_error() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     assert!(err_text(&r).contains("refused"), "{r}");
 }
+
+#[test]
+fn serve_answers_last_line_without_trailing_newline() {
+    with_ctx(|ctx| {
+        let input = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}";
+        let mut out = Vec::new();
+        serve(ctx, input.as_bytes(), &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let v: Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(v["id"], 3);
+    });
+}
+
+#[test]
+fn serve_handles_crlf_lines() {
+    with_ctx(|ctx| {
+        let input = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\r\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\r\n";
+        let mut out = Vec::new();
+        serve(ctx, input.as_bytes(), &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["id"], 1);
+        assert_eq!(lines[1]["id"], 2);
+        assert!(lines[0].get("error").is_none());
+    });
+}

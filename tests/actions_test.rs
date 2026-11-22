@@ -744,3 +744,58 @@ fn dismiss_done_filters_kind_terminal_source_and_blocked_rules() -> anyhow::Resu
     assert!(store5.inbox_item(bl3)?.unwrap().resolved_ms.is_some());
     Ok(())
 }
+
+#[test]
+fn spawn_normalizes_role_and_cap_applies() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    let mut cfg = Config::builtin();
+    cfg.policy.max_workers = 1;
+    // Vai trò lưu trong DB có thể chưa chuẩn hóa vẫn được tính.
+    term(&store, "t1", "opencode", Some(" Worker "));
+    let req = SpawnReq {
+        template: "worker-mid".into(),
+        task: "a".into(),
+        role: " Worker ".into(),
+        ..Default::default()
+    };
+    let err = actions::spawn(&store, &hc, &cfg, &req, 1)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("max_workers"), "{err}");
+    assert!(hc.calls.borrow().is_empty());
+
+    let store = Store::open_in_memory()?;
+    let addr = actions::spawn(&store, &hc, &cfg, &req, 1)?;
+    assert_eq!(
+        store.terminal(&addr)?.unwrap().role.as_deref(),
+        Some("worker")
+    );
+    assert!(hc.calls.borrow()[0].contains("\"agm.role\": \"worker\""));
+
+    let empty = SpawnReq {
+        role: "  ".into(),
+        ..req
+    };
+    let err = actions::spawn(&store, &hc, &cfg, &empty, 2)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("không được rỗng"), "{err}");
+    Ok(())
+}
+
+#[test]
+fn reply_to_mcp_agent_without_terminal_is_explained() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc::default();
+    let id = store
+        .open_inbox(Some("agent"), "message", Some("note"), "xin chào", 1)?
+        .unwrap();
+    let err = actions::reply(&store, &hc, id, "ok", 2)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("không có terminal để trả lời"), "{err}");
+    assert!(err.contains(&format!("agm done {id}")), "{err}");
+    assert!(hc.calls.borrow().is_empty());
+    Ok(())
+}

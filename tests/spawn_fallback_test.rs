@@ -138,6 +138,7 @@ fn unrelated_errors_do_not_fallback() -> Result<()> {
         let req = SpawnReq {
             template: "auditor".into(),
             task: "probe".into(),
+            role: "probe".into(),
             ..Default::default()
         };
         let err = actions::spawn(&store, &hc, &Config::builtin(), &req, 1).unwrap_err();
@@ -190,6 +191,7 @@ fn unsafe_command_child() -> Result<()> {
     let req = SpawnReq {
         template: "auditor".into(),
         task: "probe".into(),
+        role: "probe".into(),
         ..Default::default()
     };
     let err = actions::spawn(&store, &hc, &Config::builtin(), &req, 1).unwrap_err();
@@ -250,6 +252,7 @@ fn timeout_child() -> Result<()> {
     let req = SpawnReq {
         template: "auditor".into(),
         task: "probe".into(),
+        role: "probe".into(),
         text: vec!["chỉ trả lời OK".into()],
         ..Default::default()
     };

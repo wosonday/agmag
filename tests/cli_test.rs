@@ -937,6 +937,16 @@ fn agm_mcp_answers_initialize_over_stdio() {
         .unwrap();
         writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list"}}"#).unwrap();
     }
+    // Watchdog: một lỗi hồi quy không được treo cả bộ test.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("agm mcp không thoát sau 20 s khi stdin đã đóng");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
     let text = String::from_utf8(out.stdout).unwrap();

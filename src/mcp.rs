@@ -49,14 +49,25 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool(
-            "agm_ps",
-            "List terminals (live only unless all=true).",
-            json!({"all": {"type": "boolean"}}),
-            &[],
+            "agm_send",
+            "Send a message to a terminal, or to the user's inbox with to=\"user\". The sender is this agent's terminal, never the user.",
+            json!({
+                "to": {"type": "string"},
+                "kind": {"type": "string", "enum": ["ASSIGN", "REPORT", "ERROR", "QUESTION", "BLOCKED", "PASS", "FAIL"]},
+                "task": {"type": "string"},
+                "text": {"type": "string"},
+            }),
+            &["to", "kind", "text"],
         ),
         tool(
             "agm_inbox",
             "List inbox items (open only unless all=true).",
+            json!({"all": {"type": "boolean"}}),
+            &[],
+        ),
+        tool(
+            "agm_ps",
+            "List terminals (live only unless all=true).",
             json!({"all": {"type": "boolean"}}),
             &[],
         ),
@@ -67,10 +78,34 @@ pub fn tool_definitions() -> Vec<Value> {
             &[],
         ),
         tool(
+            "agm_spawn",
+            "Spawn a new terminal from a template for a task (respects max_workers and the task budget).",
+            json!({
+                "template": {"type": "string"},
+                "task": {"type": "string"},
+                "role": {"type": "string"},
+                "name": {"type": "string"},
+                "cwd": {"type": "string"},
+                "text": {"type": "string"},
+            }),
+            &["template", "task"],
+        ),
+        tool(
             "agm_branch_get",
             "Read one entry's fields from a BRANCHES.md file.",
             json!({"branches_file": {"type": "string"}, "entry": {"type": "string"}}),
             &["branches_file", "entry"],
+        ),
+        tool(
+            "agm_branch_update",
+            "Update (or create) one entry in a BRANCHES.md file under a lock; refused for worker terminals.",
+            json!({
+                "branches_file": {"type": "string"},
+                "entry": {"type": "string"},
+                "fields": {"type": "object", "additionalProperties": {"type": "string"}},
+                "worktree": {"type": "string"},
+            }),
+            &["branches_file", "entry", "fields"],
         ),
     ]
 }
@@ -96,9 +131,89 @@ fn req_str<'v>(args: &'v Value, key: &str) -> Result<&'v str, ToolError> {
     opt_str(args, key)?.ok_or_else(|| anyhow::anyhow!("Thiếu tham số bắt buộc `{key}`").into())
 }
 
-/// Nhánh cho từng tool; Task sau thêm arm trước `_`.
+/// Từ chối khóa tham số không có trong schema của tool (additionalProperties: false).
+fn reject_unknown_keys(name: &str, args: &Value) -> Result<(), ToolError> {
+    let Some(def) = tool_definitions().into_iter().find(|t| t["name"] == name) else {
+        return Err(ToolError::Unknown);
+    };
+    let props = &def["inputSchema"]["properties"];
+    if let Some(obj) = args.as_object() {
+        for key in obj.keys() {
+            if props.get(key).is_none() {
+                return Err(anyhow::anyhow!("Tham số lạ `{key}` cho tool {name}").into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Nhánh cho từng tool.
 fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError> {
+    reject_unknown_keys(name, args)?;
     match name {
+        "agm_send" => {
+            let to = req_str(args, "to")?;
+            let kind = req_str(args, "kind")?;
+            let task = opt_str(args, "task")?;
+            let text = req_str(args, "text")?;
+            let stored = crate::actions::kind_from_english(kind)
+                .or_else(|| crate::actions::KINDS.iter().copied().find(|k| *k == kind))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "loại tin '{kind}' không hợp lệ; dùng một trong: ASSIGN, REPORT, ERROR, QUESTION, BLOCKED, PASS, FAIL"
+                    )
+                })?;
+            // Người gửi luôn là terminal gọi hoặc "agent"; không bao giờ là "user".
+            let from = ctx.caller_terminal.as_deref().unwrap_or("agent");
+            let now = (ctx.clock)();
+            let row = crate::actions::send(ctx.store, ctx.hc, from, to, stored, task, text, now)?;
+            Ok(serde_json::to_value(row).map_err(anyhow::Error::from)?)
+        }
+        "agm_spawn" => {
+            let req = crate::actions::SpawnReq {
+                template: req_str(args, "template")?.into(),
+                task: req_str(args, "task")?.into(),
+                role: opt_str(args, "role")?.unwrap_or("worker").into(),
+                name: opt_str(args, "name")?.map(String::from),
+                cwd: opt_str(args, "cwd")?.map(String::from),
+                text: opt_str(args, "text")?
+                    .map(String::from)
+                    .into_iter()
+                    .collect(),
+            };
+            let cfg = crate::config::Config::load(&ctx.cfg_path)?;
+            let address = crate::actions::spawn(ctx.store, ctx.hc, &cfg, &req, (ctx.clock)())?;
+            Ok(json!({"address": address}))
+        }
+        "agm_branch_update" => {
+            let file = req_str(args, "branches_file")?;
+            let entry = req_str(args, "entry")?;
+            let Some(Value::Object(map)) = args.get("fields") else {
+                return Err(anyhow::anyhow!("Tham số `fields` phải là object").into());
+            };
+            let mut fields = Vec::new();
+            for (k, v) in map {
+                let Value::String(s) = v else {
+                    return Err(anyhow::anyhow!("Trường `{k}` trong `fields` phải là chuỗi").into());
+                };
+                fields.push((k.clone(), s.clone()));
+            }
+            let req = crate::branches::BranchUpdate {
+                file: PathBuf::from(file),
+                entry: entry.into(),
+                fields,
+                worktree: opt_str(args, "worktree")?.map(String::from),
+            };
+            let out = crate::branches::update(
+                ctx.store,
+                ctx.git,
+                ctx.caller_terminal.as_deref(),
+                &req,
+                crate::branches::LOCK_TIMEOUT,
+                (ctx.clock)(),
+            )?;
+            Ok(serde_json::to_value(out).map_err(anyhow::Error::from)?)
+        }
         "agm_ps" => {
             let all = opt_bool(args, "all")?;
             Ok(json!({"terminals": ctx.store.terminals(!all)?}))
@@ -120,6 +235,15 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
         "agm_branch_get" => {
             let file = req_str(args, "branches_file")?;
             let entry = req_str(args, "entry")?;
+            if std::path::Path::new(file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                != Some("BRANCHES.md")
+            {
+                return Err(
+                    anyhow::anyhow!("chỉ được đọc tệp tên BRANCHES.md (nhận {file})").into(),
+                );
+            }
             let got = crate::branches::get(std::path::Path::new(file), entry)?;
             Ok(json!({
                 "entry": entry,

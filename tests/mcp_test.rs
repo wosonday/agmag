@@ -296,3 +296,234 @@ fn non_object_json_gets_invalid_request() {
         }
     });
 }
+
+fn err_text(r: &Value) -> String {
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    r["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn tool_list_is_exactly_the_phase1_set() {
+    with_ctx(|ctx| {
+        let r =
+            handle_message(ctx, &json!({"jsonrpc":"2.0","id":4,"method":"tools/list"})).unwrap();
+        let names: Vec<&str> = r["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "agm_send",
+                "agm_inbox",
+                "agm_ps",
+                "agm_quota",
+                "agm_spawn",
+                "agm_branch_get",
+                "agm_branch_update"
+            ]
+        );
+    });
+}
+
+#[test]
+fn send_without_terminal_id_is_from_agent_never_user() {
+    with_ctx(|ctx| {
+        let r = call(
+            ctx,
+            "agm_send",
+            json!({"to": "user", "kind": "REPORT", "text": "xong"}),
+        );
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        let sc = &r["result"]["structuredContent"];
+        assert_eq!(sc["from"], "agent");
+        assert_eq!(sc["kind"], "BÁO CÁO");
+        let items = ctx.store.inbox(true).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].terminal.as_deref(), Some("agent"));
+    });
+}
+
+#[test]
+fn send_accepts_vietnamese_alias_and_rejects_unknown_kind() {
+    with_ctx(|ctx| {
+        let r = call(
+            ctx,
+            "agm_send",
+            json!({"to": "user", "kind": "HỎI", "text": "ok?"}),
+        );
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        assert_eq!(r["result"]["structuredContent"]["kind"], "HỎI");
+        let r = call(
+            ctx,
+            "agm_send",
+            json!({"to": "user", "kind": "PING", "text": "x"}),
+        );
+        assert!(err_text(&r).contains("PING"));
+    });
+}
+
+#[test]
+fn spawn_respects_max_workers() {
+    let dir = std::env::temp_dir().join(format!("agm-mcp-sp-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = dir.join("providers.toml");
+    std::fs::write(&cfg, "[policy]\nmax_workers = 1\n").unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let hc = FakeHc::default();
+    let git = FakeGit;
+    let ctx = McpCtx {
+        store: &store,
+        hc: &hc,
+        git: &git,
+        cfg_path: cfg,
+        caller_terminal: None,
+        clock: || 0,
+    };
+    store
+        .upsert_terminal(&TerminalRow {
+            address: "t1".into(),
+            state: "live".into(),
+            role: Some("worker".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let r = call(&ctx, "agm_spawn", json!({"template": "w", "task": "abc"}));
+    assert!(err_text(&r).contains("max_workers"));
+    assert!(!hc.calls.borrow().iter().any(|c| c.starts_with("run")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn branch_update_refuses_worker_caller() {
+    let store = Store::open_in_memory().unwrap();
+    let hc = FakeHc::default();
+    let git = FakeGit;
+    let ctx = McpCtx {
+        store: &store,
+        hc: &hc,
+        git: &git,
+        cfg_path: std::path::PathBuf::from("providers.toml"),
+        caller_terminal: Some("t9".into()),
+        clock: || 0,
+    };
+    store
+        .upsert_terminal(&TerminalRow {
+            address: "t9".into(),
+            state: "live".into(),
+            role: Some("worker".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let dir = std::env::temp_dir().join(format!("agm-mcp-bu-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("BRANCHES.md");
+    let r = call(
+        &ctx,
+        "agm_branch_update",
+        json!({"branches_file": file.to_string_lossy(), "entry": "feat/x", "fields": {"status": "wip"}}),
+    );
+    assert!(err_text(&r).contains("thợ"));
+    assert!(!file.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn branch_update_writes_for_non_worker() {
+    with_ctx(|ctx| {
+        let dir = std::env::temp_dir().join(format!("agm-mcp-bw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("BRANCHES.md");
+        let r = call(
+            ctx,
+            "agm_branch_update",
+            json!({"branches_file": file.to_string_lossy(), "entry": "feat/x", "fields": {"status": "wip"}}),
+        );
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        assert_eq!(r["result"]["structuredContent"]["created"], true);
+        let r = call(
+            ctx,
+            "agm_branch_update",
+            json!({"branches_file": file.to_string_lossy(), "entry": "feat/x", "fields": {"status": 5}}),
+        );
+        assert!(err_text(&r).contains("status"));
+        let _ = std::fs::remove_dir_all(&dir);
+    });
+}
+
+#[test]
+fn no_tool_call_ever_kills() {
+    let store = Store::open_in_memory().unwrap();
+    let hc = FakeHc::default();
+    let git = FakeGit;
+    let ctx = McpCtx {
+        store: &store,
+        hc: &hc,
+        git: &git,
+        cfg_path: std::path::PathBuf::from("providers.toml"),
+        caller_terminal: None,
+        clock: || 0,
+    };
+    let dir = std::env::temp_dir().join(format!("agm-mcp-nk-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("BRANCHES.md").to_string_lossy().to_string();
+    live_term(&store, "t1", "live", None);
+    let calls = [
+        ("agm_send", json!({"to": "t1", "kind": "GIAO", "text": "x"})),
+        ("agm_inbox", json!({})),
+        ("agm_ps", json!({})),
+        ("agm_quota", json!({})),
+        ("agm_spawn", json!({"template": "w", "task": "abc"})),
+        (
+            "agm_branch_get",
+            json!({"branches_file": file, "entry": "feat/x"}),
+        ),
+        (
+            "agm_branch_update",
+            json!({"branches_file": file, "entry": "feat/x", "fields": {"status": "wip"}}),
+        ),
+    ];
+    for (n, a) in calls {
+        call(&ctx, n, a);
+    }
+    let recorded = hc.calls.borrow();
+    assert!(
+        !recorded
+            .iter()
+            .any(|c| c.starts_with("kill") || c.starts_with("interrupt")),
+        "{recorded:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn branch_get_rejects_non_branches_file_name() {
+    with_ctx(|ctx| {
+        let r = call(
+            ctx,
+            "agm_branch_get",
+            json!({"branches_file": "secrets.txt", "entry": "feat/x"}),
+        );
+        assert!(err_text(&r).contains("BRANCHES.md"));
+    });
+}
+
+#[test]
+fn unknown_argument_keys_are_rejected() {
+    with_ctx(|ctx| {
+        let r = call(ctx, "agm_ps", json!({"bogus": 1}));
+        assert!(err_text(&r).contains("bogus"));
+        let r = call(
+            ctx,
+            "agm_send",
+            json!({"to": "user", "kind": "GIAO", "text": "x", "from": "user"}),
+        );
+        assert!(err_text(&r).contains("from"));
+        assert!(ctx.store.inbox(false).unwrap().is_empty());
+    });
+}

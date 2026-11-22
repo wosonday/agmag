@@ -843,3 +843,68 @@ fn cli_done_range_and_filters_never_close_blocked_items() {
     assert_eq!(json(&out)["done"], serde_json::json!([blk]));
     assert!(open_ids(tmp.path()).is_empty());
 }
+
+#[test]
+fn branch_set_then_get_roundtrip() {
+    let tmp = sandbox(None);
+    let file = tmp.path().join("BRANCHES.md");
+    let f = file.to_str().unwrap();
+    let out = agm(
+        tmp.path(),
+        &[
+            "branch",
+            "set",
+            "a/x",
+            "status=wip",
+            "summary=Thêm cảnh báo",
+            "--file",
+            f,
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = agm(tmp.path(), &["--json", "branch", "get", "a/x", "--file", f]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["entry"], "a/x");
+    let fields = v["fields"].as_array().unwrap();
+    assert!(fields.contains(&serde_json::json!(["summary", "Thêm cảnh báo"])));
+}
+
+#[test]
+fn branch_set_rejects_missing_equals() {
+    let tmp = sandbox(None);
+    let file = tmp.path().join("BRANCHES.md");
+    let out = agm(
+        tmp.path(),
+        &[
+            "branch",
+            "set",
+            "a/x",
+            "status",
+            "--file",
+            file.to_str().unwrap(),
+        ],
+    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("khóa=giá-trị"));
+}
+
+#[test]
+fn branch_get_missing_entry_fails() {
+    let tmp = sandbox(None);
+    let file = tmp.path().join("BRANCHES.md");
+    let out = agm(
+        tmp.path(),
+        &["branch", "get", "a/nope", "--file", file.to_str().unwrap()],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("không có mục a/nope"));
+}

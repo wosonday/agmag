@@ -211,6 +211,11 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Read or update an entry in BRANCHES.md under an atomic lock
+    Branch {
+        #[command(subcommand)]
+        cmd: BranchCmd,
+    },
     /// Manage budgets: task:<ID> (tokens) or provider:<name>:<minutes> (quota percent)
     Budget {
         #[command(subcommand)]
@@ -254,6 +259,40 @@ enum Cmd {
         #[arg(long, default_value_t = 2)]
         refresh: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum BranchCmd {
+    /// Print the fields of an entry
+    Get {
+        /// Entry name (for example `feat/x`)
+        entry: String,
+        /// Path to BRANCHES.md
+        #[arg(long, default_value = "BRANCHES.md")]
+        file: PathBuf,
+    },
+    /// Set fields of an entry (creates it if missing)
+    Set {
+        /// Entry name (for example `feat/x`)
+        entry: String,
+        /// Fields to set, as KEY=VALUE
+        #[arg(required = true, value_parser = parse_pair)]
+        pairs: Vec<String>,
+        /// Path to BRANCHES.md
+        #[arg(long, default_value = "BRANCHES.md")]
+        file: PathBuf,
+        /// Worktree path of the entry's branch
+        #[arg(long)]
+        worktree: Option<String>,
+    },
+}
+
+fn parse_pair(s: &str) -> Result<String, String> {
+    if s.contains('=') {
+        Ok(s.to_string())
+    } else {
+        Err(format!("đối số '{s}' phải có dạng khóa=giá-trị"))
+    }
 }
 
 #[derive(Subcommand)]
@@ -579,6 +618,26 @@ fn run(cli: Cli) -> Result<()> {
             argv,
         } => ops::manage(&store, &target, off, cmd.as_deref(), &argv, now),
         Cmd::Cleanup { targets, all, yes } => ops::cleanup(&store, &targets, all, yes, json, now),
+        Cmd::Branch {
+            cmd: BranchCmd::Get { entry, file },
+        } => ops::branch_get(&file, &entry, json),
+        Cmd::Branch {
+            cmd:
+                BranchCmd::Set {
+                    entry,
+                    pairs,
+                    file,
+                    worktree,
+                },
+        } => ops::branch_set(
+            &store,
+            &file,
+            &entry,
+            &pairs,
+            worktree.as_deref(),
+            json,
+            now,
+        ),
         Cmd::Budget {
             cmd:
                 BudgetCmd::Set {

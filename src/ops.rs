@@ -60,6 +60,62 @@ pub fn print_json(v: &impl serde::Serialize) -> Result<()> {
     Ok(())
 }
 
+// ---------- branch ----------
+
+pub fn branch_get(file: &Path, entry: &str, json_out: bool) -> Result<()> {
+    let Some(fields) = agmag::branches::get(file, entry)? else {
+        bail!("không có mục {entry} trong {}", file.display());
+    };
+    if json_out {
+        return print_json(&json!({"entry": entry, "fields": fields}));
+    }
+    for (k, v) in fields {
+        println!("{k}: {v}");
+    }
+    Ok(())
+}
+
+pub fn branch_set(
+    store: &Store,
+    file: &Path,
+    entry: &str,
+    pairs: &[String],
+    worktree: Option<&str>,
+    json_out: bool,
+    now_ms: i64,
+) -> Result<()> {
+    let mut fields = Vec::new();
+    for p in pairs {
+        let Some((k, v)) = p.split_once('=') else {
+            bail!("đối số '{p}' phải có dạng khóa=giá-trị");
+        };
+        fields.push((k.to_string(), v.to_string()));
+    }
+    let req = agmag::branches::BranchUpdate {
+        file: file.to_path_buf(),
+        entry: entry.to_string(),
+        fields,
+        worktree: worktree.map(str::to_string),
+    };
+    let out = agmag::branches::update(
+        store,
+        &GitCli,
+        hc_terminal().as_deref(),
+        &req,
+        agmag::branches::LOCK_TIMEOUT,
+        now_ms,
+    )?;
+    if json_out {
+        return print_json(&out);
+    }
+    println!(
+        "Updated {} ({})",
+        out.entry,
+        if out.created { "created" } else { "changed" }
+    );
+    Ok(())
+}
+
 // ---------- daemon ----------
 
 pub fn daemon_replay(store: &Store, file: &Path, now: i64) -> Result<usize> {

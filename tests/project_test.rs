@@ -3,12 +3,16 @@
 use std::fs;
 use std::process::Command;
 
+use agmag::config::Config;
 use agmag::correlate::norm_cwd;
+use agmag::dashboard::snapshot;
+use agmag::model::{ContextSnapshot, Role, Source, TurnSummary, Usage, UsageRecord};
 use agmag::project::{
-    CdMatch, ProjectKey, ProjectSummary, RootCache, Roots, branch_entry_for, git_common_root,
-    list_projects, match_project, members, parties, project_name, tree_order,
+    CdMatch, ProjectKey, ProjectSummary, RootCache, Roots, TurnRow, branch_entry_for,
+    compute_roots, git_common_root, list_projects, load_project_view, match_project, members,
+    parties, project_name, tree_order,
 };
-use agmag::store::{InboxRow, TerminalRow};
+use agmag::store::{InboxRow, MessageRow, Store, TerminalRow};
 
 fn term(
     address: &str,
@@ -348,5 +352,307 @@ fn git_common_root_on_real_repo_and_worktree() -> anyhow::Result<()> {
 
     let outside = tempfile::tempdir()?;
     assert_eq!(git_common_root(outside.path().to_str().unwrap()), None);
+    Ok(())
+}
+
+/// Each row sums to `1 + 2 + 3 + 4 = 10` spark tokens; the large `cache_read` is excluded there
+/// but included in the snapshot's session total (`1 + 1000 + 2 + 3 = 1006`).
+fn usage_rec(ts_ms: i64, key: &str) -> UsageRecord {
+    UsageRecord {
+        dedupe_key: key.into(),
+        ts_ms,
+        model: None,
+        usage: Usage {
+            input_uncached: 1,
+            cache_read: 1000,
+            cache_write: 2,
+            output: 3,
+            reasoning: 4,
+        },
+    }
+}
+
+#[test]
+fn load_project_view_joins_snapshot_and_store() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let root_norm = norm_cwd(&root);
+    fs::write(tmp.path().join("BRANCHES.md"), "### a/b\n- status: wip\n")?;
+    let wt = format!(r"{root}\.wt\a--b");
+
+    let store = Store::open_in_memory()?;
+    let now: i64 = 4_000_000;
+
+    // Live agent t1: linked session with model/effort/context, a tool turn and usage rows.
+    let s1 = store.session_id_for_path(Source::Codex, "p1")?;
+    store.set_model(s1, "gpt-6.1")?;
+    store.set_effort(s1, "high")?;
+    store.set_context(
+        s1,
+        &ContextSnapshot {
+            ts_ms: now - 1_000,
+            used_tokens: 50_000,
+            window_tokens: Some(200_000),
+        },
+    )?;
+    store.insert_turn(
+        s1,
+        &TurnSummary {
+            ts_ms: now - 12_000,
+            role: Role::Tool,
+            summary: "[tool] Bash".into(),
+            byte_offset: 10,
+        },
+    )?;
+    // One row in the oldest bucket, two in the newest (window = last 60 min, 12 x 5 min).
+    store.upsert_usage(s1, &usage_rec(now - 3_600_000 + 1_000, "u0"))?;
+    store.upsert_usage(s1, &usage_rec(now - 100_000, "u1"))?;
+    store.upsert_usage(s1, &usage_rec(now - 50_000, "u2"))?;
+
+    // Live agent t2: worktree cwd → BRANCHES.md entry a/b; linked session without usage rows.
+    let s2 = store.session_id_for_path(Source::Codex, "p2")?;
+    store.insert_turn(
+        s2,
+        &TurnSummary {
+            ts_ms: now - 40_000,
+            role: Role::Assistant,
+            summary: "Implementing the parser".into(),
+            byte_offset: 20,
+        },
+    )?;
+
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some("ceo".into()),
+        app: Some("claude-code".into()),
+        cwd: Some(root.clone()),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.set_terminal_status("t1", Some("working"), None, None, 1, now)?;
+    store.link_terminal("t1", s1, "auto")?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t2".into(),
+        app: Some("codex".into()),
+        cwd: Some(wt.clone()),
+        state: "live".into(),
+        parent: Some("ceo".into()),
+        created_ms: 2,
+        ..Default::default()
+    })?;
+    store.link_terminal("t2", s2, "auto")?;
+    // Exited t3 stays only because an open inbox item names it (by name); t4 has none → excluded.
+    store.upsert_terminal(&TerminalRow {
+        address: "t3".into(),
+        name: Some("t9".into()),
+        app: Some("opencode".into()),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 3,
+        ..Default::default()
+    })?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t4".into(),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 4,
+        ..Default::default()
+    })?;
+
+    let i1 = store
+        .open_inbox(Some("t1"), "hook", Some("question"), "keep API v1?", now)?
+        .unwrap();
+    let i2 = store
+        .open_inbox(Some("t9"), "hook", Some("blocked"), "needs a decision", now)?
+        .unwrap();
+    store.open_inbox(Some("x9"), "hook", None, "outside the project", now)?;
+    let closed = store
+        .open_inbox(Some("t1"), "hook", None, "already answered", now - 10)?
+        .unwrap();
+    store.resolve_inbox(closed, None, now)?;
+
+    // 25 messages inside the project (by name/address), 3 outside, 1 from the exited member.
+    for i in 0..25i64 {
+        store.add_message(&MessageRow {
+            ts_ms: now - (25 - i) * 1_000,
+            from: "ceo".into(),
+            to: "t2".into(),
+            kind: "GIAO".into(),
+            text: format!("m{i:02}"),
+            status: "sent".into(),
+            ..Default::default()
+        })?;
+    }
+    for i in 0..3i64 {
+        store.add_message(&MessageRow {
+            ts_ms: now - i * 1_000,
+            from: "x9".into(),
+            to: "y8".into(),
+            kind: "GIAO".into(),
+            text: format!("out{i}"),
+            status: "sent".into(),
+            ..Default::default()
+        })?;
+    }
+    store.add_message(&MessageRow {
+        ts_ms: now - 500,
+        from: "t3".into(),
+        to: "ceo".into(),
+        kind: "BÁO CÁO".into(),
+        text: "done".into(),
+        status: "sent".into(),
+        ..Default::default()
+    })?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |cwd: &str| -> Option<String> {
+        let n = norm_cwd(cwd);
+        if n == root_norm || n == norm_cwd(&wt) {
+            Some(root.clone())
+        } else {
+            None
+        }
+    };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    assert_eq!(roots.len(), 4);
+    let key = ProjectKey {
+        root: root_norm.clone(),
+        name: project_name(&root_norm),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    assert_eq!(pv.key, key);
+
+    // t4 excluded; tree order: ceo root, t2 its only child, exited t9 a second root.
+    let addrs: Vec<&str> = pv.agents.iter().map(|a| a.address.as_str()).collect();
+    assert_eq!(addrs, vec!["t1", "t2", "t3"]);
+    let (a1, a2, a3) = (&pv.agents[0], &pv.agents[1], &pv.agents[2]);
+    assert_eq!(a1.label, "ceo");
+    assert_eq!(a1.app, "claude-code");
+    assert_eq!(a1.status, "working");
+    assert_eq!(a1.state, "live");
+    assert_eq!(a1.depth, 0);
+    assert_eq!(a2.label, "t2"); // no name → address
+    assert_eq!(a2.depth, 1);
+    assert!(a2.last_sibling);
+    assert_eq!(a3.depth, 0);
+    assert_eq!(a3.state, "exited");
+    assert_eq!(a3.status, "-"); // no herdr status → "-", never guessed
+
+    // Live fields copied from the snapshot TermView with the same address.
+    let tv1 = snap.terminals.iter().find(|v| v.address == "t1").unwrap();
+    assert_eq!(a1.model, tv1.model);
+    assert_eq!(a1.effort, tv1.effort);
+    assert_eq!(a1.tokens, tv1.tokens);
+    assert_eq!(a1.context_pct, tv1.context_pct);
+    assert_eq!(a1.last_msg, tv1.last_msg);
+    assert_eq!(a1.model, "gpt-6.1");
+    assert_eq!(a1.effort, "high");
+    assert_eq!(a1.tokens, Some(3 * 1006));
+    assert_eq!(a1.context_pct, Some(25.0));
+    assert_eq!(a1.last_msg, Some(("REPORT".into(), false)));
+    assert_eq!(a2.last_msg, Some(("ASSIGN".into(), false)));
+
+    // Exited agent: no snapshot fields, no linked session.
+    assert_eq!(a3.model, "");
+    assert_eq!(a3.effort, "");
+    assert_eq!(a3.tokens, None);
+    assert_eq!(a3.context_pct, None);
+    assert_eq!(a3.last_msg, None);
+    assert_eq!(a3.doing, None);
+    assert_eq!(a3.spark, None);
+
+    // doing = latest assistant/tool turn of the linked session.
+    assert_eq!(
+        a1.doing,
+        Some(TurnRow {
+            ts_ms: now - 12_000,
+            role: "tool".into(),
+            summary: "[tool] Bash".into(),
+        })
+    );
+    assert_eq!(
+        a2.doing.as_ref().map(|t| t.summary.as_str()),
+        Some("Implementing the parser")
+    );
+
+    // spark: 12 buckets, oldest first; linked session without usage → 12 zeros.
+    let sp1 = a1.spark.as_ref().unwrap();
+    assert_eq!(sp1.len(), 12);
+    assert_eq!(sp1[0], 10);
+    assert_eq!(sp1[11], 20);
+    assert!(sp1[1..11].iter().all(|&b| b == 0));
+    assert_eq!(a2.spark, Some(vec![0u64; 12]));
+
+    // stage from <root>/BRANCHES.md via the worktree directory name a--b → a/b.
+    assert_eq!(a2.stage.as_deref(), Some("wip"));
+    assert_eq!(a1.stage, None);
+    assert_eq!(a3.stage, None);
+
+    // inbox: open items of project parties only (address or name), closed/foreign excluded.
+    assert_eq!(
+        pv.inbox.iter().map(|i| i.id).collect::<Vec<_>>(),
+        vec![i1, i2]
+    );
+
+    // messages: newest 20 involving a party (exited member included), newest first.
+    assert_eq!(pv.messages.len(), 20);
+    assert!(pv.messages.windows(2).all(|w| w[0].ts_ms > w[1].ts_ms));
+    assert_eq!(pv.messages[0].text, "done");
+    assert!(pv.messages.iter().all(|m| m.from != "x9" && m.to != "x9"));
+    Ok(())
+}
+
+#[test]
+fn compute_roots_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let store = Store::open_in_memory()?;
+    let sid = store.session_id_for_path(Source::Codex, "p1")?;
+    store.set_session_identity(sid, "conv-1", Some(&root))?;
+
+    // t1: no row cwd → the live TermView.cwd (session cwd) is used.
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.link_terminal("t1", sid, "auto")?;
+    // t2: empty row cwd, exited (no TermView) → skipped.
+    store.upsert_terminal(&TerminalRow {
+        address: "t2".into(),
+        cwd: Some(String::new()),
+        state: "exited".into(),
+        created_ms: 2,
+        ..Default::default()
+    })?;
+    // t3: exited but has a row cwd → still resolved.
+    store.upsert_terminal(&TerminalRow {
+        address: "t3".into(),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 3,
+        ..Default::default()
+    })?;
+
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    let terms = store.terminals(false)?;
+    let calls = std::cell::Cell::new(0usize);
+    let resolve = |_: &str| -> Option<String> {
+        calls.set(calls.get() + 1);
+        Some(root.clone())
+    };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    let rn = norm_cwd(&root);
+    assert_eq!(roots.get("t1").map(String::as_str), Some(rn.as_str()));
+    assert!(!roots.contains_key("t2"));
+    assert_eq!(roots.get("t3").map(String::as_str), Some(rn.as_str()));
+    // t1 and t3 share one normalized cwd → the resolver runs once.
+    assert_eq!(calls.get(), 1);
     Ok(())
 }

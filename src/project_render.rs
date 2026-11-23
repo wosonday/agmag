@@ -62,15 +62,32 @@ pub fn render_project_body(pv: &ProjectView, width: usize, now_ms: i64) -> Strin
 
 /// The `cd` listing: one line per project plus `(no project)` when `no_project > 0`.
 pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: usize) -> String {
+    if list.is_empty() && no_project == 0 {
+        return bounded_block(vec![paint(GRAY, "  (no projects)")], width);
+    }
+
+    let display_name = |p: &ProjectSummary| -> String {
+        let shared = list
+            .iter()
+            .filter(|other| other.key.name == p.key.name)
+            .count()
+            > 1;
+        if shared {
+            format!("{} ({})", p.key.name, p.key.root)
+        } else {
+            p.key.name.clone()
+        }
+    };
+
     let mut name_w = list
         .iter()
-        .map(|p| sanitize_one_line(&p.key.name).width())
+        .map(|p| sanitize_one_line(&display_name(p)).width())
         .max()
         .unwrap_or(0);
     if no_project > 0 {
         name_w = name_w.max("(no project)".width());
     }
-    let name_w = name_w.clamp(6, 24);
+    let name_w = name_w.clamp(6, width.saturating_sub(18).max(6));
     // Pad the plain name before painting: `pad_cells` measures display cells, so it must not
     // see ANSI escapes (otherwise the `(no project)` row drifts left of the project rows).
     let row = |style: &str, name: &str, live: String, inbox: String| {
@@ -86,7 +103,7 @@ pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: us
     for p in list {
         lines.push(row(
             WHITE,
-            &p.key.name,
+            &display_name(p),
             paint(BOLD_CYAN, &format!("{} live", p.live_agents)),
             paint(BRIGHT_YELLOW, &format!("{} inbox", p.open_inbox)),
         ));

@@ -524,6 +524,37 @@ fn handed_off_status_keeps_symbol_and_full_words() {
 }
 
 #[test]
+fn project_list_disambiguates_duplicate_names() {
+    let list = vec![
+        ProjectSummary {
+            key: ProjectKey {
+                root: "D:\\a\\shop".into(),
+                name: "shop".into(),
+            },
+            live_agents: 1,
+            open_inbox: 0,
+        },
+        ProjectSummary {
+            key: ProjectKey {
+                root: "D:\\b\\shop".into(),
+                name: "shop".into(),
+            },
+            live_agents: 2,
+            open_inbox: 1,
+        },
+    ];
+    let plain = strip_ansi(&render_project_list(&list, 0, 100));
+    assert!(plain.contains("shop (D:\\a\\shop)"), "{plain}");
+    assert!(plain.contains("shop (D:\\b\\shop)"), "{plain}");
+}
+
+#[test]
+fn project_list_empty_shows_no_projects() {
+    let plain = strip_ansi(&render_project_list(&[], 0, 60));
+    assert!(plain.contains("(no projects)"), "{plain}");
+}
+
+#[test]
 fn project_list_and_show() {
     let list = vec![
         ProjectSummary {

@@ -1,6 +1,4 @@
 //! Renders the TUI project view (AGENTS, INBOX, MESSAGES) with the dashboard's ANSI helpers.
-// Skeleton (Task 0): bodies are filled by Task 3; Task 5 removes this allow.
-#![allow(dead_code, unused_variables)]
 
 use comfy_table::Color;
 use unicode_segmentation::UnicodeSegmentation;

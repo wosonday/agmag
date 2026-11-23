@@ -1,7 +1,5 @@
 //! Project scope for `agm tui`: which project a terminal belongs to, who is in it, and the
 //! data the project view renders. Pure functions except `git_common_root`.
-// Skeleton (Task 0): bodies are filled by Task 1; Task 5 removes this allow.
-#![allow(dead_code, unused_variables)]
 
 use std::collections::HashMap;
 use std::process::Command;

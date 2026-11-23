@@ -1,5 +1,5 @@
 use agmag::config::Config;
-use agmag::dashboard::{TuiCmd, parse_command, render, snapshot};
+use agmag::dashboard::{TuiCmd, parse_command, render, render_scoped, snapshot};
 use agmag::model::{ContextSnapshot, QuotaSnapshot, QuotaWindow, Source, Usage, UsageRecord};
 use agmag::report::QuotaRow;
 use agmag::store::{BudgetRow, Store, TerminalRow};
@@ -944,6 +944,44 @@ fn view_command_picks_up_to_three_sections() {
             .contains("unknown section 'nope'")
     );
     assert!(parse_command("view").is_ok() && parse_command("view a b c d").is_err());
+}
+
+#[test]
+fn render_scoped_wraps_body_with_header_and_footer() -> anyhow::Result<()> {
+    use unicode_width::UnicodeWidthStr;
+    let store = seeded()?;
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    let body = format!(
+        "BODY-MARKER-ONE\n▸ AGENTS · shop (1)\n  ceo  claude  ● working\n    doing: - · last msg: REPORT sent\n{}\nBODY-MARKER-TWO\n",
+        "long".repeat(120)
+    );
+    let plain = strip_ansi(&render_scoped(&snap, &body, 60));
+    let header_at = plain.find("agmag").expect("header");
+    let body_at = plain.find("BODY-MARKER-ONE").expect("body start");
+    let footer_at = plain.rfind("cmd:").expect("footer");
+    assert!(
+        header_at < body_at && body_at < footer_at,
+        "header, body and footer must appear in that order:\n{plain}"
+    );
+    let between = &plain[body_at..footer_at];
+    for needle in [
+        "BODY-MARKER-ONE",
+        "AGENTS · shop (1)",
+        "ceo  claude  ● working",
+        "doing: - · last msg: REPORT sent",
+        "BODY-MARKER-TWO",
+    ] {
+        assert!(between.contains(needle), "missing '{needle}' in:\n{plain}");
+    }
+    assert!(plain.contains("quit"), "footer commands missing:\n{plain}");
+    for line in plain.lines() {
+        assert!(
+            line.width() <= 59,
+            "line wider than width-1 ({}): {line}",
+            line.width()
+        );
+    }
+    Ok(())
 }
 
 #[test]

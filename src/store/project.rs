@@ -1,6 +1,4 @@
 //! Read-only, bounded queries for the TUI project view.
-// Task 2 fills the bodies; Task 5 removes this allow once the TUI wires them in.
-#![allow(dead_code)]
 
 use std::collections::HashMap;
 

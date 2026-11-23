@@ -1161,6 +1161,21 @@ pub fn render_view(
 /// Lines below the command bar that `agm tui` writes itself (note + `agm>` prompt).
 const FRAME_RESERVE: usize = 2;
 
+/// Header + a project body (AGENTS/INBOX/MESSAGES) + footer, every line bounded to the pane like
+/// [`render_view`]. The body is already bounded by the project renderer; the header and footer are not.
+pub fn render_scoped(s: &Snapshot, body: &str, width: usize) -> String {
+    let max_w = width.saturating_sub(1);
+    let mut out = render_header(s, width);
+    for line in body.lines() {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out += &render_footer(width);
+    out.lines()
+        .map(|line| format!("{}\n", bounded_styled_line(line, max_w)))
+        .collect()
+}
+
 /// Shrinks blocks to `budget` lines total. Small blocks keep every line; large ones share the rest evenly and end
 /// with a "… N more lines" marker. Each block keeps at least its title line.
 fn fit_blocks(blocks: &mut [Vec<String>], budget: usize) {

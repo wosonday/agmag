@@ -487,3 +487,46 @@ fn bridged_sections_render_titles_and_body() {
         assert!(has(&buf, title), "missing title {title:?}:\n{}", text(&buf));
     }
 }
+
+#[test]
+fn cmdline_short_input_shows_whole_text() {
+    let d = data(&Section::DEFAULT);
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.cmd.text = "ls".into();
+    state.cmd.cursor = 2;
+    let buf = render((80, 24), &state, &d, false);
+    let cmd_row = row_text(&buf, buf.area.height.saturating_sub(2));
+    assert!(
+        cmd_row.contains("agm> ls"),
+        "short command cut: {cmd_row:?}"
+    );
+}
+
+#[test]
+fn terminals_task_sits_under_task_header() {
+    let mut d = data(&[Section::Terminals]);
+    let snap = d.snap.as_mut().unwrap();
+    snap.terminals.push(TermView {
+        task: "TASK-XYZ".into(),
+        tokens: Some(1234),
+        ..terminal("t1", "worker-1")
+    });
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.sel_terminal = Some("t1".into());
+    let buf = render((220, 30), &state, &d, false);
+    let char_pos = |row: &str, needle: &str| row.find(needle).map(|b| row[..b].chars().count());
+    let rows: Vec<String> = (0..buf.area.height).map(|y| row_text(&buf, y)).collect();
+    let header = rows
+        .iter()
+        .find(|r| r.contains(" task"))
+        .expect("task header");
+    let data_row = rows
+        .iter()
+        .find(|r| r.contains("TASK-XYZ"))
+        .expect("task cell");
+    assert_eq!(
+        char_pos(header, " task").map(|p| p + 1),
+        char_pos(data_row, "TASK-XYZ"),
+        "task value not under its header:\n{header}\n{data_row}"
+    );
+}

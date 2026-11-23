@@ -491,7 +491,6 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         if show_ctx {
             cells.push(context_cell(t.context_pct, ctx));
         }
-        cells.push(Cell::from(dash_value(&t.task)));
         if show_tokens {
             cells.push(Cell::from(align_right(&tokens_label(t.tokens))));
         }
@@ -501,6 +500,8 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         if show_place {
             cells.push(Cell::from(dash_value(&where_label(&t.place, &t.cwd))));
         }
+        // `task` is the last column (it takes the remaining width), same order as `columns`.
+        cells.push(Cell::from(dash_value(&t.task)));
         rows.push(Row::new(cells));
     }
 
@@ -926,10 +927,12 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     let text = sanitize_one_line(&state.cmd.text);
     let cursor_chars = state.cmd.cursor.min(text.chars().count());
     let cursor_cells = cells_before(&text, cursor_chars);
-    let scroll = cursor_cells
-        .saturating_sub(available)
-        .saturating_add(1)
-        .min(cursor_cells);
+    // Scroll only when the cursor would leave the field; `available > 0` is guaranteed above.
+    let scroll = if cursor_cells >= available {
+        cursor_cells - available + 1
+    } else {
+        0
+    };
     let visible = visible_slice(&text, scroll, available);
     let line = Line::from(vec![
         Span::styled(

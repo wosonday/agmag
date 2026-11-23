@@ -94,7 +94,10 @@ fn skip_escape(bytes: &[u8], i: usize, style: &mut Style) -> usize {
             }
             j
         }
-        Some(_) => i + 2, // other ESC sequences: drop the escape and its single follower
+        // Other ESC sequences: drop the escape and its single ASCII follower; a non-ASCII byte
+        // starts a multi-byte char, so only the escape is dropped (never cut inside a char).
+        Some(b) if (0x20..=0x7e).contains(b) => i + 2,
+        Some(_) => i + 1,
         None => i + 1,
     }
 }
@@ -249,5 +252,15 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn escape_before_multibyte_char_does_not_panic() {
+        let text = ansi_to_text("a\x1bá b\x1b\u{1F600}c");
+        let plain: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect();
+        assert_eq!(plain, "aá b\u{1F600}c");
     }
 }

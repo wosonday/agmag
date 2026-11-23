@@ -127,4 +127,41 @@ impl Store {
         }
         Ok(out)
     }
+
+    /// Latest message per unordered (from_t, to_t) pair where both ends are in `parties`
+    /// (highest id wins). Empty `parties` → empty result.
+    pub fn pair_latest_messages(&self, parties: &[String]) -> Result<Vec<MessageRow>> {
+        if parties.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ph = numbered_placeholders(parties.len());
+        let sql = format!(
+            "SELECT id, ts_ms, from_t, to_t, kind, task, text, status, detail FROM ( \
+               SELECT id, ts_ms, from_t, to_t, kind, task, text, status, detail, \
+                      ROW_NUMBER() OVER ( \
+                        PARTITION BY MIN(from_t, to_t), MAX(from_t, to_t) \
+                        ORDER BY id DESC \
+                      ) AS rn \
+               FROM messages \
+               WHERE from_t IN ({ph}) AND to_t IN ({ph}) \
+             ) WHERE rn = 1"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(parties.iter()), |r| {
+                Ok(MessageRow {
+                    id: r.get(0)?,
+                    ts_ms: r.get(1)?,
+                    from: r.get(2)?,
+                    to: r.get(3)?,
+                    kind: r.get(4)?,
+                    task: r.get(5)?,
+                    text: r.get(6)?,
+                    status: r.get(7)?,
+                    detail: r.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
 }

@@ -5,6 +5,7 @@
 ### Thêm mới
 
 - TUI: thêm chế độ xem theo dự án (`cd`/`cd <tên>`/`cd ..`, `show <#>`), hiển thị cây agent (trạng thái, hoạt động gần nhất, thanh ngữ cảnh, sparkline token 60 phút, giai đoạn nhánh), hộp thư và tin nhắn lọc theo dự án; `reply`/`done`/`send` vẫn dùng `#ID` toàn cục.
+- Bảng dự án toàn màn hình (ratatui): `agm board [dự án]`, và `cd <dự án>` trong `agm tui` (thoát bằng `q` để về `agm>`; bản chữ cũ là `cd -t <dự án>`). Ba cột: dự án + trạng thái | cây điều phối với đường nối cha → con ghi loại và tuổi tin gần nhất (sáng khi dưới 5 phút) | chi tiết agent (giai đoạn nhánh, ngữ cảnh, sparkline token) + hội thoại của agent; hộp thư ở dưới. Phím: `tab`, `↑↓←→`/`hjkl`, `⏎`, `r` trả lời, `d` xong (xác nhận `y`), `s` gửi, `/` lọc, `p` chọn dự án, `t` đổi theme (Catppuccin Mocha, Tokyo Night, Nord; lưu lại), `?`, `q`. Khổ < 120 cột bỏ cột dự án, < 80 cột hiện danh sách một dòng mỗi agent; `AGM_ASCII=1` dùng viền ASCII. Không có kill/interrupt/cleanup trong bảng; chỉ người dùng ở TTY mở được.
 
 ### Sửa lỗi
 

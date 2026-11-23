@@ -1729,8 +1729,10 @@ pub enum TuiCmd {
     Policy(bool),
     /// `view` alone shows the current choice; with arguments, the sections to display.
     View(Option<Vec<Section>>),
-    /// `cd` alone lists projects; `Some(q)` enters project `q` (`".."` / `"/"` leave the scope).
+    /// `cd` alone lists projects; `Some(q)` opens the board for project `q` (`".."` / `"/"` leave the scope).
     Cd(Option<String>),
+    /// `cd -t <q>`: the text project view for `q` instead of the board.
+    CdText(String),
     /// `show <#>` prints one inbox item in full.
     Show(i64),
 }
@@ -1746,7 +1748,7 @@ pub const TUI_COMMANDS: [(&str, &str, &str); 11] = [
     ("kill", "k", "<terminal>"),
     ("policy", "p", "on|off"),
     ("view", "v", "<up to 3 sections>"),
-    ("cd", "", "[project|..]"),
+    ("cd", "", "[project|..] (text: -t <project>)"),
     ("show", "", "<#>"),
     ("quit", "q", ""),
 ];
@@ -1939,7 +1941,20 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
         "policy" if rest == "on" || rest == "off" => TuiCmd::Policy(rest == "on"),
         "view" if rest.is_empty() => TuiCmd::View(None),
         "view" => TuiCmd::View(Some(parse_view(rest)?)),
-        "cd" => TuiCmd::Cd((!rest.is_empty()).then(|| rest.to_string())),
+        "cd" => {
+            // `cd -t <project>` = the text project view; `cd <project>` opens the board.
+            let (flag, arg) = rest
+                .split_once(' ')
+                .map_or((rest, ""), |(flag, arg)| (flag, arg.trim()));
+            if flag == "-t" {
+                if arg.is_empty() {
+                    return Err("usage: cd <project|..> (text view: cd -t <project>)".to_string());
+                }
+                TuiCmd::CdText(arg.to_string())
+            } else {
+                TuiCmd::Cd((!rest.is_empty()).then(|| rest.to_string()))
+            }
+        }
         "show" => rest
             .strip_prefix('#')
             .unwrap_or(rest)

@@ -6,3 +6,7 @@
 target-install/
 __pycache__/
 .pytest_cache/
+.ua/intermediate/
+.ua/diff-overlay.json
+.ua/tmp/
+.ua/.trash-*/

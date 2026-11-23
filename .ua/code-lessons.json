@@ -1,0 +1,3125 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-23T09:32:51.223285+00:00",
+  "files": {
+    "README.md": {
+      "overview": "The English user guide for agm, a Rust control panel that sits beside herdr/herdr-core and meters tokens, context fill and subscription quota across Claude Code, Codex, OpenCode and agy. It defines the vocabulary (inbox, daemon, rotation, handoff, budgets) that the rest of the tour assumes, so it is the first stop for newcomers.",
+      "sections": [
+        {
+          "title": "Pitch and scope",
+          "lineRange": [
+            1,
+            21
+          ],
+          "explanation": "The title, feature bullets and platform note explain what agm tracks: tokens, context fullness, quota windows, an inbox of blocked agents and inter-agent messages. It also states the intervention features (budgets, rotation, handoff) and that the current version is 0.4.0.",
+          "tourOrder": 1
+        },
+        {
+          "title": "Install and quick start",
+          "lineRange": [
+            41,
+            81
+          ],
+          "explanation": "Sections 1 and 2 cover installing the single binary and getting a first useful output within a minute. The README stresses there is no runtime dependency because the tool is one Rust executable.",
+          "tourOrder": 1
+        },
+        {
+          "title": "How agm works",
+          "lineRange": [
+            82,
+            104
+          ],
+          "explanation": "Explains the core design: agm is installed once per machine and reads the logs each tool already writes (JSONL for Claude and Codex, SQLite for OpenCode, transcripts for agy) into ~/.agmag/agm.db. The ASCII diagram and per-tool table show what, if anything, each agent needs to configure, such as the optional `agm hook install` for Claude quota.",
+          "tourOrder": 1
+        },
+        {
+          "title": "Daemon, dashboard and agent integration",
+          "lineRange": [
+            105,
+            237
+          ],
+          "explanation": "Describes the background daemon, the dashboard, when to prefer hc versus agm, and how agents themselves can use agm, including the MCP server and BRANCHES.md coordination. This maps to the later ingestion, daemon and MCP tour steps.",
+          "tourOrder": 1
+        },
+        {
+          "title": "Command reference",
+          "lineRange": [
+            238,
+            267
+          ],
+          "explanation": "A table of every subcommand and its flags. It is a handy index to the `Cmd` enum in src/main.rs and notes safety rules, for example kill/interrupt for Codex and Claude always require a typed y, and spawn exits with code 3 when a brief is not delivered.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Statistics, budgets and configuration",
+          "lineRange": [
+            268,
+            369
+          ],
+          "explanation": "Covers token statistics over time, budgets/policy/rotation, and the providers.toml configuration. The configuration part corresponds to the Config, Policy and Price types in src/config.rs.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Safety, limits and development",
+          "lineRange": [
+            370,
+            416
+          ],
+          "explanation": "Documents data safety, known limitations and development notes (build and test). Read it before changing behavior that touches kill, rotate or the database."
+        }
+      ]
+    },
+    "CHANGELOG.md": {
+      "overview": "Keep-a-Changelog style history of agm from 0.1.0 to 0.4.0, written in Vietnamese. It records the new features and fixes per version, so it is the quickest way to see how the CLI, MCP server and rotation logic evolved.",
+      "sections": [
+        {
+          "title": "Unreleased fix",
+          "lineRange": [
+            3,
+            8
+          ],
+          "explanation": "The unreleased entry fixes `agm spawn` on Windows when the fallback path cannot deliver the template brief. The CLI now exits with code 3 instead of reporting success, MCP returns an error and rotation marks needs_attention, which matches the latest commit.",
+          "tourOrder": 1
+        },
+        {
+          "title": "0.4.0 MCP and branch locking",
+          "lineRange": [
+            9,
+            22
+          ],
+          "explanation": "0.4.0 added `agm mcp` (stdio JSON-RPC server with 7 tools and no kill/interrupt tools) and `agm branch get|set` with a lock under .agents/.runtime/locks plus atomic temp-file rename. The fixes list shows careful concurrency work: lock owner ids, retries on Windows file-busy codes, and SQLite lock handling for concurrent processes.",
+          "tourOrder": 1
+        },
+        {
+          "title": "0.3.x releases",
+          "lineRange": [
+            23,
+            89
+          ],
+          "explanation": "The 0.3 series adds and changes features around quota polling, spawn, rotation and reporting, with fixes after each. Skim it for the reasoning behind current defaults.",
+          "tourOrder": 1
+        },
+        {
+          "title": "0.2.0 and 0.1.0",
+          "lineRange": [
+            90,
+            109
+          ],
+          "explanation": "Earliest releases establishing the scan, ls, cost and quota basics that the model and parser layers still serve.",
+          "tourOrder": 1
+        }
+      ]
+    },
+    "Cargo.toml": {
+      "overview": "Cargo manifest for the agmag crate (version 0.4.0, Rust edition 2024) that builds the `agm` binary. It lists the dependencies that shape the architecture: clap for the CLI, rusqlite (bundled SQLite) for storage, serde/serde_json/toml for data, comfy-table for output.",
+      "sections": [
+        {
+          "title": "Package metadata",
+          "lineRange": [
+            1,
+            4
+          ],
+          "explanation": "Names the crate agmag at 0.4.0 using edition 2024. The edition matters because the code relies on let-chains (`if let ... && ...`).",
+          "tourOrder": 1
+        },
+        {
+          "title": "Runtime dependencies",
+          "lineRange": [
+            6,
+            19
+          ],
+          "explanation": "anyhow and thiserror cover error handling; clap with derive builds the command tree; rusqlite with the bundled feature compiles SQLite in so no system library is needed; walkdir finds log files; sysinfo (trimmed features) powers `agm sys`; unicode-width and unicode-segmentation help table and TUI layout.",
+          "tourOrder": 1
+        },
+        {
+          "title": "Platform-specific dependencies",
+          "lineRange": [
+            21,
+            26
+          ],
+          "explanation": "windows-sys and libc are used only to read the terminal pane size for `agm tui`, selected per target with cfg tables.",
+          "tourOrder": 1
+        },
+        {
+          "title": "Dev dependencies and binary",
+          "lineRange": [
+            28,
+            33
+          ],
+          "explanation": "tempfile supports integration tests. The [[bin]] entry names the executable `agm` and points at src/main.rs, while the library target is implicit from src/lib.rs.",
+          "tourOrder": 1
+        }
+      ]
+    },
+    "src/lib.rs": {
+      "overview": "The library root of the crate. It only declares modules, so integration tests in tests/ and the binary in main.rs share the same code through `agmag::...`.",
+      "sections": [
+        {
+          "title": "Module declarations",
+          "lineRange": [
+            1,
+            26
+          ],
+          "explanation": "Each `pub mod` exposes one subsystem: model and config (domain and settings), parse/ingest/opencode/agy (reading logs), store (SQLite), report and dashboard (output), policy/rotation/daemon/actions (control), and mcp/hc/git/launch (integration with other tools). Making them public is what lets tests import internals, and main.rs only adds `mod ops` and `mod tui` privately.",
+          "tourOrder": 2
+        }
+      ]
+    },
+    "src/main.rs": {
+      "overview": "Entry point of the `agm` binary. It defines the clap command tree, resolves the data directory, optionally scans logs, then dispatches each subcommand to ops.rs, the report/store modules or the TUI. It also holds the table-printing helpers for ls, cost and quota.",
+      "sections": [
+        {
+          "title": "Imports and module wiring",
+          "lineRange": [
+            1,
+            22
+          ],
+          "explanation": "Pulls in clap, comfy-table and the library crate `agmag`. Only `ops` and `tui` are declared as modules here; everything else comes from the shared library.",
+          "tourOrder": 2
+        },
+        {
+          "title": "CLI definition (Cli and Cmd)",
+          "lineRange": [
+            24,
+            265
+          ],
+          "explanation": "`Cli` carries the global `--json` flag and a `Cmd` enum with one variant per subcommand (scan, ls, cost, quota, daemon, send, spawn, kill, rotate, budget, mcp, tui...). Doc comments on variants become the clap help text, so the enum doubles as documentation.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Nested subcommands and helpers",
+          "lineRange": [
+            266,
+            342
+          ],
+          "explanation": "BranchCmd, BudgetCmd and HookCmd model the second-level commands. `parse_pair` validates KEY=VALUE arguments, and SCAN_DAYS/DAY_MS set the default scan window of seven days.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Home, roots and main",
+          "lineRange": [
+            343,
+            393
+          ],
+          "explanation": "`agm_home` honors AGM_HOME or falls back to ~/.agmag, and `roots` allows overriding log directories by environment variable, which is helpful for tests. `main` handles two commands that must not need a database (hook statusline and sys) before calling `run`, then maps errors to exit codes via `actions::exit_code`.",
+          "tourOrder": 2
+        },
+        {
+          "title": "run: scanning and dispatch",
+          "lineRange": [
+            395,
+            818
+          ],
+          "explanation": "`run` opens the store, loads config lazily (so commands like `policy off` or `kill` still work with a broken providers.toml), computes how far back to scan for view commands, ingests, and then matches on `cli.cmd`. Mutating commands delegate to ops functions, while read commands call report builders and print functions.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Date parsing and scan",
+          "lineRange": [
+            820,
+            873
+          ],
+          "explanation": "`parse_local_date_ms` converts a local YYYY-MM-DD to epoch milliseconds, using SQLite to learn the UTC offset. `scan` ingests every source and reports a failure of a single source (OpenCode, agy) without aborting the others.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Output helpers",
+          "lineRange": [
+            875,
+            1247
+          ],
+          "explanation": "Functions that render terminals, sessions, cost tables (with a separate bold SUM row), quota windows and the summary report. `emit` chooses JSON or human output, and JSON is automatic when stdout is not a TTY.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Unit tests",
+          "lineRange": [
+            1249,
+            1311
+          ],
+          "explanation": "Tests for quota rendering helpers such as stale-row marking, placed in the same file to access private functions."
+        }
+      ]
+    },
+    "src/ops.rs": {
+      "overview": "Implementations of the v1 CLI commands that need side effects: branch files, daemon loop, messages and inbox, spawning and stopping agents, rotation, budgets, linking and the Claude statusline hook. main.rs stays a thin dispatcher while this file does the work, mostly by calling the `actions`, `rotation`, `policy` and `store` modules.",
+      "sections": [
+        {
+          "title": "Caller detection",
+          "lineRange": [
+            25,
+            61
+          ],
+          "explanation": "`hc_terminal` reads HC_TERMINAL_ID. `caller` decides whether the actor is a user or an agent, failing closed to agent when unsure, and asks a y/N question on stderr for dangerous actions. Accepted answers include the Vietnamese word for yes.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Branch commands",
+          "lineRange": [
+            63,
+            118
+          ],
+          "explanation": "`branch_get` and `branch_set` wrap the locked, atomic BRANCHES.md editing described in the CHANGELOG for 0.4.0.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Daemon replay and loop",
+          "lineRange": [
+            119,
+            206
+          ],
+          "explanation": "`daemon_replay` feeds saved hc events into the store for debugging. `daemon_loop` starts a background thread that keeps `hc events --json` running (restarting after 5 s) and sends lines through an mpsc channel. The main loop waits for events with recv_timeout, and every interval it drains events and runs scanning, terminal linking, policy and rotation, each reported independently so one failing step does not stop the rest.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Messages and inbox",
+          "lineRange": [
+            207,
+            271
+          ],
+          "explanation": "`send`, `inbox` and `reply` give a thin layer over the store for agent-to-agent and agent-to-user messaging.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Spawn, stop and rotate",
+          "lineRange": [
+            272,
+            353
+          ],
+          "explanation": "`spawn` prints the new terminal's address even on BriefUndelivered so scripts know a worker runs, then returns the error to give exit code 3. `stop` forces a typed confirmation for anything except OpenCode, because `--yes` could be added by an agent. `rotate` queues OpenCode workers or managed Claude/Codex sessions and never kills the old session for the latter.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Manage and cleanup",
+          "lineRange": [
+            355,
+            585
+          ],
+          "explanation": "Enabling management for hand-opened sessions and interactively cleaning up handed-off ones, including a parser for selections typed at the prompt.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Budgets and link",
+          "lineRange": [
+            586,
+            647
+          ],
+          "explanation": "`budget_set` and `budget_ls` manage soft and hard limits, and `link` manually pairs a terminal with a session found by a prefix.",
+          "tourOrder": 2
+        },
+        {
+          "title": "Statusline hook",
+          "lineRange": [
+            649,
+            675
+          ],
+          "explanation": "`hook_statusline` must never fail: it reads the Claude JSON from stdin and falls back to printing `agm`. `hook_install` adds the statusLine to ~/.claude/settings.json and reports whether it was already present.",
+          "tourOrder": 2
+        }
+      ]
+    },
+    "src/model.rs": {
+      "overview": "Shared domain types for the whole crate: the Source enum, Usage and quota/context snapshots, and the ParseEvent/LineOutcome pair that parsers return. It also contains small utilities for summarizing text and parsing RFC 3339 timestamps with no date library.",
+      "sections": [
+        {
+          "title": "Source enum",
+          "lineRange": [
+            1,
+            21
+          ],
+          "explanation": "A closed set of agent kinds (Codex, Claude, OpenCode, Agy), serialized in lowercase. `as_str` gives the stable name used in the database; match expressions elsewhere must handle each variant.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Usage and UsageRecord",
+          "lineRange": [
+            23,
+            52
+          ],
+          "explanation": "`Usage` splits tokens into uncached input, cache read, cache write, output and reasoning. `total` omits reasoning because reasoning is already counted inside output. `UsageRecord` adds a dedupe_key so re-reading a log never double counts.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Quota, context and session types",
+          "lineRange": [
+            54,
+            97
+          ],
+          "explanation": "QuotaWindow and QuotaSnapshot describe subscription limits per time window. ContextSnapshot holds tokens used and an optional window size, SessionMeta identifies a session, and TurnSummary with Role records short conversation turns with a byte offset back into the log.",
+          "tourOrder": 3
+        },
+        {
+          "title": "ParseEvent and LineOutcome",
+          "lineRange": [
+            99,
+            116
+          ],
+          "explanation": "A parser turns one log line into Events(Vec<ParseEvent>), Ignored, or Unknown(kind). Distinguishing Ignored from Unknown lets the ingest layer count unrecognized formats without treating known noise as errors.",
+          "tourOrder": 3
+        },
+        {
+          "title": "summarize",
+          "lineRange": [
+            118,
+            125
+          ],
+          "explanation": "Collapses whitespace and truncates to 200 characters by chars, not bytes, adding an ellipsis, so multi-byte text is never cut mid-character.",
+          "tourOrder": 3
+        },
+        {
+          "title": "parse_rfc3339_ms",
+          "lineRange": [
+            127,
+            183
+          ],
+          "explanation": "A hand-written parser for UTC timestamps with 20 or 24 characters. It validates the separators and digits, checks month lengths including leap years, then computes days since the Unix epoch with a leap-year formula. Returning None for anything unexpected keeps parsers tolerant.",
+          "tourOrder": 3
+        }
+      ]
+    },
+    "src/config.rs": {
+      "overview": "Loads and queries configuration: providers (subscription versus API billing), per-model context windows and prices, aliases and the Policy thresholds. Built-in defaults are embedded from assets/ so agm works with no providers.toml, and the file layers user overrides on top.",
+      "sections": [
+        {
+          "title": "Billing and price types",
+          "lineRange": [
+            1,
+            35
+          ],
+          "explanation": "Billing is a two-variant enum. Price holds USD per 1M tokens for input, cache read, cache write and output, with a FREE constant for free models.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Embedded price table",
+          "lineRange": [
+            37,
+            55
+          ],
+          "explanation": "`builtin_prices` parses assets/prices.toml via include_str! once through OnceLock. The `expect` is acceptable because the data ships with the binary and is covered by tests.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Model id matching",
+          "lineRange": [
+            57,
+            83
+          ],
+          "explanation": "`model_id_candidates` builds ordered lookup ids: as logged, without the OpenCode provider prefix, without an 8-digit date suffix, and without an agy effort suffix. It avoids duplicates, so `claude-opus-5-5-high` still finds the base price.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Config and Policy structs",
+          "lineRange": [
+            85,
+            167
+          ],
+          "explanation": "Config uses deny_unknown_fields so typos in providers.toml fail loudly. Policy has defaults for worker limits, context warning (50) and rotate (70) percentages, handoff timeouts and quota poll intervals, with serde default functions for a few fields.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Config loading and lookups",
+          "lineRange": [
+            169,
+            248
+          ],
+          "explanation": "`load` returns the builtin config when the file is missing but reports other IO and parse errors with context. `model` resolves aliases and falls back to the id without its provider prefix. `context_window`, `price_for` and `billing_for_model` apply a clear precedence (user file, then built-in, then catalog) and return None instead of guessing.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Helpers and cost",
+          "lineRange": [
+            250,
+            272
+          ],
+          "explanation": "`split_provider` splits at the first slash, `cost_usd` multiplies then divides by 1,000,000 once to keep precision, and `context_pct` returns None for a missing or zero window, rounded to one decimal place.",
+          "tourOrder": 3
+        }
+      ]
+    },
+    "assets/prices.toml": {
+      "overview": "Embedded table of list API prices in USD per 1M tokens, keyed by bare model id. It is compiled into the binary by config.rs and used for `agm cost` and the TUI.",
+      "sections": [
+        {
+          "title": "Header and rules",
+          "lineRange": [
+            1,
+            6
+          ],
+          "explanation": "Comments explain the snapshot date, that only the base pricing tier is used, that missing cache_write equals input, and how dated ids, provider prefixes and effort suffixes are normalized before lookup. Users can override entries in providers.toml.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Anthropic prices",
+          "lineRange": [
+            8,
+            55
+          ],
+          "explanation": "Entries for Claude Fable, Opus, Sonnet and Haiku families with input, output, cache_read and cache_write fields, matching the Price struct.",
+          "tourOrder": 3
+        },
+        {
+          "title": "OpenAI and Google prices",
+          "lineRange": [
+            57,
+            93
+          ],
+          "explanation": "GPT and Gemini models in the same shape.",
+          "tourOrder": 3
+        },
+        {
+          "title": "DeepSeek and Moonshot prices",
+          "lineRange": [
+            95,
+            113
+          ],
+          "explanation": "Models also served by OpenCode Go, which itself is a subscription, so these prices show what usage would cost at API rates.",
+          "tourOrder": 3
+        }
+      ]
+    },
+    "assets/providers.default.toml": {
+      "overview": "Built-in providers and model config used when the user has no providers.toml. It marks which providers bill by subscription or API and gives a few models their context windows.",
+      "sections": [
+        {
+          "title": "Providers and billing",
+          "lineRange": [
+            1,
+            20
+          ],
+          "explanation": "Codex, Claude and agy are subscriptions while openrouter and ollama are API. The `opencode-go` provider is a monthly plan. NVIDIA providers are deliberately left undeclared so costs show as unknown rather than guessed. Comments are in Vietnamese.",
+          "tourOrder": 3
+        },
+        {
+          "title": "Model entries",
+          "lineRange": [
+            22,
+            31
+          ],
+          "explanation": "gpt-6.1-sol gets a 475000 context window because OpenCode needs it, while claude-opus-5-5 leaves it empty pending confirmation. This follows the rule that nothing is guessed.",
+          "tourOrder": 3
+        }
+      ]
+    },
+    "src/parse/mod.rs": {
+      "overview": "Defines the LogParser trait, the ParseError type and the parser_for factory that selects a parser per Source. Each agent's log format has its own submodule.",
+      "sections": [
+        {
+          "title": "Submodules and imports",
+          "lineRange": [
+            1,
+            6
+          ],
+          "explanation": "Declares the agy, claude and codex parsers and imports LineOutcome and Source from the model.",
+          "tourOrder": 4
+        },
+        {
+          "title": "ParseError",
+          "lineRange": [
+            8,
+            14
+          ],
+          "explanation": "A thiserror enum for bad JSON and for missing timestamps.",
+          "tourOrder": 4
+        },
+        {
+          "title": "LogParser trait",
+          "lineRange": [
+            16,
+            20
+          ],
+          "explanation": "`parse_line` takes one line plus its byte offset and returns a LineOutcome. `seed_model` and the optional `seed_last_ts` let the ingest layer restore parser state when resuming a file partway using a cursor.",
+          "tourOrder": 4
+        },
+        {
+          "title": "parser_for factory",
+          "lineRange": [
+            22,
+            28
+          ],
+          "explanation": "Returns a `Box<dyn LogParser>`, giving callers runtime polymorphism. OpenCode is `unreachable!` because it is read from SQLite instead of log lines.",
+          "tourOrder": 4
+        }
+      ]
+    },
+    "src/parse/claude.rs": {
+      "overview": "Parser for Claude Code JSONL transcripts. It turns each line into session metadata, model and effort changes, token usage, context snapshots and turn summaries, matching the model events from the previous tour step.",
+      "sections": [
+        {
+          "title": "ClaudeParser state",
+          "lineRange": [
+            1,
+            16
+          ],
+          "explanation": "Keeps the current model, effort and whether session metadata has been emitted, so events are produced only when something changes. `seed_model` lets ingestion restore the model when resuming mid-file.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Line parsing and metadata",
+          "lineRange": [
+            18,
+            38
+          ],
+          "explanation": "Parses the JSON line (BadJson on failure), reads type and timestamp, and emits SessionMeta once when sessionId and cwd are present. let-chains keep the conditions flat.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Assistant lines",
+          "lineRange": [
+            41,
+            103
+          ],
+          "explanation": "Skips `<synthetic>` messages, emits Model and Effort only on change, and builds Usage from input, cache-read, cache-creation, output and thinking tokens. The message id becomes the dedupe_key, and used context tokens are input plus cache read plus cache write, with a saturating add. A turn summary falls back to the tool_use name when there is no text.",
+          "tourOrder": 4
+        },
+        {
+          "title": "User and ignored line types",
+          "lineRange": [
+            104,
+            136
+          ],
+          "explanation": "User text becomes a Turn. A list of known bookkeeping types is deliberately ignored, while an unknown type that produced no events returns Unknown so new formats get noticed. The final expression returns Ignored or Events.",
+          "tourOrder": 4
+        },
+        {
+          "title": "text_content helper",
+          "lineRange": [
+            139,
+            147
+          ],
+          "explanation": "Extracts text from either a plain string content or the first text block of an array.",
+          "tourOrder": 4
+        }
+      ]
+    },
+    "src/parse/codex.rs": {
+      "overview": "Log parser for Codex rollout JSONL files. It implements the LogParser trait and turns each line (session_meta, turn_context, token_usage_record, event_msg, response_item) into model events such as usage, context, quota, and turn summaries. It is the Codex implementation in the tour's Log Parsers step.",
+      "sections": [
+        {
+          "title": "Parser state and seeding",
+          "lineRange": [
+            1,
+            15
+          ],
+          "explanation": "`CodexParser` only remembers the current model, because token_usage_record lines do not carry it. `seed_model` lets ingestion restore the model when it resumes mid-file from a saved cursor.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Line decoding and metadata",
+          "lineRange": [
+            16,
+            31
+          ],
+          "explanation": "`parse_line` parses the JSON, reads `type`, `payload` and the RFC3339 timestamp (defaulting to 0 when missing). Invalid JSON becomes `ParseError::BadJson`. `session_meta` becomes a `SessionMeta` event with id, cwd, CLI version and start time.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Model and effort turn context",
+          "lineRange": [
+            32,
+            46
+          ],
+          "explanation": "A `turn_context` line updates the remembered model and emits Model plus optional Effort events. Effort is read from two possible locations because `/model` can change it mid-session; lines without a model are Ignored.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Token usage records",
+          "lineRange": [
+            47,
+            66
+          ],
+          "explanation": "Builds a `UsageRecord` keyed by `response_id` for dedupe. Codex's `input_tokens` includes cached tokens, so uncached input is computed with `saturating_sub(cache_read)` to avoid underflow.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Token count: context and quota",
+          "lineRange": [
+            67,
+            110
+          ],
+          "explanation": "`event_msg` of type token_count yields a ContextSnapshot from the last turn's input tokens and window size, and a QuotaSnapshot from the `primary` and `secondary` rate-limit windows. `filter_map` with `?` silently drops windows with missing fields; no events means Ignored.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Response items to turns",
+          "lineRange": [
+            111,
+            151
+          ],
+          "explanation": "Messages by user/assistant and tool calls become `TurnSummary` events with a short summarized text and the byte offset. Known noise item types (reasoning, outputs, compaction) are Ignored, while unrecognised ones return `Unknown` so ingestion can count them.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Ignored and unknown kinds",
+          "lineRange": [
+            152,
+            162
+          ],
+          "explanation": "Top-level kinds that carry no token information are ignored, anything else is reported as Unknown. Single events are wrapped in `LineOutcome::Events` at the end.",
+          "tourOrder": 4
+        }
+      ]
+    },
+    "src/parse/agy.rs": {
+      "overview": "Parser for Antigravity CLI `transcript.jsonl` files. Each line is a conversation step; PLANNER_RESPONSE steps carry token counts and tool calls, USER_INPUT steps carry the user request. It tracks the last timestamp because some lines lack `created_at`.",
+      "sections": [
+        {
+          "title": "Parser state",
+          "lineRange": [
+            1,
+            25
+          ],
+          "explanation": "Module docs note that `input_tokens` is uncached and `output_tokens` already includes thinking. State holds the model and `last_ts`; `seed_last_ts` keeps the maximum so a resumed parse can fill missing timestamps.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Line header and timestamps",
+          "lineRange": [
+            27,
+            37
+          ],
+          "explanation": "Decodes the JSON and records `created_at` into `last_ts` when present, so later lines can fall back to it.",
+          "tourOrder": 4
+        },
+        {
+          "title": "User input turns",
+          "lineRange": [
+            38,
+            54
+          ],
+          "explanation": "USER_INPUT falls back to `last_ts` or errors with `MissingTimestamp`. The text is unwrapped from `<USER_REQUEST>` tags and summarized into a user Turn.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Planner response usage",
+          "lineRange": [
+            55,
+            111
+          ],
+          "explanation": "Emits Model change events, then a Usage record when any token field exists. `output` is `max(output, thinking)` to preserve the invariant reasoning is a subset of output, and the dedupe key is `step:<index>` or the byte offset. A Context snapshot (uncached plus cache read) and an assistant Turn follow.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Ignored step types",
+          "lineRange": [
+            112,
+            127
+          ],
+          "explanation": "Housekeeping step types are accepted silently; unknown types return `Unknown`. An empty event list becomes `Ignored`.",
+          "tourOrder": 4
+        },
+        {
+          "title": "Helper functions",
+          "lineRange": [
+            129,
+            159
+          ],
+          "explanation": "`extract_user_request` returns the text inside the USER_REQUEST tags or the raw text. `planner_summary` prefers content, otherwise summarizes tool call names as `[tool] a, b`.",
+          "tourOrder": 4
+        }
+      ]
+    },
+    "src/ingest.rs": {
+      "overview": "Incremental log ingestion. It discovers JSONL files under the Codex and Claude roots, resumes each file from a saved cursor, runs the matching parser and writes events into the Store inside one transaction per file. Cursor validation by head hash detects replaced files. This is the core of the Ingestion Pipeline tour step.",
+      "sections": [
+        {
+          "title": "Log roots",
+          "lineRange": [
+            12,
+            25
+          ],
+          "explanation": "`Roots` holds the Codex sessions and Claude projects directories derived from the home directory.",
+          "tourOrder": 5
+        },
+        {
+          "title": "File discovery",
+          "lineRange": [
+            27,
+            80
+          ],
+          "explanation": "`discover_source` walks a root with walkdir, keeps `.jsonl` files (Codex only `rollout-*`) modified since `since_ms`, and counts non-NotFound walk errors. `discover` merges both sources and sorts by path for determinism.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Batch ingestion",
+          "lineRange": [
+            82,
+            123
+          ],
+          "explanation": "`ingest_source` ingests each file, but a failure on one file (locked or deleted) only increments `skipped` and is logged, never aborting the scan. `ingest_all` sums both sources.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Stats type",
+          "lineRange": [
+            125,
+            144
+          ],
+          "explanation": "`IngestStats` counts files, lines, events, unknown, bad and skipped lines, with an `add` accumulator.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Hash and path key",
+          "lineRange": [
+            146,
+            162
+          ],
+          "explanation": "`head_hash` is FNV-1a, chosen because it is stable across Rust versions unlike DefaultHasher. `path_key` normalizes Windows paths (lowercase, backslashes) so one file never becomes two sessions and double counts tokens.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Cursor resume logic",
+          "lineRange": [
+            164,
+            193
+          ],
+          "explanation": "`ingest_file` opens the file in a transaction, loads the saved cursor and hashes the first 4096 bytes. The old offset is reused only if the file did not shrink and the prefix hash matches; otherwise offset is 0 and `reset_session` clears derived data so a replaced file is not double counted.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Parser seeding",
+          "lineRange": [
+            194,
+            208
+          ],
+          "explanation": "When resuming mid-file the parser is seeded with the session's stored model and last timestamp, since that context lives earlier in the file.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Read loop and commit",
+          "lineRange": [
+            209,
+            251
+          ],
+          "explanation": "Reads line by line and stops at a line without trailing newline so partial writes are retried later. Each parse outcome dispatches ParseEvents to Store methods and updates stats; the cursor is saved and the transaction committed at the end.",
+          "tourOrder": 5
+        }
+      ]
+    },
+    "src/opencode.rs": {
+      "overview": "Reads OpenCode v2 sessions from its SQLite database in read-only mode, touching only `session_v2` and `session_message` and never credential tables. It converts assistant and user messages into usage, context, model, effort and turns in the agm store. It complements the file-based ingest for the Ingestion Pipeline step.",
+      "sections": [
+        {
+          "title": "Imports and DB location",
+          "lineRange": [
+            1,
+            28
+          ],
+          "explanation": "Module docs state the read-only, two-table guarantee. `default_db` honors the `AGM_OPENCODE_DB` override and otherwise uses the standard share directory.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Model key and message row",
+          "lineRange": [
+            30,
+            54
+          ],
+          "explanation": "`model_key` prefixes the model id with its providerID so the same model billed via different providers is not merged; a settings flag records that this format is in use. `Msg` mirrors the selected columns.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Cursor and query",
+          "lineRange": [
+            56,
+            93
+          ],
+          "explanation": "Opens the source DB read-only with a busy timeout. The cursor is a pair (time_updated, rowid) stored in a Cursor's offset and size, so messages inserted within the same millisecond are not missed. A changed model key format forces one full rescan, safe because usage upserts by message id.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Per-message loop setup",
+          "lineRange": [
+            95,
+            114
+          ],
+          "explanation": "Within a transaction on the agm store, each message maps to a session keyed `opencode://<session>`, session metadata is refreshed, and invalid JSON only counts as a bad line.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Assistant messages",
+          "lineRange": [
+            115,
+            181
+          ],
+          "explanation": "Sets model and effort (ignoring the `default` variant), sums tokens, and skips streaming messages whose counters are still zero. Usage is upserted using the message id as dedupe key, and context is the sum of input and cache tokens; an assistant summary turn is inserted.",
+          "tourOrder": 5
+        },
+        {
+          "title": "User messages and cursor save",
+          "lineRange": [
+            182,
+            214
+          ],
+          "explanation": "User text becomes a summarized user turn. After the loop the max (updated, rowid) cursor is saved, the model-key flag is set after a rescan, and the transaction commits.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Helpers",
+          "lineRange": [
+            216,
+            253
+          ],
+          "explanation": "`session_meta` reads directory, version and creation time from `session_v2`. `assistant_summary` picks the first non-empty text part, falling back to a `[tool] name` label; thinking-only turns give None.",
+          "tourOrder": 5
+        }
+      ]
+    },
+    "src/agy.rs": {
+      "overview": "Scans Antigravity CLI (`agy`) sessions under `~/.gemini/antigravity-cli`: transcript files for tokens and a read-only summaries database for each conversation's working directory. It avoids double counting against sessions recorded by `agm ask`. Part of the Ingestion Pipeline tour step.",
+      "sections": [
+        {
+          "title": "Default directory",
+          "lineRange": [
+            1,
+            28
+          ],
+          "explanation": "Module docs describe the two data sources. `default_dir` allows the `AGM_AGY_DIR` override.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Transcript discovery",
+          "lineRange": [
+            30,
+            66
+          ],
+          "explanation": "`discover` iterates `brain/<conversation_id>/.system_generated/logs/transcript.jsonl`, keeping files modified since `since_ms` and returning (conversation id, path) pairs sorted by path.",
+          "tourOrder": 5
+        },
+        {
+          "title": "ingest_agy orchestration",
+          "lineRange": [
+            68,
+            123
+          ],
+          "explanation": "Loads cwds, back-fills `cwd` for already ingested file sessions (summaries can be written after the transcript's last line) but not for `agy://` ask sessions. Conversations that match the ask working directory or already have an ask session with usage are skipped. Otherwise `ingest_file` is reused, identity set, and any older duplicate ask session is deduped.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Ask-session check",
+          "lineRange": [
+            125,
+            133
+          ],
+          "explanation": "`has_ask_session` returns true only if an `agy://` session for the conversation has usage rows, so transcripts remain the sole source when ask lacks usage.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Loading workspace cwds",
+          "lineRange": [
+            135,
+            165
+          ],
+          "explanation": "`load_cwds` wraps `try_load_cwds`, which opens `conversation_summaries.db` read-only and maps conversation id to the first workspace path. Errors degrade to a warning and an empty map.",
+          "tourOrder": 5
+        },
+        {
+          "title": "URI to path conversion",
+          "lineRange": [
+            167,
+            230
+          ],
+          "explanation": "`first_workspace_path` parses the JSON array of URIs. `file_uri_to_path` handles localhost, UNC paths, Windows drive letters and platform separators; `percent_decode` and `hex` are a small hand-written decoder for %XX escapes.",
+          "tourOrder": 5
+        }
+      ]
+    },
+    "src/hook.rs": {
+      "overview": "Implements `agm hook`: installing a Claude Code statusLine entry and handling the JSON Claude passes on stdin. The statusline call records plan quota (5h/7d), context window usage and terminal-to-session links, then returns a short status string. Part of the Ingestion Pipeline tour step.",
+      "sections": [
+        {
+          "title": "Outcome type",
+          "lineRange": [
+            1,
+            20
+          ],
+          "explanation": "Module docs explain why the hook exists. `InstallOutcome` distinguishes a fresh install from an already-installed hook.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Safe installer",
+          "lineRange": [
+            22,
+            57
+          ],
+          "explanation": "`install_statusline` reads settings.json; only a missing file starts from empty, other errors abort rather than overwrite. An existing statusLine that already calls `hook statusline` is a no-op, anyone else's statusLine is never overwritten (an error). Otherwise it writes a command entry.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Quota windows",
+          "lineRange": [
+            59,
+            83
+          ],
+          "explanation": "`statusline` extracts five_hour (300 min) and seven_day (10080 min) rate limits from the input and stores a Claude QuotaSnapshot when at least one window is present.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Context and terminal link",
+          "lineRange": [
+            85,
+            114
+          ],
+          "explanation": "Finds the session via the transcript path, converts the used percentage and window size into a ContextSnapshot, and, if a herdr terminal address is provided, upserts and links the terminal to the session with source `hook`.",
+          "tourOrder": 5
+        },
+        {
+          "title": "Status line text",
+          "lineRange": [
+            116,
+            134
+          ],
+          "explanation": "Builds a one-line string: model name, context percent used, and remaining quota per window (shown as left, while context shows used).",
+          "tourOrder": 5
+        }
+      ]
+    },
+    "src/store/mod.rs": {
+      "overview": "Core of the SQLite persistence layer. `Store` wraps a rusqlite Connection, handles WAL setup, versioned migrations (user_version up to 4) and the write API for sessions, usage, quota, turns and cursors. The v2 module adds terminals, inbox and budgets on the same type. This is the center of the SQLite Store tour step.",
+      "sections": [
+        {
+          "title": "Types and constants",
+          "lineRange": [
+            1,
+            33
+          ],
+          "explanation": "Declares the `v2` submodule and re-exports its row types. `SCHEMA_VERSION` is 4, `Cursor` stores per-file ingest progress, and `SessionStats` counts unknown and bad lines.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Busy retry helper",
+          "lineRange": [
+            35,
+            52
+          ],
+          "explanation": "`retry_busy` retries SQLITE_BUSY/LOCKED with exponential backoff capped at 200 ms for about 5 seconds, since some statements ignore busy_timeout.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Opening the database",
+          "lineRange": [
+            54,
+            76
+          ],
+          "explanation": "Creates parent directories, opens the file or an in-memory DB, then delegates to `initialize`. In-memory is used by tests.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Migrations",
+          "lineRange": [
+            77,
+            128
+          ],
+          "explanation": "If user_version is already current it returns without taking a write lock, so read-only commands do not wait for the daemon. Otherwise `BEGIN IMMEDIATE` and re-read the version: <2 runs schema.sql and schema_v2.sql (with a Windows path-key rewrite from v1), <3 adds columns and the v3 index, <4 adds `sessions.effort`. Failure rolls back.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Column helper and session identity",
+          "lineRange": [
+            130,
+            210
+          ],
+          "explanation": "`add_column_if_missing` checks `pragma_table_info` for idempotent ALTERs. Session helpers upsert by path, set metadata, and `dedupe_agy_ask_session` merges duplicate agy sessions in a savepoint.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Usage, quota, context, turns",
+          "lineRange": [
+            212,
+            307
+          ],
+          "explanation": "Writers for model, effort, usage (upsert on session+dedupe_key, so re-parsing is idempotent), quota (ignore duplicates), context (only newer timestamps win) and turns (summary truncated to 200 chars).",
+          "tourOrder": 6
+        },
+        {
+          "title": "Savepoints and reset",
+          "lineRange": [
+            309,
+            368
+          ],
+          "explanation": "`with_savepoint` wraps writes in a named savepoint with rollback on error. `reset_session`, `refresh_last_ms`, `session_last_ts` and `add_line_stats` maintain derived per-session aggregates.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Cursor persistence",
+          "lineRange": [
+            370,
+            410
+          ],
+          "explanation": "`cursor` and `save_cursor` read and upsert file progress; the 64-bit hash is cast to i64 reversibly because SQLite integers are signed. `conn` exposes the raw connection.",
+          "tourOrder": 6
+        }
+      ]
+    },
+    "src/store/v2.rs": {
+      "overview": "Adds the v2 data access API to `Store`: herdr terminals, inter-agent messages, the user inbox, budgets, action log and settings. It defines the row structs and the SQL column mapping helpers. It builds on the schema in schema_v2.sql.",
+      "sections": [
+        {
+          "title": "Terminal row",
+          "lineRange": [
+            1,
+            67
+          ],
+          "explanation": "`TerminalRow` mirrors the terminals table, with `labels` as a BTreeMap serialized to JSON and booleans stored as integers. A manual Default provides a `handoff_state` of active.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Other row types",
+          "lineRange": [
+            69,
+            102
+          ],
+          "explanation": "`InboxRow`, `MessageRow` and `BudgetRow` model the rest; a budget scope is either `task:<ID>` (tokens) or `provider:<name>:<minutes>` (percent).",
+          "tourOrder": 6
+        },
+        {
+          "title": "Column mapping helpers",
+          "lineRange": [
+            104,
+            147
+          ],
+          "explanation": "`TERM_COLS` and `term_from` keep the SELECT column order and row decoding in one place; labels JSON decodes leniently.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Terminal upsert and updates",
+          "lineRange": [
+            149,
+            261
+          ],
+          "explanation": "`upsert_terminal` uses COALESCE so existing values survive partial updates and promotes `agm.task`/`agm.role` labels. Other methods set labels, status, turn, app and finish or remove terminals.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Linking and covered-since",
+          "lineRange": [
+            263,
+            322
+          ],
+          "explanation": "Context window size, terminal-session links, launch spec and handoff state setters. `covered_since` tracks, per source, the earliest time already scanned using settings keys and keeps the minimum.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Terminal queries",
+          "lineRange": [
+            324,
+            348
+          ],
+          "explanation": "`terminal` resolves by address or name, preferring exact address and live state; `terminals` can filter to live ones.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Inbox",
+          "lineRange": [
+            350,
+            465
+          ],
+          "explanation": "`open_inbox` inserts only if no identical open item exists, in one atomic statement. `open_inbox_keyed` dedupes by terminal, source and kind and refreshes the text instead (for example 86% to 87% context). Resolve methods close items, including in bulk via a savepoint.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Messages, actions, settings, budgets",
+          "lineRange": [
+            466,
+            574
+          ],
+          "explanation": "Message add, status and list, `log_action`, a key-value settings store with upsert, and budget set, list and remove (returns whether a row was deleted).",
+          "tourOrder": 6
+        }
+      ]
+    },
+    "src/store/schema.sql": {
+      "overview": "Version 1 SQLite schema: sessions, per-response usage, quota snapshots, conversation turns and file cursors. All creates are idempotent so migration code can run it safely.",
+      "sections": [
+        {
+          "title": "Sessions table",
+          "lineRange": [
+            1,
+            16
+          ],
+          "explanation": "One row per log source file or session, with a UNIQUE `path`, optional id, cwd, version, timing, model, latest context snapshot and unknown/bad line counters.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Usage and quota",
+          "lineRange": [
+            18,
+            38
+          ],
+          "explanation": "`usage` stores token buckets per response with UNIQUE(session, dedupe_key), enabling idempotent upserts. `quota` holds provider window snapshots unique per provider, timestamp and window length.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Turns and cursors",
+          "lineRange": [
+            40,
+            55
+          ],
+          "explanation": "`turns` are conversation summaries unique per byte offset. `cursors` track offset, size, mtime and head hash per file for incremental reads.",
+          "tourOrder": 6
+        }
+      ]
+    },
+    "src/store/schema_v2.sql": {
+      "overview": "Version 2 schema adding the orchestration tables used by the daemon and herdr integration: terminals, messages, inbox, budgets, actions, rotations and settings.",
+      "sections": [
+        {
+          "title": "Terminals",
+          "lineRange": [
+            1,
+            24
+          ],
+          "explanation": "One row per herdr terminal keyed by address, with labels JSON, task and role, lifecycle state, timing, exit code and an optional link to a session.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Messages and inbox",
+          "lineRange": [
+            26,
+            47
+          ],
+          "explanation": "`messages` records agent-to-agent traffic with a delivery status. `inbox` holds items needing the user, with `resolved_ms` and an optional reply.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Budgets and actions",
+          "lineRange": [
+            49,
+            65
+          ],
+          "explanation": "`budgets` define soft and hard limits per scope with an action; `actions` is an audit log of interventions with an ok flag.",
+          "tourOrder": 6
+        },
+        {
+          "title": "Rotations and settings",
+          "lineRange": [
+            67,
+            85
+          ],
+          "explanation": "`rotations` track context-rotation handoffs from an old terminal to a new one, and `settings` is a simple key-value table.",
+          "tourOrder": 6
+        }
+      ]
+    },
+    "src/store/schema_v3.sql": {
+      "overview": "Tiny version 3 migration script. Only the index lives here because new columns are added by Rust code.",
+      "sections": [
+        {
+          "title": "Usage timestamp index",
+          "lineRange": [
+            1,
+            3
+          ],
+          "explanation": "The comment explains new columns on rotations and terminals are added idempotently by `add_column_if_missing` in `Store::initialize`. The script creates an index on usage(ts_ms) for time-range statistics queries.",
+          "tourOrder": 6
+        }
+      ]
+    },
+    "src/codex_quota.rs": {
+      "overview": "Fetches Codex plan quota by spawning `codex app-server --stdio` and calling the JSON-RPC method `account/rateLimits/read`, which costs no tokens. It parses the result into a QuotaSnapshot and provides a non-blocking poller for the daemon. Failures never write fake values. This is the Codex part of the Quota and System Metering tour step.",
+      "sections": [
+        {
+          "title": "Module contract and parsing",
+          "lineRange": [
+            1,
+            92
+          ],
+          "explanation": "Docs state the guarantees: read-only quota, used percent stored as-is, windows of 300 and 10080 minutes. `parse_usage` accepts either a full JSON-RPC response or just the result, and discards windows with missing fields, unexpected durations or percentages outside 0-100, bailing if none remain.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Recording",
+          "lineRange": [
+            94,
+            100
+          ],
+          "explanation": "`record_usage` parses then inserts each snapshot into the store.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Fetching with timeout",
+          "lineRange": [
+            102,
+            126
+          ],
+          "explanation": "`FETCH_TIMEOUT` is 8 seconds for the whole process. `fetch_usage` spawns the binary (overridable by `AGM_CODEX_BIN`) and kills the whole process tree on error.",
+          "tourOrder": 7
+        },
+        {
+          "title": "JSON-RPC exchange",
+          "lineRange": [
+            128,
+            177
+          ],
+          "explanation": "A reader thread forwards stdout lines over a channel. The code sends initialize (id 1), waits, then sends `account/rateLimits/read` (id 2), surfacing JSON-RPC errors and returning the result.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Waiting and killing",
+          "lineRange": [
+            179,
+            221
+          ],
+          "explanation": "`wait_for_id` polls the channel in 200 ms slices against the deadline and ignores unrelated lines. `kill_tree` uses `taskkill /T /F` on Windows because wrapper shims can keep stdout open.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Background poller",
+          "lineRange": [
+            223,
+            285
+          ],
+          "explanation": "`CodexQuotaPoller` runs `fetch` on a thread, collects it on later `tick` calls without blocking the daemon loop, and starts a new fetch only when the interval has elapsed. `warn` prints each distinct error once.",
+          "tourOrder": 7
+        }
+      ]
+    },
+    "src/agy_quota.rs": {
+      "overview": "Reads Antigravity (`agy`) subscription quota by running `agy --print /usage` and turning its JSON into `QuotaSnapshot` rows. It also provides a background poller so the daemon never blocks on the roughly three-second CLI call. This is the Antigravity half of tour step 7's quota metering.",
+      "sections": [
+        {
+          "title": "Module docs and imports",
+          "lineRange": [
+            1,
+            20
+          ],
+          "explanation": "The doc comment records key facts: the call costs no tokens, agy reports the remaining fraction while agm stores the used percent, and three independent quota groups become three providers. Provider names avoid `:` because budget scopes are split on that character.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Provider and window mapping",
+          "lineRange": [
+            21,
+            54
+          ],
+          "explanation": "`PROVIDERS` maps bucket id prefixes to provider names, with the longer `gemini-argon-` listed before `gemini-` so the first `starts_with` match is the right one. `UsageParse` counts `unknown` buckets and deliberately skipped `disabled` ones. `window_minutes` only knows `5h` and `weekly`.",
+          "tourOrder": 7
+        },
+        {
+          "title": "parse_usage",
+          "lineRange": [
+            55,
+            110
+          ],
+          "explanation": "Parses the stdout JSON and fails on a non-SUCCESS status or a missing `groups` array rather than guessing. Each bucket needs a known provider, window, a finite remaining fraction in 0..=1 and a parsable reset time; otherwise it is counted as unknown. Used percent is `(1 - remaining) * 100`, clamped, and windows are grouped per provider in a `BTreeMap` for stable output.",
+          "tourOrder": 7
+        },
+        {
+          "title": "record_usage and fetch_usage",
+          "lineRange": [
+            111,
+            149
+          ],
+          "explanation": "`record_usage` parses and then inserts each snapshot into the shared `quota` table, so Codex, Claude and agy all use the same storage. `fetch_usage` runs the binary (overridable via `AGM_AGY_BIN`) in a temp work dir outside the repo and errors with a stderr excerpt if nothing is printed.",
+          "tourOrder": 7
+        },
+        {
+          "title": "AgyQuotaPoller",
+          "lineRange": [
+            150,
+            217
+          ],
+          "explanation": "The poller keeps an mpsc receiver for an in-flight fetch. Each `tick` first collects a finished result (non-blocking `try_recv`), then starts a new thread when the interval has elapsed. `interval_min = 0` disables it, and `warn` deduplicates repeated identical errors so the daemon log is not spammed. The `Fetch` closure type makes it injectable in tests.",
+          "tourOrder": 7
+        }
+      ]
+    },
+    "src/opencode_quota.rs": {
+      "overview": "Fetches OpenCode Go plan limits via `opencode api GET /api/experimental/usage/limits` and stores them as the `opencode-go` provider. Like its agy sibling it parses defensively and polls on a worker thread. It is part of tour step 7's quota metering.",
+      "sections": [
+        {
+          "title": "Parsing the limits JSON",
+          "lineRange": [
+            1,
+            97
+          ],
+          "explanation": "`parse_usage` reads `data.go` and maps the `rolling`, `weekly` and `monthly` meters to 300, 10080 and 43200 minute windows. Null data or a missing `go` object is not an error and yields no snapshots, and bad or unknown meters increment `unknown` instead of being recorded as 0% or 100%. The API's `percent` is already used percent, so it is only clamped. The per-window `limited` flag is returned separately.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Recording to store",
+          "lineRange": [
+            98,
+            111
+          ],
+          "explanation": "`record_usage` inserts snapshots into the quota table and, since that table has no `limited` column, saves the flag as settings keys `quota_limited:opencode-go:<minutes>`.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Fetching with a deadline",
+          "lineRange": [
+            112,
+            191
+          ],
+          "explanation": "`fetch_usage` uses a 5 second overall deadline and on Windows tries both `opencode` and `opencode.cmd` unless `AGM_OPENCODE_BIN` is set. `fetch_with` spawns the child and reads stdout on a helper thread so the timeout can be enforced from the main thread.",
+          "tourOrder": 7
+        },
+        {
+          "title": "kill_tree",
+          "lineRange": [
+            192,
+            205
+          ],
+          "explanation": "On timeout the whole process tree is killed (`taskkill /T /F` on Windows) because a `.cmd` shim can leave a grandchild holding the stdout pipe open, which would hang the reader thread.",
+          "tourOrder": 7
+        },
+        {
+          "title": "OpenCodeQuotaPoller",
+          "lineRange": [
+            206,
+            269
+          ],
+          "explanation": "Same design as the agy poller: a thread per poll, results collected non-blockingly on the next `tick`, interval 0 disables it, and errors are logged once per distinct message.",
+          "tourOrder": 7
+        }
+      ]
+    },
+    "src/sysmon.rs": {
+      "overview": "Live RAM, CPU, disk and per-agent process load readings that power `agm sys` and the TUI header. Nothing is stored in the database. Sampling the OS is isolated in `SysSampler`, while classification and attribution are pure functions that tests can call directly. It is the system-metering half of tour step 7.",
+      "sections": [
+        {
+          "title": "Data types",
+          "lineRange": [
+            1,
+            137
+          ],
+          "explanation": "Imports `sysinfo` and defines serializable stat structs: `MemStats`, `CpuStats`, `DiskStats` (with `volume_id` and `also_mounted_at` for de-duplication), `AgentLoad` and the aggregate `SysStats`. CPU and rates are `Option` so a missing reading is never shown as a fake 0.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Formatting helpers",
+          "lineRange": [
+            138,
+            168
+          ],
+          "explanation": "`fullest_disk` picks the fullest non-removable disk for the one-line summary, `mount_label` shortens `C:\\` to `C:`, `pct` returns `None` for a zero total, and `human_bytes` uses binary units like Task Manager.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Agent classification",
+          "lineRange": [
+            169,
+            204
+          ],
+          "explanation": "`agent_of` labels a process as an agent by executable name, adds an `-app` suffix for Store or macOS bundle desktop apps, and recognises npm installs running under `node` or `bun` by scanning the command line for package names.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Process attribution",
+          "lineRange": [
+            205,
+            269
+          ],
+          "explanation": "`attribute` walks each process up its parent chain (max 64 hops) to the nearest agent ancestor and sums count, memory and CPU per agent. A parent that started after its child is treated as a reused pid and ignored. CPU is divided by logical cores to give a machine share, and results are sorted by memory.",
+          "tourOrder": 7
+        },
+        {
+          "title": "Disk merging and volume ids",
+          "lineRange": [
+            270,
+            329
+          ],
+          "explanation": "`merge_disks` folds duplicate mounts and mounts sharing a real volume id into one entry. `volume_id` has three `cfg` variants: Windows volume GUID, Unix device id, and a fallback returning `None`. `skip_fs` drops pseudo file systems.",
+          "tourOrder": 7
+        },
+        {
+          "title": "SysSampler",
+          "lineRange": [
+            330,
+            470
+          ],
+          "explanation": "Holds the `sysinfo` handles because CPU percent and I/O rates are deltas between readings. `new` takes two baseline process refreshes spaced by `MINIMUM_CPU_UPDATE_INTERVAL` to work around Windows lacking a first-refresh baseline. `sample` returns the cached reading if called too soon, otherwise refreshes everything and builds `SysStats`.",
+          "tourOrder": 7
+        },
+        {
+          "title": "read_once",
+          "lineRange": [
+            471,
+            476
+          ],
+          "explanation": "One-shot helper for CLI use that sleeps long enough for the CPU and disk rates to be meaningful before sampling.",
+          "tourOrder": 7
+        }
+      ]
+    },
+    "src/hc.rs": {
+      "overview": "The wrapper around the herdr-core `hc` CLI. Everything goes through the `Hc` trait so tests can use fakes, and `HcCli` is the real implementation that shells out with `--json`. It also holds template loading and the conversion from hc terminal objects to store rows. This is the herdr integration of tour step 8.",
+      "sections": [
+        {
+          "title": "Errors and template loading",
+          "lineRange": [
+            1,
+            90
+          ],
+          "explanation": "`HcFailure` carries hc's structured `{kind, message}` error, and `is_missing_sh` detects the Windows case where hc cannot find `sh`. `load_template` is a read-only fallback that validates the name, locates the template dir (`AGM_HC_TEMPLATES`, `%APPDATA%` or `~/.config`), parses the front matter and accepts only a single plain `command:` with no shell metacharacters.",
+          "tourOrder": 8
+        },
+        {
+          "title": "Hc trait and RunSpec",
+          "lineRange": [
+            91,
+            126
+          ],
+          "explanation": "`RunSpec` is the argv, name, cwd and labels for a new terminal. The `Hc` trait lists ls, get, send, run, kill, interrupt and templates. `send` has `if_idle` and `force` flags: the first types only when the target is idle and the second answers a blocked prompt. `HcCli` takes its binary from `AGM_HC_BIN`.",
+          "tourOrder": 8
+        },
+        {
+          "title": "Calling the CLI",
+          "lineRange": [
+            127,
+            160
+          ],
+          "explanation": "`call` runs the binary and parses stdout as JSON, falling back to a string. hc may report errors as an `error` object on stdout or stderr even with a zero exit code, so that is checked first and turned into `HcFailure`; otherwise a non-zero exit becomes a generic error.",
+          "tourOrder": 8
+        },
+        {
+          "title": "Argument builders",
+          "lineRange": [
+            161,
+            194
+          ],
+          "explanation": "`run_args` and `send_args` are pure functions that build the argument vectors. Flags precede a `--` separator so that user text beginning with `-` is never read as a flag, and `run` always passes `--bg --outlive-parent`.",
+          "tourOrder": 8
+        },
+        {
+          "title": "Hc implementation for HcCli",
+          "lineRange": [
+            195,
+            236
+          ],
+          "explanation": "Each trait method maps to one `hc <cmd> --json` call and extracts the relevant field (`terminals`, `templates`), returning `()` for kill and interrupt.",
+          "tourOrder": 8
+        },
+        {
+          "title": "Terminal object to row",
+          "lineRange": [
+            237,
+            332
+          ],
+          "explanation": "`app_from_argv` guesses the app from argv when the program has not reported itself (stripping shim extensions, and mapping `claude` to `claude-code` and `agy` to `antigravity`). `effective_cwd` prefers the foreground process directory. `terminal_row_from` normalizes the different shapes hc uses for snapshots, events, `ls` and `get` into one `TerminalRow`, reading task and role from the `agm.*` labels.",
+          "tourOrder": 8
+        }
+      ]
+    },
+    "src/daemon.rs": {
+      "overview": "Applies lines from the `hc events --json` stream to the store: terminals are created, updated, finished and removed, and inbox items open and close as agents become blocked. It contains only event handling and no loop. It is the event-ingest part of tour step 8.",
+      "sections": [
+        {
+          "title": "apply_event dispatch",
+          "lineRange": [
+            1,
+            83
+          ],
+          "explanation": "Handles three line shapes: an initial or post-`missed` snapshot, a `missed` marker carrying a snapshot, and normal `event` messages dispatched on `type`. Unknown types are ignored so new events from herdr do not break the daemon. `finished`, `lost` and `removed` also resolve the terminal's open `blocked` inbox items, and a `foreground` event only guesses the app while the terminal has not self-reported.",
+          "tourOrder": 8
+        },
+        {
+          "title": "apply_snapshot",
+          "lineRange": [
+            84,
+            100
+          ],
+          "explanation": "A snapshot is the complete set of live terminals. Any terminal still marked live in the DB but absent from the snapshot died while the daemon was down, so it is finished and its inbox is resolved, freeing worker slots and avoiding bogus policy actions.",
+          "tourOrder": 8
+        },
+        {
+          "title": "apply_terminal and apply_status",
+          "lineRange": [
+            101,
+            146
+          ],
+          "explanation": "`apply_terminal` upserts via `terminal_row_from` and applies any embedded status. `apply_status` accepts both the object form and the plain string form, records status, kind, message and turn, and opens a `blocked` inbox item with a generated text when needed. Any other state resolves the blocked item.",
+          "tourOrder": 8
+        }
+      ]
+    },
+    "src/correlate.rs": {
+      "overview": "Links herdr terminals to ingested log sessions so usage can be attributed to the right agent terminal. It links only on a two-way unique match and never overwrites hook or manual links. Part of tour step 8.",
+      "sections": [
+        {
+          "title": "Constants and normalization",
+          "lineRange": [
+            1,
+            38
+          ],
+          "explanation": "Documents the trust order and the time window: a session counts as a candidate if it started from 1 minute before to 10 minutes after the terminal was created. `norm_cwd` normalizes separators, strips the verbatim path prefix and lower-cases on Windows. `source_for_app` maps hc app names to log sources.",
+          "tourOrder": 8
+        },
+        {
+          "title": "link_all candidate search",
+          "lineRange": [
+            39,
+            106
+          ],
+          "explanation": "For each live terminal that has app and cwd, and is not tagged `agm.parent_rotation`, it queries unlinked sessions of the right source within the time window and filters them by normalized cwd. OpenCode is special: one TUI hosts many sessions, so the window is open-ended, an auto link may advance to a newer session, and only the newest candidate is kept.",
+          "tourOrder": 8
+        },
+        {
+          "title": "Uniqueness check and linking",
+          "lineRange": [
+            107,
+            119
+          ],
+          "explanation": "It counts how many terminals claim each session and links only when a terminal has exactly one candidate and that session has exactly one claimant. Ambiguous cases stay unlinked rather than risk mis-attributing usage.",
+          "tourOrder": 8
+        },
+        {
+          "title": "link_codex_rotation",
+          "lineRange": [
+            120,
+            176
+          ],
+          "explanation": "Deterministically links a Codex successor by looking for the `[agm-rot:<id>]` tag at the start of a user turn after the rotation request, with the same normalized cwd and no existing terminal. It runs in a transaction and the UPDATE re-checks that nothing else claimed the session, setting `link_source = 'rotation'`.",
+          "tourOrder": 8
+        }
+      ]
+    },
+    "src/actions.rs": {
+      "overview": "The audited intervention layer: send and reply to messages, spawn agents with limits, kill or interrupt with protection rules, bulk inbox dismissal and post-rotation cleanup. Its central rule is that Codex and Claude sessions are only stopped by a confirmed human, while agents may stop only OpenCode workers. Tour step 9.",
+      "sections": [
+        {
+          "title": "Message kinds",
+          "lineRange": [
+            1,
+            38
+          ],
+          "explanation": "Message types are stored as Vietnamese codes (such as `GIAO` and `BÁO CÁO`) and mapped to English display names (`ASSIGN`, `REPORT`) by `kind_to_english` and `kind_from_english`, keeping stored data stable while the UI is English.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Caller classification",
+          "lineRange": [
+            39,
+            103
+          ],
+          "explanation": "`Caller` is either a confirmed or unconfirmed user or an agent. `classify_caller` treats a TTY not owned by an agent as a user. `detect_caller` fails closed: if the calling terminal cannot be inspected, or runs a known agent app or has self-reported, the caller is an agent. `PROTECTED_APPS` and `AGENT_KILLABLE_APPS` hold the policy lists.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Done selectors and filters",
+          "lineRange": [
+            104,
+            244
+          ],
+          "explanation": "Parses `agm done` selectors such as `N`, `N-M` and `N,M-K` into ids, tracks the legacy single-id form, and defines filters and report types. `normalize_done_kind` and `normalize_done_source` accept English aliases and validate sources.",
+          "tourOrder": 9
+        },
+        {
+          "title": "dismiss_done and dismiss",
+          "lineRange": [
+            245,
+            333
+          ],
+          "explanation": "Bulk-dismisses inbox items by ids or filters and returns what was done and skipped. `blocked` items are skipped unless `--source blocked` was explicit, and the legacy single-id path stays strict about missing items. `dismiss` closes one item without typing into any terminal.",
+          "tourOrder": 9
+        },
+        {
+          "title": "send and reply",
+          "lineRange": [
+            334,
+            443
+          ],
+          "explanation": "`format_message` builds the standard message line. `send` validates the kind, always records the message, and either opens an inbox item for `user` or calls `hc send`. It drops the `--if idle` guard only when the target is in `done`, because hc rejects that guard for finished agents. `reply` types into the originating terminal, forcing the input for `blocked` items, and logs the action.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Spawn precheck",
+          "lineRange": [
+            444,
+            592
+          ],
+          "explanation": "`SpawnReq` describes a spawn. `spawn_precheck` validates the task id and template, enforces `max_workers` for the `worker` role (excluding the terminal being replaced), checks the hard task budget and generates a `w-<task>-<n>` name. `spawn_successor_precheck` is the equivalent for Claude and Codex successors.",
+          "tourOrder": 9
+        },
+        {
+          "title": "spawn and rotation prepare",
+          "lineRange": [
+            593,
+            697
+          ],
+          "explanation": "`spawn` decides if the name is an hc template, builds a `RunSpec` with `agm.task` and `agm.role` labels, and on Windows falls back to running the template's command directly when `sh` is missing, then sends the brief by hand. It logs the action and upserts the new terminal. `prepare_rotation_spawn` verifies how a successor can receive its brief before anything is killed and fails closed.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Brief delivery failure",
+          "lineRange": [
+            698,
+            793
+          ],
+          "explanation": "`EXIT_BRIEF_UNDELIVERED` (3) and the `BriefUndelivered` error represent a terminal that opened but never received its brief, so scripts do not clean up the worktree or spawn a duplicate. `exit_code` maps errors to exit codes and `send_spawn_brief` performs the delivery.",
+          "tourOrder": 9
+        },
+        {
+          "title": "authorize, manage, kill, interrupt",
+          "lineRange": [
+            794,
+            918
+          ],
+          "explanation": "`authorize` is the guard: unconfirmed users are refused, confirmed users pass, agents may only act on OpenCode and are refused on protected apps. Refusals are logged and agents' refusals open a `request` inbox item for the human. `set_managed_launch` only lets a confirmed user turn on management and store the `LaunchSpec`. `kill` and `interrupt` authorize, call hc and log.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Cleanup of handed-off sessions",
+          "lineRange": [
+            919,
+            1187
+          ],
+          "explanation": "`eligible_cleanups` selects rotations in `done` whose old terminal is `handed_off` and either finished or replaced by a live linked successor. `fresh_cleanup_terminal` re-verifies the terminal's identity via `hc get`. `execute_cleanup_batch` accepts only a confirmed user and re-checks every item right before removing, while preserving sessions, usage, rotations and handoff files.",
+          "tourOrder": 9
+        }
+      ]
+    },
+    "src/policy.rs": {
+      "overview": "Policy checks run on each daemon tick: budget thresholds for tasks and providers, and context-fill warnings. All automatic actions can be switched off with `agm policy off`. Tour step 9.",
+      "sections": [
+        {
+          "title": "Enable switch and task tokens",
+          "lineRange": [
+            1,
+            29
+          ],
+          "explanation": "`enabled` reads the `policy` setting and is on unless it equals `off`. `task_tokens` sums input, cache and output tokens over all sessions linked to terminals of the task.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Provider percent",
+          "lineRange": [
+            30,
+            58
+          ],
+          "explanation": "`provider_percent` takes the latest quota row, returns `None` if it is stale, and otherwise computes an effective used percent. A window that has already reset counts as 0 so an old 96% does not keep triggering thresholds.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Budget values and spawn gate",
+          "lineRange": [
+            59,
+            94
+          ],
+          "explanation": "A budget scope is `task:<id>` (tokens) or `provider:<name>:<window>` (percent). `spawn_blocked_by_budget` refuses new spawns when a task's hard limit is already exceeded.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Context percent and notify",
+          "lineRange": [
+            95,
+            149
+          ],
+          "explanation": "`session_context_pct` reads context use from the session row and uses the model's configured window when the log has none. `notify` opens a `budget` inbox item and, if a manager terminal is configured, messages it through `actions::send`, ignoring send errors.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Budget and context ticks",
+          "lineRange": [
+            150,
+            237
+          ],
+          "explanation": "`budgets_tick` remembers the highest level reached per budget in a setting, so it only acts when the level rises and resets when the value drops below soft. On a hard breach it can kill or interrupt the task's terminals, but only via `actions` as the `agm-policy` agent, so protected apps are refused. `context_tick` opens a warning for sessions above `ctx_warn`. `tick` runs both.",
+          "tourOrder": 9
+        }
+      ]
+    },
+    "src/rotation.rs": {
+      "overview": "The state machine that rotates a session when its context fills up. OpenCode workers are handed off, killed and respawned, while managed Claude Code and Codex sessions get a handoff file and a successor with no kill of the old session. State is persisted in the `rotations` table. Tour step 9.",
+      "sections": [
+        {
+          "title": "Types and constants",
+          "lineRange": [
+            1,
+            39
+          ],
+          "explanation": "Documents the two flows and the states: `pending`, `requested`, `handoff_ready`, `spawning`, `awaiting_link`, `done`. `HANDOFF_MARKER` is the sentinel line an agent writes last, and `Rotation` mirrors a row of the table.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Prompt texts and readiness",
+          "lineRange": [
+            40,
+            98
+          ],
+          "explanation": "Builders for the handoff request, resume prompt and successor prompt (Codex gets an `[agm-rot:<id>]` tag for later linking). `is_handoff_ready` checks the file is long enough, contains `rotation_id: <id>`, and ends with the marker.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Eligibility and state helpers",
+          "lineRange": [
+            99,
+            186
+          ],
+          "explanation": "`rotatable_*` predicates define who may rotate, `active` loads in-flight rotations, and `set_state`, `fail` and `needs_attention` persist transitions, open inbox items and log actions. `fail` keeps the old session and suggests `agm rotate` to retry.",
+          "tourOrder": 9
+        },
+        {
+          "title": "start",
+          "lineRange": [
+            187,
+            233
+          ],
+          "explanation": "Creates a `pending` row unless one is active or the terminal is already `handed_off`. Automatic starts also skip terminals with a prior failed or needs-attention rotation to avoid repeated handoff nagging. The cwd comes from the confirmed `launch_spec` or the terminal.",
+          "tourOrder": 9
+        },
+        {
+          "title": "tick",
+          "lineRange": [
+            234,
+            278
+          ],
+          "explanation": "First detects sessions over `ctx_rotate` and starts rotations, or raises a keyed `unmanaged` inbox item for manually opened Claude or Codex sessions. Then it advances every active rotation along the OpenCode or interactive branch.",
+          "tourOrder": 9
+        },
+        {
+          "title": "OpenCode flow",
+          "lineRange": [
+            279,
+            488
+          ],
+          "explanation": "`advance_opencode` validates the terminal, requests the handoff and waits for a new turn while idle. `verify_and_respawn` checks git state (a new commit touching the log file and a clean worktree) and only then spawns the successor, waiting until timeout otherwise.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Interactive flow",
+          "lineRange": [
+            489,
+            901
+          ],
+          "explanation": "`fresh_idle_status` re-reads hc to confirm the terminal is idle. `advance_interactive` is a match over states: `pending` asks for a handoff file, `requested` waits for a valid file, `handoff_ready` spawns using the stored `LaunchSpec`, `spawning` recovers a crash by finding the labeled terminal, and `awaiting_link` waits for correlation and then marks the old terminal `handed_off`. Timeouts become `needs_attention`.",
+          "tourOrder": 9
+        }
+      ]
+    },
+    "src/launch.rs": {
+      "overview": "Parses, sanitizes and rebuilds the command line used to start a successor Claude Code or Codex session (`LaunchSpec`). It is deliberately strict: unknown flags are rejected so a rotation never replays something unsafe or ambiguous. Tour step 9.",
+      "sections": [
+        {
+          "title": "LaunchSpec",
+          "lineRange": [
+            1,
+            38
+          ],
+          "explanation": "A versioned struct holding app, executable, filtered argv and cwd, with JSON round-trip that validates the version and that the executable is not blank.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Command tokenizer",
+          "lineRange": [
+            39,
+            104
+          ],
+          "explanation": "`parse_cmd_tokens` splits `--cmd` strings into args handling single and double quotes without invoking a shell, and rejects unterminated quotes or empty input. `is_shell` recognises shell executables.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Extracting and building",
+          "lineRange": [
+            105,
+            166
+          ],
+          "explanation": "`extract_launch_argv` pulls the agent argv from `hc get` (foreground first), skipping shells. `parse_launch_spec` checks the app matches and applies the per-app filter. `build_successor_argv` always inserts `--` before the prompt so variadic flags such as `--add-dir` cannot swallow it.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Claude hook check",
+          "lineRange": [
+            167,
+            189
+          ],
+          "explanation": "`check_claude_hook_installed` reads `~/.claude/settings.json` and requires a `hook statusline` command, because Claude rotation depends on that hook for context data.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Codex filter",
+          "lineRange": [
+            190,
+            326
+          ],
+          "explanation": "`filter_codex` uses allowlists of flags with values, zero-arg flags and flags to strip (`-C` since cwd is set separately). It drops `resume` or `fork` plus their session id, discards the old trailing prompt and rejects non-interactive subcommands.",
+          "tourOrder": 9
+        },
+        {
+          "title": "Claude filter",
+          "lineRange": [
+            327,
+            465
+          ],
+          "explanation": "`filter_claude` has the same shape with extra cases: variadic flags that consume arguments until the next flag, flags stripped like `--continue` and `--resume`, and a rejection of `-p` or `--print` because rotation needs an interactive session.",
+          "tourOrder": 9
+        }
+      ]
+    },
+    "src/branches.rs": {
+      "overview": "Reads and edits `### <repo>/<branch>` blocks of BRANCHES.md safely. The first half is pure text manipulation; the second adds a directory lock, atomic writes and a git-verified `ready` guard. Tour step 10.",
+      "sections": [
+        {
+          "title": "Vocabulary and validation",
+          "lineRange": [
+            1,
+            87
+          ],
+          "explanation": "`STATUSES` and `FIELDS` define the allowed values. `validate_entry` requires `repo/branch` names of lower-case characters, and `validate_fields` rejects unknown, duplicate, blank, multi-line or ` # `-containing values (they would read back as comments) and invalid statuses.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Parsing the markdown",
+          "lineRange": [
+            88,
+            160
+          ],
+          "explanation": "`parse_field` recognises `- key: value` lines, `strip_comment` removes trailing comments, and `find_block` locates a heading (ignoring a BOM) and errors if the entry appears twice. `read_entry` returns the parsed fields.",
+          "tourOrder": 10
+        },
+        {
+          "title": "upsert_entry",
+          "lineRange": [
+            161,
+            226
+          ],
+          "explanation": "Updates fields in place, appends missing ones after the last field, or creates a new block at the end. Duplicate keys keep the last value and the original line ending style (CRLF or LF) is preserved.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Directory lock",
+          "lineRange": [
+            227,
+            369
+          ],
+          "explanation": "The lock is an atomically created directory with an `owner` token file. `Drop` removes it only if the token is still ours, so a lock that was reclaimed as stale is left alone. `acquire_lock` and `acquire_lock_with` poll until timeout, with injectable create and rename for tests.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Writer permission and types",
+          "lineRange": [
+            370,
+            405
+          ],
+          "explanation": "`ensure_writer` forbids terminals with the `worker` role from writing the registry. `BranchUpdate` and `UpdateOutcome` are the request and result, and `get` treats a missing file as no entry.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Ready guard and atomic write",
+          "lineRange": [
+            406,
+            478
+          ],
+          "explanation": "`check_ready` demands a 12-40 hex SHA head, a worktree, a clean tree, and that the real HEAD matches the declared head. `write_atomic_with` writes a temp file and renames, retrying on Windows sharing violations.",
+          "tourOrder": 10
+        },
+        {
+          "title": "do_update and update",
+          "lineRange": [
+            479,
+            584
+          ],
+          "explanation": "`do_update` validates, requires an existing `BRANCHES.md`, runs git checks before taking the lock (git can be slower than the stale timeout) and then under the lock only compares strings, upserts and writes atomically. `update` wraps it and logs the action even on failure.",
+          "tourOrder": 10
+        }
+      ]
+    },
+    "src/git.rs": {
+      "overview": "A minimal read-only git layer behind a `Git` trait, used to verify handoffs and branch readiness. Tour step 10.",
+      "sections": [
+        {
+          "title": "Git trait and runner",
+          "lineRange": [
+            1,
+            28
+          ],
+          "explanation": "The trait offers `head`, `is_clean` and `touched_since`, so callers can substitute fakes. The private `git` helper runs `git -C <cwd>` and turns a failing exit into an error with stderr.",
+          "tourOrder": 10
+        },
+        {
+          "title": "GitCli implementation",
+          "lineRange": [
+            29,
+            58
+          ],
+          "explanation": "`is_clean` treats untracked files as dirty but excludes the orchestration dirs `.agents/tasks` and `.agents/.runtime`. `touched_since` returns the newest commit in `since..HEAD` that touched a path, or `None`.",
+          "tourOrder": 10
+        },
+        {
+          "title": "ensure_handoff_excluded",
+          "lineRange": [
+            59,
+            101
+          ],
+          "explanation": "Appends `.agents/handoff/` to the repo's `info/exclude` found via `git rev-parse --git-path` (so it works in worktrees), idempotently and keeping newline hygiene. It returns `false` for non-repos.",
+          "tourOrder": 10
+        }
+      ]
+    },
+    "src/mcp.rs": {
+      "overview": "A synchronous, stdio-based MCP (Model Context Protocol) server speaking JSON-RPC 2.0, one message per line, with no tokio. It exposes seven agm tools (send, inbox, ps, quota, spawn, branch_get, branch_update) so agents can call agm with a JSON Schema instead of typing CLI commands. The tour step on the BRANCHES.md writer and MCP server points here as the place where agents reach agm directly.",
+      "sections": [
+        {
+          "title": "Context and error types",
+          "lineRange": [
+            1,
+            34
+          ],
+          "explanation": "The module doc states the protocol rules: stdout carries only JSON-RPC, logs go to stderr. `McpCtx` bundles the `Store`, trait objects for `Hc` and `Git` (so tests can inject fakes), the config path, the caller terminal and an injectable clock. `ToolError` separates an unknown tool (a JSON-RPC error) from a tool that ran and failed (reported as `isError` content).",
+          "tourOrder": 10
+        },
+        {
+          "title": "Tool definitions",
+          "lineRange": [
+            36,
+            111
+          ],
+          "explanation": "`tool()` builds a tool descriptor with an `inputSchema` that sets `additionalProperties: false`. `tool_definitions()` lists exactly the seven Phase 1 tools; there is deliberately no kill, interrupt or cleanup tool. Message kinds are an English enum, with Vietnamese aliases accepted later in `agm_send`.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Argument helpers and guards",
+          "lineRange": [
+            113,
+            168
+          ],
+          "explanation": "`opt_bool`, `opt_str` and `req_str` give typed argument access with errors naming the offending parameter. `mcp_actor` makes the sender the calling terminal or the literal \"agent\", never \"user\", so an MCP client cannot impersonate the human. `abs_branches_file` requires an absolute path because the server's cwd is untrusted, and `reject_unknown_keys` enforces the schema's no-extra-properties rule at runtime.",
+          "tourOrder": 10
+        },
+        {
+          "title": "call_tool: write tools",
+          "lineRange": [
+            170,
+            244
+          ],
+          "explanation": "Dispatches on the tool name after rejecting unknown keys. `agm_send` maps the kind via `kind_from_english` (falling back to stored codes), then calls `actions::send` and turns a `failed` row into an error just like the CLI. `agm_spawn` builds a `SpawnReq` and loads config before `actions::spawn`. `agm_branch_update` validates that `fields` is an object of strings, then delegates to `branches::update` under its lock with the caller identity so worker terminals can be refused.",
+          "tourOrder": 10
+        },
+        {
+          "title": "call_tool: read tools",
+          "lineRange": [
+            245,
+            282
+          ],
+          "explanation": "`agm_ps` and `agm_inbox` read live or open rows unless `all` is set. `agm_quota` combines `report::quota_with_config` with an optional per-task token total from `policy::task_tokens`. `agm_branch_get` only reads a file literally named BRANCHES.md, a small path-restriction safeguard; the final arm returns `Unknown`.",
+          "tourOrder": 10
+        },
+        {
+          "title": "JSON-RPC response wrapping",
+          "lineRange": [
+            284,
+            311
+          ],
+          "explanation": "`ok` and `err` build JSON-RPC envelopes. `tools_call` is the single place that wraps results: success carries both pretty text and `structuredContent` with `isError: false`, an unknown tool maps to code -32602, and a failed tool is a normal result with `isError: true` and the full anyhow chain (`{e:#}`).",
+          "tourOrder": 10
+        },
+        {
+          "title": "Method dispatch",
+          "lineRange": [
+            313,
+            337
+          ],
+          "explanation": "`handle_message` returns `None` for messages without an `id` (notifications get no reply). `initialize` echoes the client's protocol version only when it is in `PROTOCOL_VERSIONS`, else the newest. It also handles `ping`, `tools/list` and `tools/call`, answering other methods with -32601.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Line-oriented serve loop",
+          "lineRange": [
+            339,
+            367
+          ],
+          "explanation": "`write_line` writes one JSON value per line and flushes. `serve` reads raw bytes up to each newline, so invalid UTF-8 produces a -32700 parse error instead of aborting. Blank lines are skipped, batches are rejected with -32600, and objects go to `handle_message`. The loop ends only when stdin reaches EOF, so garbage input never kills the server.",
+          "tourOrder": 10
+        }
+      ]
+    },
+    "docs/superpowers/plans/2026-11-22-agm-mcp-branch-phase1.md": {
+      "overview": "An implementation plan (written in Vietnamese) for agm Phase 1: the `agm mcp` stdio server and the `agm branch` command that edits BRANCHES.md under an atomic lock. It is organised as seven test-first tasks with explicit review focus areas, and it is the design record behind src/mcp.rs and src/branches.rs in the tour's MCP step.",
+      "sections": [
+        {
+          "title": "Goal, architecture and adjustments",
+          "lineRange": [
+            1,
+            21
+          ],
+          "explanation": "States the goal (typed MCP tools instead of error-prone PowerShell CLI calls, plus locked BRANCHES.md writes), the two new modules and the tech stack. The numbered adjustments to the spec fix the target version at 0.4.0, avoid any schema change, use English message-kind enums with Vietnamese aliases, defer workflow tools to Phase 2, share the lock directory with the legacy `mkdir` protocol, and refuse worker terminals.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Global constraints",
+          "lineRange": [
+            23,
+            33
+          ],
+          "explanation": "Hard rules for every task: no new crates, no tokio, tests, clippy and fmt green after each task, mcp.rs never builds `Caller::User`, stdout carries only JSON-RPC, and lock timings (60 s stale, 30 s wait) plus the valid status and key lists are fixed.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Review focus",
+          "lineRange": [
+            35,
+            43
+          ],
+          "explanation": "Lists five risks to check: CRLF preservation on Windows, orphaned locks, a missing terminal ID making the sender \"agent\" rather than \"user\", robustness to malformed JSON-RPC, and values with `#` or Vietnamese text surviving round trips. Each maps to a named test in a task.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Tasks 1-2: branches module",
+          "lineRange": [
+            45,
+            155
+          ],
+          "explanation": "Task 1 builds pure functions to read and upsert `### <lane>/<slug>` blocks, with tests for inline comments, CRLF and duplicate headings. Task 2 adds directory locking, atomic tmp-then-rename writes, and a guarded `update` that checks the ready state and refuses workers. Each task follows the same write failing test, implement, rerun, commit rhythm.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Tasks 3-4: CLI and MCP skeleton",
+          "lineRange": [
+            159,
+            222
+          ],
+          "explanation": "Task 3 wires `agm branch get|set` into the CLI via `ops::branch_get` and `ops::branch_set`. Task 4 creates the JSON-RPC framework with tests for version negotiation, notifications, error codes, surviving garbage input, and a source-level assertion that `Caller::User` never appears in mcp.rs.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Tasks 5-6: tools and guards",
+          "lineRange": [
+            226,
+            280
+          ],
+          "explanation": "Task 5 adds the four read-only tools. Task 6 adds the write tools, with tests that the tool list is exactly the Phase 1 set, that a send without a terminal ID is from \"agent\", that spawn respects `max_workers`, that workers cannot update branches, and that no tool call ever kills.",
+          "tourOrder": 10
+        },
+        {
+          "title": "Task 7: docs and release",
+          "lineRange": [
+            284,
+            292
+          ],
+          "explanation": "Covers the docs update, version 0.4.0, automated verification (fmt, clippy, tests) and a real-world check by registering the server in Claude Code and confirming an `agm_send` to the user lands in the inbox with the terminal address as sender.",
+          "tourOrder": 10
+        }
+      ]
+    },
+    "src/report.rs": {
+      "overview": "The read-side query layer: it turns the SQLite store into session lists, cost and usage summaries, quota rows and recent turns. It also owns the local-time window arithmetic (today, month, last N months) that the dashboard and CLI both rely on. It is the data source for the Reporting, TUI and Dashboard tour step.",
+      "sections": [
+        {
+          "title": "Row and window types",
+          "lineRange": [
+            1,
+            104
+          ],
+          "explanation": "Imports plus the serializable report shapes: `SessionRow`, `GroupBy`, `UsageWindow`, `UsageBucket`, `UsageSummary`, `LocalBounds`, `CostRow` and `QuotaRow`. Fields such as `stale`, `reset_passed` and `limited` carry quota freshness state to the UI.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Quota percent helpers",
+          "lineRange": [
+            105,
+            135
+          ],
+          "explanation": "`effective_used_percent` treats a quota window whose reset time has passed as 0% used, because the old figure is no longer valid. `left_percent` converts to remaining percent, clamps to 0-100 and keeps NaN so the UI can show unknown. `USAGE_SUMS` is the shared SQL aggregate fragment.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Sessions query",
+          "lineRange": [
+            137,
+            235
+          ],
+          "explanation": "`source_from` and `usage_at` decode rows into model types, and `sessions` joins sessions with their usage to produce `SessionRow`s since a timestamp, computing cost and context percent through config helpers.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Calendar and local-time math",
+          "lineRange": [
+            237,
+            372
+          ],
+          "explanation": "Hand-written `civil_from_days` and `days_from_civil` convert between epoch days and dates without a date crate. `compute_local_bounds` derives the 24h, today, month and N-months starts, taking an `offset_at` closure so tests can fake the time zone. `sqlite_offset_at` obtains the real UTC offset from SQLite's `'localtime'` and caches it per hour; `window_since_ms` selects one bound.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Cost aggregation",
+          "lineRange": [
+            374,
+            528
+          ],
+          "explanation": "`CostAcc` accumulates per-key token and cost totals, `price_row` prices a row from the config table, and `cost_totals`, `value_label` and `cost`/`cost_with_offset` group by session, model or day. Unknown-model tokens are tracked as unpriced rather than counted as zero cost.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Usage summary and coverage",
+          "lineRange": [
+            530,
+            659
+          ],
+          "explanation": "`usage_summary_with_offset` scans the usage rows once from the earliest needed bound and buckets them into the 24h, today and month totals plus per-month rows. `coverage_status` checks whether history reaches back far enough so the TUI knows if a backfill is needed.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Bars and quota rows",
+          "lineRange": [
+            661,
+            751
+          ],
+          "explanation": "`render_bar` and `spark_bar` draw ASCII or Unicode bars. `quota_with_config` selects the latest quota row per (provider, window) with a correlated MAX subquery and flags `limited` from settings. `quota_is_stale` marks data stale when older than `quota_stale_min` or when newer usage exists for the same plan. This feeds the agm_quota MCP tool too.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Session resolution and turns",
+          "lineRange": [
+            753,
+            860
+          ],
+          "explanation": "`package_has_usage_after` supports the stale check. `resolve_session` finds a unique session by id prefix and errors on zero or ambiguous matches, listing the candidates. `turns` returns the last N turns of a session in chronological order by querying descending and reversing.",
+          "tourOrder": 11
+        }
+      ]
+    },
+    "src/dashboard.rs": {
+      "overview": "A pure rendering module for the `agm tui` dashboard: it builds a `Snapshot` from the database and renders ANSI text with comfy-table, with no stdin or stdout I/O. It also parses the typed TUI commands. It is the operator-facing view in the Reporting, TUI and Dashboard tour step; it renders with hand-written ANSI escapes rather than a TUI library.",
+      "sections": [
+        {
+          "title": "Imports, palette and view types",
+          "lineRange": [
+            1,
+            81
+          ],
+          "explanation": "Imports comfy-table, unicode width and segmentation crates and the report, policy and store types, then defines the ANSI escape constants used through `paint`. `TermView`, `BudgetView` and `Snapshot` are the flat structures renderers read: `tokens` is `None` for an unlinked terminal (unknown, not zero) and `system` is filled by the TUI because the database has no live machine stats.",
+          "tourOrder": 11
+        },
+        {
+          "title": "snapshot builder",
+          "lineRange": [
+            82,
+            183
+          ],
+          "explanation": "For each live terminal it fetches linked-session token totals, model, effort, cwd and context percent, finds the latest message to or from it (matching address or name), and composes a status string like `BLOCKED (kind)` plus `[HANDED OFF]`. It then reads completed rotation pairs, budget values, quota, usage summary, inbox and the last 5 messages.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Formatting helpers and cells",
+          "lineRange": [
+            184,
+            516
+          ],
+          "explanation": "Small helpers for painting, padding by display width, ages, colour thresholds, bars, token abbreviations, terminal tables and cell styling (status, effort, context, message kind badges), plus word-wrapping that respects ANSI sequences. Width-aware padding keeps tables aligned with CJK and emoji.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Header, system and footer",
+          "lineRange": [
+            517,
+            1017
+          ],
+          "explanation": "Renders the header, the machine meters (CPU cores, RAM, disk, per-agent resource lines with sparklines), the system verdict and the command footer. `bounded_block` limits line width so wide content never wraps the pane.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Section selection",
+          "lineRange": [
+            1018,
+            1116
+          ],
+          "explanation": "The `Section` enum lists the selectable dashboard areas, with `MAX_VIEW = 3` and a default of quota, terminals and inbox. `parse_view` validates the user's `view` arguments. Recent messages are pinned separately and do not count against the limit.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Frame assembly",
+          "lineRange": [
+            1117,
+            1204
+          ],
+          "explanation": "`render` shows all sections; `render_view` assembles header, chosen sections, recent messages and footer. When a height is given, `fit_blocks` shortens section bodies (never the header or command bar) so the frame fits without scrolling, keeping `FRAME_RESERVE` lines free for the note and prompt.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Per-section rendering",
+          "lineRange": [
+            1205,
+            1582
+          ],
+          "explanation": "`render_section` is one large match over `Section`, building quota (shown as percent left), usage, terminals, budgets, inbox, system and messages blocks. Empty states print helpful hints such as running `agm scan` or `agm hook install`.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Sanitising and truncation",
+          "lineRange": [
+            1583,
+            1692
+          ],
+          "explanation": "`sanitize_one_line` strips CSI, OSC and other escape sequences and control characters from untrusted text so messages cannot inject terminal codes. `one_line` and `bounded_styled_line` truncate by display width while preserving styling.",
+          "tourOrder": 11
+        },
+        {
+          "title": "TUI command parser",
+          "lineRange": [
+            1694,
+            1916
+          ],
+          "explanation": "`TuiCmd` enumerates commands, and `TUI_COMMANDS` pairs each full name with a one-letter alias and usage text. Helpers split kinds and quoted tokens and parse `done` filters. `parse_command` maps a line to a `TuiCmd`; empty input means refresh, and missing arguments return usage errors.",
+          "tourOrder": 11
+        }
+      ]
+    },
+    "src/tui.rs": {
+      "overview": "The interactive `agm tui` binary-side loop: it repaints the dashboard from dashboard.rs on a timer and reads typed commands from a stdin thread. It refuses to run for non-humans and requires a `y` confirmation for kill, interrupt and cleanup. It sits on top of dashboard.rs in the Reporting, TUI and Dashboard tour step.",
+      "sections": [
+        {
+          "title": "Constants and terminal size",
+          "lineRange": [
+            1,
+            95
+          ],
+          "explanation": "The header explains the design: no heavy TUI library, typed commands instead of keybindings. `CLEAR_ALL` clears screen and scrollback while staying on the normal screen. `console_size` has separate cfg-specific implementations (env overrides and platform calls) so pane width is known on each OS. `needs_redraw` avoids repainting an identical frame.",
+          "tourOrder": 11
+        },
+        {
+          "title": "View persistence and notes",
+          "lineRange": [
+            97,
+            113
+          ],
+          "explanation": "`load_view` restores the sections chosen with `view` from the `tui_view` setting, falling back to `Section::DEFAULT`. `view_names` and `confirmation_note` format short UI strings.",
+          "tourOrder": 11
+        },
+        {
+          "title": "render_frame",
+          "lineRange": [
+            115,
+            166
+          ],
+          "explanation": "Appends the optional manual-cleanup list and the status note to the rendered dashboard, then builds a single write: cursor home, each line bounded and followed by erase-to-end-of-line, and finally erase-below plus the `agm>` prompt. Doing it in one string reduces flicker.",
+          "tourOrder": 11
+        },
+        {
+          "title": "run: setup and caller check",
+          "lineRange": [
+            168,
+            225
+          ],
+          "explanation": "Spawns a thread that forwards stdin lines over an mpsc channel so the loop can use `recv_timeout`. It identifies the caller once via `detect_caller` and bails unless it is a human on a TTY (fail-closed). It starts a background backfill thread with its own `Store` when history coverage is missing, because the SQLite connection is not `Sync`.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Render loop",
+          "lineRange": [
+            226,
+            264
+          ],
+          "explanation": "Each iteration scans for new log data, builds a snapshot and samples system stats, renders, and writes only if the frame changed or input just happened. It then waits for a line up to `refresh` seconds; a timeout just repaints, and a disconnected channel ends the program.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Confirmations",
+          "lineRange": [
+            266,
+            325
+          ],
+          "explanation": "Two pending states are handled before command parsing: a selected cleanup batch and a pending kill or interrupt. Only a line of `y` re-issues the action with `confirmed: true`; anything else cancels. This keeps destructive actions behind an explicit second step.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Command dispatch",
+          "lineRange": [
+            326,
+            480
+          ],
+          "explanation": "Matches the parsed `TuiCmd`: quit, refresh, cleanup selection and listing, kill/interrupt (which stage `pending`), reply, send, done with filters, policy toggle and view get or set. Results become coloured notes shown on the next frame.",
+          "tourOrder": 11
+        },
+        {
+          "title": "Unit tests",
+          "lineRange": [
+            483,
+            545
+          ],
+          "explanation": "Tests cover repaint-only-on-change, the clear sequence, stripping untrusted escapes from notes, and the confirmation instruction preceding long action details.",
+          "tourOrder": 12
+        }
+      ]
+    },
+    "tests/common/mod.rs": {
+      "overview": "Shared test support: a recording fake of the `Hc` trait (the herdr-core client) so integration tests can exercise actions, rotation and MCP without a real herdr. It is the fake client the Tests and Fixtures tour step refers to.",
+      "sections": [
+        {
+          "title": "FakeHc state",
+          "lineRange": [
+            1,
+            19
+          ],
+          "explanation": "`#![allow(dead_code)]` is needed because each test binary uses only part of this module. `FakeHc` records calls in a `RefCell<Vec<String>>` and has knobs: `fail_send`, `apps`, `fail_get`, canned `get_responses`, and `missing_sh_for` to simulate a missing shell on Windows.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Read-style methods",
+          "lineRange": [
+            21,
+            41
+          ],
+          "explanation": "`templates` returns one fixed `worker-mid` template, `ls` is empty, and `get` returns a canned response, a synthetic status with the configured app, or a bare address, or fails with `not_found`.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Recording write methods",
+          "lineRange": [
+            42,
+            77
+          ],
+          "explanation": "`send`, `run`, `kill` and `interrupt` append a readable string to `calls`, which tests assert on (for example that no `kill` happened). `run` can return a spawn failure and otherwise returns a fixed live terminal `t99`.",
+          "tourOrder": 12
+        }
+      ]
+    },
+    "tests/rotation_test.rs": {
+      "overview": "The heavy integration suite for context-rotation: when a worker or managed agent fills its context window, agm requests a handoff, waits for a committed handoff file, then kills and respawns a successor. Tests drive `rotation::tick` with fake `Hc`, fake `Git` and an in-memory store. It is one of the heavy rotation suites named in the Tests and Fixtures tour step.",
+      "sections": [
+        {
+          "title": "Fakes and setup",
+          "lineRange": [
+            1,
+            86
+          ],
+          "explanation": "`FakeGit` implements the `Git` trait and records `touched_since` queries. `interactive_hc` and `setup` build an in-memory store with a live OpenCode worker `t1` linked to a session at 80% context (380k of 475k tokens). `state` reads the rotation row's state, and `go_idle` simulates a new turn.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Core lifecycle tests",
+          "lineRange": [
+            88,
+            185
+          ],
+          "explanation": "Rotation stays `pending` while the agent works, moves to `requested` and sends a handoff prompt once idle, and finishes `done` only after a new turn plus a commit touching the handoff log. Then it kills `t1` and runs a successor named `w-a-2` in the same cwd. Missing commits or timeouts push the item to the inbox instead.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Eligibility and safety",
+          "lineRange": [
+            186,
+            294
+          ],
+          "explanation": "Tests check that only OpenCode workers rotate automatically, that policy-off disables it, that at `max_workers` the old worker is replaced, and that prechecks (a hard budget already exceeded, or an unknown successor) fail before any kill. That last property protects against losing a session without a replacement.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Template and launch resolution",
+          "lineRange": [
+            295,
+            490
+          ],
+          "explanation": "Many paired tests (plain and `_child`) cover how the successor command is built: a bare opencode uses a prompt flag, a template file beats the program path, and a bad disk fallback is handled. Failed rotations are not retried automatically.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Managed Claude and Codex rotation",
+          "lineRange": [
+            491,
+            860
+          ],
+          "explanation": "Covers early failure without cwd, no handoff while done, managed Claude rotation inheriting its launch spec with no kill, cancellation when context drops below the warn level, Codex linking by tag after the old terminal exits, link timeouts moving to needs-attention, and manual rotate ignoring the warn threshold.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Warning thresholds and cwd rules",
+          "lineRange": [
+            861,
+            1079
+          ],
+          "explanation": "Unmanaged Claude and Codex only warn at `ctx_rotate`, catalog-only windows still trigger, and the cwd for the successor comes from the launch spec when present, with fallback to the terminal cwd when the spec is missing or blank.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Handoff file and missing brief",
+          "lineRange": [
+            1080,
+            1188
+          ],
+          "explanation": "A requested rotation continues once the handoff file is ready even if the old terminal exited. A successor that did not receive its brief becomes needs-attention rather than being respawned, matching the `agm spawn` exit-3 behaviour.",
+          "tourOrder": 12
+        }
+      ]
+    },
+    "tests/fixtures/claude/real_sanitized.jsonl": {
+      "overview": "A 400-line Claude Code transcript sanitized by tools/sanitize_fixture.py: all free text is replaced with \"lorem\" but the structure, ids, timestamps, models and token usage remain. It gives the Claude parser and ingestion tests realistic input in the Tests and Fixtures tour step.",
+      "sections": [
+        {
+          "title": "Session preamble",
+          "lineRange": [
+            1,
+            13
+          ],
+          "explanation": "Starts with metadata records (`mode`, `permission-mode`, `atis-latch`, `file-history-snapshot`), then the first user message whose content is \"lorem\" and whose cwd is `D:\\fixture\\project`, followed by an `ai-title` and a `tools-used` record. These non-message types test that the parser ignores unknown record kinds.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Assistant usage turns",
+          "lineRange": [
+            14,
+            58
+          ],
+          "explanation": "Assistant records carry `message.usage` with input, cache-creation, cache-read and output token counts plus extra fields (`service_tier`, `iterations`, `speed`). These are what usage and context extraction read; interleaved `user` turns, `ai-title` lines and `system` records exercise turn counting.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Long tail of the session",
+          "lineRange": [
+            59,
+            400
+          ],
+          "explanation": "The rest repeats the same record shapes: 144 assistant, 90 user, 33 `ai-title` and 14 `file-history-delta` among other types, with 144 records containing `usage`. The volume makes it a realistic input for incremental tailing and cursor handling.",
+          "tourOrder": 12
+        }
+      ]
+    },
+    "tools/sanitize_fixture.py": {
+      "overview": "A small Python CLI that converts a real agent JSONL log into a privacy-safe, bounded fixture without touching the source. It is how fixtures like real_sanitized.jsonl are produced, as noted in the Tests and Fixtures tour step.",
+      "sections": [
+        {
+          "title": "Allow and deny lists",
+          "lineRange": [
+            1,
+            22
+          ],
+          "explanation": "`PRIVATE_KEYS` are dropped entirely (encrypted content, account and organization ids). `STRING_KEYS` lists structural string fields (type, role, model, ids, timestamps) that are kept verbatim; every other string becomes \"lorem\". `DISCARDED_TYPES` names record types removed wholesale.",
+          "tourOrder": 12
+        },
+        {
+          "title": "discard_line",
+          "lineRange": [
+            25,
+            37
+          ],
+          "explanation": "Recursively walks a record and returns true if any nested dict has a discarded type, contains `world_state`, or has a value equal to `api-request-blob`. Whole lines are dropped rather than scrubbed when they could hold bulky or sensitive payloads.",
+          "tourOrder": 12
+        },
+        {
+          "title": "sanitize",
+          "lineRange": [
+            40,
+            53
+          ],
+          "explanation": "Recursively rebuilds dicts without private keys, maps lists element-wise, rewrites any `cwd` to `D:\\fixture\\project`, and replaces non-whitelisted strings with \"lorem\". Numbers and booleans pass through, so token counts stay real.",
+          "tourOrder": 12
+        },
+        {
+          "title": "CLI main",
+          "lineRange": [
+            56,
+            83
+          ],
+          "explanation": "Parses input, output and `--max-lines` (default 400), validates them and refuses an output equal to the input. It reads with `utf-8-sig` to tolerate a BOM, skips blank and discarded lines, writes sanitized JSON with LF endings and stops at the line limit.",
+          "tourOrder": 12
+        }
+      ]
+    },
+    "tests/cli_test.rs": {
+      "overview": "End-to-end tests that run the compiled `agm` binary (via `CARGO_BIN_EXE_agm`) inside a temp sandbox with redirected `AGM_*` environment variables. They cover read commands, budgets, policy, hooks, cleanup, help text, `done`, branch set and get, and the MCP server over stdio. They belong to the Tests and Fixtures tour step.",
+      "sections": [
+        {
+          "title": "Sandbox helpers",
+          "lineRange": [
+            1,
+            49
+          ],
+          "explanation": "`sandbox` copies the mini Codex and Claude fixtures into a temp dir shaped like the real log roots, and `agm` runs the binary with `AGM_HOME`, `AGM_CODEX_DIR`, `AGM_CLAUDE_DIR`, `AGM_OPENCODE_DB` and `AGM_AGY_DIR` pointed there, so tests never touch real data. `json` asserts success and parses stdout.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Read command tests",
+          "lineRange": [
+            50,
+            130
+          ],
+          "explanation": "Check `ls`, `cost` (unknown model gives null USD), `quota`, a bad config exiting 1, and `log` returning turns. `agm_env` is a variant that also sets a nonexistent hc binary and removes `HC_TERMINAL_ID`.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Send, budget and policy",
+          "lineRange": [
+            131,
+            287
+          ],
+          "explanation": "Cover sending to the user and the inbox, budget set/ls/rm, policy toggling, replaying a daemon event file then checking that an agent cannot kill Codex, and a statusline hook that never fails.",
+          "tourOrder": 12
+        },
+        {
+          "title": "TUI and emergency safety",
+          "lineRange": [
+            288,
+            411
+          ],
+          "explanation": "`cli_tui_with_piped_stdin_cannot_kill_codex` pipes `p off`, `k t1q`, `y` into `agm tui`, expects exit code 1, and verifies the policy remained enabled, proving the TUI refuses non-TTY callers. Other tests cover emergency commands with broken config, `done` dismissal and rotate refusals.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Agy, cost windows and rotation",
+          "lineRange": [
+            412,
+            600
+          ],
+          "explanation": "Cover Antigravity scan and cost, month window and scan-since options, and managed rotate and cleanup behaviour.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Help text and cleanup confirmation",
+          "lineRange": [
+            601,
+            747
+          ],
+          "explanation": "Cleanup with `--yes` must not touch terminals without human confirmation, and help output for every command is checked to be English with the stop and send warnings preserved.",
+          "tourOrder": 12
+        },
+        {
+          "title": "Done filters and branch commands",
+          "lineRange": [
+            748,
+            916
+          ],
+          "explanation": "Cover bulk and range `done` (blocked items are never auto-closed) and the `branch set/get` round trip, rejection of values without `=` and failure for a missing entry.",
+          "tourOrder": 12
+        },
+        {
+          "title": "MCP stdio smoke test",
+          "lineRange": [
+            918,
+            958
+          ],
+          "explanation": "Spawns `agm mcp`, writes `initialize` and `tools/list` requests, closes stdin and uses a 20-second watchdog so a hang fails the test instead of stalling the suite. It then asserts exactly two stdout lines that each parse as JSON.",
+          "tourOrder": 12
+        }
+      ]
+    },
+    "AGENTS-TUTORIAL.md": {
+      "overview": "The master harness guide (in Vietnamese, v4.0) for running a team of AI agents: roles and permissions, Ponytail policy, Understand-Anything `.ua/` context, shared memory, budget orchestration through agm, and the release gates. It sits above BOT-CEO.md and the docs in the priority order and is the hub that the harness lint scripts check, per the final tour step.",
+      "sections": [
+        {
+          "title": "Header and priority order",
+          "lineRange": [
+            1,
+            8
+          ],
+          "explanation": "Gives the version title and a precedence list: project AGENTS.md or CLAUDE.md first, then this tutorial, then BOT-CEO.md and other docs. The 4.0 note records dropping GitNexus in favour of Understand-Anything.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Architecture and roles",
+          "lineRange": [
+            9,
+            52
+          ],
+          "explanation": "An ASCII diagram shows herdr and agm at the top, `.ua/` plus shared memory, the Claude CEO, then Antigravity, Codex and OpenCode workers. The roles table lists each tier's model, core permissions and prohibitions, including reviewer independence and the single Git bot.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Ponytail policy",
+          "lineRange": [
+            53,
+            73
+          ],
+          "explanation": "A per-agent table sets Ponytail levels (CEO lite or off, Codex full, workers abbreviated, never `ultra` by default) and gives the four-line rule block embedded in free worker prompts: scope lock, read and reuse first, no safety cuts, honest reports.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Skills and worker tiers",
+          "lineRange": [
+            74,
+            88
+          ],
+          "explanation": "Points to docs/SKILL-ROUTING.md, sets one workflow plus one domain skill as a default (not a hard cap), separates the three code-review roles and defines the three worker tiers (fast, mid, strong) and OpenCode agent file locations.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Context layer and shared memory",
+          "lineRange": [
+            89,
+            145
+          ],
+          "explanation": "Describes `.ua/` Knowledge Graph usage, the shared memory directories with a permission matrix for who may propose or publish, and report standardization that avoids passing conversation history.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Coordination and communication",
+          "lineRange": [
+            146,
+            172
+          ],
+          "explanation": "Covers execution routing, no self-review, one editing branch per area, the budget rules (quota check with `agm quota --refresh`, 70% warning), `agm send` message codes including English aliases, `BRANCHES.md` writes via `agm branch set`, the spawn exit-3 rule, context rotation and git checks at handoffs.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Release gates",
+          "lineRange": [
+            173,
+            186
+          ],
+          "explanation": "A seven-step ordered pipeline: worktree commit, script or CI audit, one independent reviewer, docs and final report, sequential merge by the Git bot, knowledge publication by the CEO, and user-only release. A note clarifies that the `status: ready` guard does not replace these gates.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Embedding and references",
+          "lineRange": [
+            187,
+            201
+          ],
+          "explanation": "Advises against pasting the whole document into AGENTS.md; instead embed a summary of at most 80 lines with pointers, commands and permission boundaries. Closes with reference links.",
+          "tourOrder": 13
+        }
+      ]
+    },
+    "docs/SKILL-ROUTING.md": {
+      "overview": "An English guide approved 2026-11-23 that picks a workflow skill per phase, role and work type, layered with Ponytail behaviour and a domain skill. It contains a canonical matrix between HTML comment markers that the lint scripts verify, so editing it affects the harness lint in the final tour step.",
+      "sections": [
+        {
+          "title": "Intro and three layers",
+          "lineRange": [
+            1,
+            15
+          ],
+          "explanation": "Defines it as dispatch guidance, not an installer. Behaviour (Ponytail), workflow and domain are independent layers; one workflow plus one domain is a default, not a cap, and final verification must never be dropped. It also links to the context-rotation thresholds.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Canonical workflow matrix",
+          "lineRange": [
+            17,
+            41
+          ],
+          "explanation": "A table between `harness:skill-routing:start/end` markers maps logical phases (discovery, system-design, planning, feature, bugfix, review, audit, docs, verification, mechanical and more) to a primary skill and owner. Lint rejects deleted or weakened rows. The matrix selects workflows, not models.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Role boundaries and review jobs",
+          "lineRange": [
+            43,
+            66
+          ],
+          "explanation": "A table sets Ponytail level and skill boundaries per role. A subsection separates requesting, performing and receiving code review so that none replaces another, and says `ponytail-review` is only a complexity supplement.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Domain skills and availability",
+          "lineRange": [
+            68,
+            80
+          ],
+          "explanation": "Maps task types (Rust, Streamlit, React, databases, document formats) to domain skills. A skill available in Codex is not necessarily available in Claude Code, OpenCode or agy, so the manager must resolve installed IDs and report gaps instead of silently substituting.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Task brief and examples",
+          "lineRange": [
+            82,
+            142
+          ],
+          "explanation": "Keeps a single-line, comma-separated `skills:` field. Three sample briefs (feature, bugfix with review feedback, mechanical) show the fields phase, work_type, ponytail, skills, skill_refs, files_allowed and verify. Completion applies verification-before-completion.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Verification and sources",
+          "lineRange": [
+            144,
+            152
+          ],
+          "explanation": "Says to run `scripts/lint_harness.py` and the unittest discovery, notes these only verify document contracts and not runtime skill discovery, and lists reference links.",
+          "tourOrder": 13
+        }
+      ]
+    },
+    "docs/HARNESS-LINT.md": {
+      "overview": "Operator guide for the harness linter. It explains how to run scripts/lint_harness.py and the test suite, what each diagnostic code group enforces, and which routing contracts are machine-checked. It is the human-facing counterpart of the two Python scripts in tour step 13.",
+      "sections": [
+        {
+          "title": "Run commands and exit codes",
+          "lineRange": [
+            1,
+            21
+          ],
+          "explanation": "Lists the two mandatory handoff commands (lint and unittest discover) and the `--root` and `--format json` options. The default root derives from the script location, so the result does not depend on the working directory. Exit 0 is a pass, 1 means lint errors, 2 means bad CLI arguments, and read errors never count as a pass.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Coverage table",
+          "lineRange": [
+            23,
+            37
+          ],
+          "explanation": "A table maps each code family (ENC, MD, LINK, MODEL, POLICY, SEC, IO) to the gate it enforces. It also states the ignored directories and that code fences are not treated as live links. History under docs/superpowers/ is exempt only from obsolete-model checks, not from Markdown, link or secret checks.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Routing contracts",
+          "lineRange": [
+            39,
+            46
+          ],
+          "explanation": "Describes the `harness:*` marker blocks that must be standalone, ordered and unique outside fences. Canonical assignments live in scripts/harness_routing.py, so changing policy requires updating the contract, the guide and tests together. The contracts are documents, not enforced agents or billing limits.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Tests proving rejection",
+          "lineRange": [
+            48,
+            56
+          ],
+          "explanation": "Stresses that negative tests must actually reject bad input, since positive tests alone prove little. It describes the guardrail example tests that run Bash/CI snippets in temporary Git fixtures, and the skill-routing tests. Missing Git or Bash produces explicit skips that must be reported as unverified.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Explicit limitations",
+          "lineRange": [
+            58,
+            64
+          ],
+          "explanation": "Lists what the checker does not do: full CommonMark parsing, network checks, translation equivalence, and complete secret scanning. It reminds readers that lint protects contract tables but prose still needs human review, and that it does not replace application ESLint or tests.",
+          "tourOrder": 13
+        }
+      ]
+    },
+    "scripts/lint_harness.py": {
+      "overview": "Entry point of the dependency-free harness linter. It walks the repo for Markdown files, parses each with harness_markdown, applies model ID, link and contract checks from harness_routing, redacts secrets and prints a text or JSON report. It is fail-closed: any traversal, read or missing-document problem becomes an error.",
+      "sections": [
+        {
+          "title": "Imports and constants",
+          "lineRange": [
+            1,
+            19
+          ],
+          "explanation": "Imports the Document, Issue and parsing helpers from harness_markdown and the checks from harness_routing. IGNORED lists directories never scanned, and REQUIRED lists documents whose absence is an error. The comment notes docs/ is English-only while the root rule docs stay Vietnamese.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Report dataclass",
+          "lineRange": [
+            22,
+            25
+          ],
+          "explanation": "A small dataclass holding the document count and the issue list. It is serialized with `asdict` for JSON output.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Document discovery",
+          "lineRange": [
+            28,
+            58
+          ],
+          "explanation": "Walks the tree with `os.walk` without following links, reporting traversal errors as IO001 and symlinked directories or files as IO002 rather than silently following them. It prunes ignored and symlinked folders in place and sorts for deterministic output. Each `.md` file is read as UTF-8, with failures reported as IO003, then parsed into a Document.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Lint orchestration",
+          "lineRange": [
+            61,
+            81
+          ],
+          "explanation": "Resolves the root and returns IO004 if it is not a directory, then loads documents and flags missing REQUIRED ones as IO005. For each document it runs model ID checks and link checks, converting unexpected OSError or ValueError into IO006 so failure never passes silently. It then merges contract issues and per-document issues, redacts anything matching SECRET from paths and messages, and sorts the result.",
+          "tourOrder": 13
+        },
+        {
+          "title": "CLI main",
+          "lineRange": [
+            84,
+            100
+          ],
+          "explanation": "Defines `--root` (defaulting to the repository root from `__file__`) and `--format`. JSON mode prints the report as ASCII-safe JSON; text mode prints `path:line: CODE message` followed by a summary. The exit code is 1 if any issue exists, otherwise 0, and argparse itself yields 2 for invalid arguments.",
+          "tourOrder": 13
+        }
+      ]
+    },
+    "scripts/harness_routing.py": {
+      "overview": "Holds the canonical, reviewable routing contracts and the checks that enforce them. Constants define approved model roles, NVIDIA background models, safety rules and skill routing; functions validate model IDs and the marker-delimited contract tables in the policy docs. Policy changes must be made here deliberately, along with docs and tests.",
+      "sections": [
+        {
+          "title": "Canonical contracts",
+          "lineRange": [
+            1,
+            49
+          ],
+          "explanation": "Defines the expected role-to-model maps (ROUTING, BACKGROUND, SAFETY, SKILL_ROUTING) as plain dictionaries so any change shows up in review. CONTRACTS maps each policy doc to the named blocks it must contain. Note the reviewer and strong worker use the Pro model while cheaper roles use Flash, and the auditor is script/CI rather than a model.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Model catalog and patterns",
+          "lineRange": [
+            50,
+            61
+          ],
+          "explanation": "MODELS lists the verified variant suffixes allowed per model ID. MODEL_ID is a regex that finds DeepSeek and NVIDIA identifiers with an optional `#variant`, RETIRED names the obsolete free slug, and SECRET matches common NVIDIA and Anthropic/OpenAI key shapes. Secrets are matched narrowly, so this is not a complete scanner.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Model ID and secret check",
+          "lineRange": [
+            64,
+            83
+          ],
+          "explanation": "Scans each line, reporting SEC001 for credential-like text without echoing it. Archived docs/superpowers/ files skip model checks so history can mention retired IDs. Elsewhere it reports MODEL001 for the retired slug, MODEL004 for the wildcard used as a real selection, MODEL002 for unknown IDs and MODEL003 for variants outside the catalog.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Contract block parser",
+          "lineRange": [
+            86,
+            125
+          ],
+          "explanation": "Finds exactly one standalone start and end marker in the visible (non-fenced) lines, otherwise POLICY001. It validates the 3-column table header and separator (POLICY008), rejects non-table content or wrong column counts (POLICY002), duplicate keys (POLICY003) and mismatched values (POLICY004), and reports missing expected keys (POLICY005). Using `doc.visible` is what stops markers hidden in code examples from counting.",
+          "tourOrder": 13
+        },
+        {
+          "title": "Contract checking across docs",
+          "lineRange": [
+            128,
+            139
+          ],
+          "explanation": "For every document in CONTRACTS it looks up the docs/ path, reporting POLICY006 if the file is missing, then runs each named block check. Because docs/ is English-only there is no bilingual drift comparison.",
+          "tourOrder": 13
+        }
+      ]
+    },
+    "src/ask.rs": {
+      "overview": "Implements the ask flow that runs an agy query in a workdir and records its usage and session into the store.",
+      "sections": []
+    },
+    "src/opencode_models.rs": {
+      "overview": "Loads and caches the OpenCode model catalog (context windows) by running the opencode CLI with process-tree cleanup on timeout.",
+      "sections": []
+    },
+    "tests/actions_test.rs": {
+      "overview": "Integration tests for agmag::actions covering send/reply routing, spawn limits and labels, kill permissions, caller detection, cleanup, managed-launch gating and done-dismissal selectors.",
+      "sections": []
+    },
+    "tests/mcp_test.rs": {
+      "overview": "Integration tests for the MCP JSON-RPC server: protocol handshake, malformed input handling, tool listing/schemas, argument validation and caller-permission rules for tools like send, spawn and branch_update.",
+      "sections": []
+    },
+    "tests/opencode_models_test.rs": {
+      "overview": "Tests for the OpenCode model catalog: context-window resolution, catalog-only policy warnings, zero-token session handling and the CLI-backed loader with deadline and bad-JSON handling.",
+      "sections": []
+    },
+    "tests/policy_test.rs": {
+      "overview": "Tests for budget and context policy: task token sums, soft/hard budgets, provider quota windows, stale quota handling, context warnings and dismissed-alert behavior.",
+      "sections": []
+    },
+    "tests/spawn_fallback_test.rs": {
+      "overview": "Tests for spawn template fallback: sh fallback on listing failure, unsafe template rejection, structured stderr preservation and brief-timeout routing to the inbox.",
+      "sections": []
+    },
+    "scripts/harness_markdown.py": {
+      "overview": "Offline, dependency-free Markdown checker that parses documents into visible lines, heading anchors and links, and reports lint issues (whitespace, fences, heading levels, tables, link targets, anchors). Not a CommonMark parser; it is the shared base for the harness linter.",
+      "sections": []
+    },
+    "AGM-UPGRADE-SPEC.md": {
+      "overview": "Vietnamese upgrade specification for agm v0.2.0 to v0.3.0 covering motivation, architecture constraints, an MCP server and durable workflow engine, a 3-phase rollout and a sample implementation prompt.",
+      "sections": []
+    },
+    "BOT-CEO.md": {
+      "overview": "Vietnamese guide to the multi-lane BOT-CEO mode: lane isolation, role split, the BRANCHES.md protocol with parallel write locks, task lifecycle, limits and a startup prompt template.",
+      "sections": []
+    },
+    "HERDR-CORE-BOT.md": {
+      "overview": "Vietnamese reference on background orchestration with herdr-core and agm: architecture and automation, messaging/inbox/cleanup rules, and Understand-Anything .ua/ write guards and preflight checks.",
+      "sections": []
+    },
+    "README_vi.md": {
+      "overview": "Vietnamese translation of the main README covering the same install, usage, commands, budgets/rotation, configuration and development sections.",
+      "sections": []
+    },
+    "docs/AGM-0.4.0-GUIDE.md": {
+      "overview": "Vietnamese guide to agm 0.4.0 Phase 1: design decisions (no new deps, MCP as agent, locked BRANCHES.md, safe file writes, fail-closed), install/upgrade, MCP registration for Claude Code and OpenCode, and the `agm branch` command.",
+      "sections": []
+    },
+    "docs/AGY-GEMINI-OPUS.md": {
+      "overview": "Guide to the Antigravity `agy` CLI covering Opus High co-architect, Gemini Argon advisor, Hydrogen docs/diff review and 3.8 Flash research, with sandbox rules and token tracking in agm.",
+      "sections": []
+    },
+    "docs/CLAUDE-ARCHITECT-CEO.md": {
+      "overview": "Guide for Claude Code used only as Architect/BOT-CEO: models and startup, offload rules, context-saving practices and hard safety rules.",
+      "sections": []
+    },
+    "docs/CODEX-ENGINEERING.md": {
+      "overview": "Guide for Codex as senior engineer and single-lane manager, including shared ChatGPT 5h/7d quota warning, run modes and worktree/git discipline.",
+      "sections": []
+    },
+    "docs/CONTEXT-ROTATION.md": {
+      "overview": "Role-specific context rotation policy for Claude CEO and Codex High: usage-percent targets, proactive early rotation, reuse of the existing agm handoff path, and the handoff contract.",
+      "sections": []
+    },
+    "docs/COPILOT-GIT.md": {
+      "overview": "Guide for GitHub Copilot CLI as the sole git integrator: startup scope, handoff prerequisites, six-step merge workflow and actions needing explicit user approval.",
+      "sections": []
+    },
+    "docs/ESLINT-CI-GUARDRAILS.md": {
+      "overview": "Defines mandatory ESLint rule groups, a reference flat config, a lint-bypass blocking script and a GitHub Actions guardrail workflow so lightweight models can be trusted via static checks.",
+      "sections": []
+    },
+    "docs/NVIDIA-BACKGROUND.md": {
+      "overview": "Policy for using NVIDIA NIM models for read-only background work off the critical path: trial roles, safety contract, dispatch checks, handoff, timeouts and qualification limits.",
+      "sections": []
+    },
+    "docs/OPENCODE-WORKERS-REVIEWER.md": {
+      "overview": "OpenCode v2 guide covering Windows install gotchas, DeepSeek Go routing, worker/auditor/reviewer roles, agent permissions and linting of the harness.",
+      "sections": []
+    },
+    "docs/README.md": {
+      "overview": "Index of model-specific usage guides with roles per tool, shared context/ponytail notes, quota check before dispatch and document verification.",
+      "sections": []
+    },
+    "docs/superpowers/plans/2026-11-18-agmag-p0-p1-core-metering.md": {
+      "overview": "Vietnamese implementation plan for verification (P0) and the metering core (P1): Codex and Claude log parsers, SQLite store, incremental ingest, provider config and the ls/cost/quota/log CLI, with the delegation workflow across Codex, agy and Claude.",
+      "sections": []
+    },
+    "docs/superpowers/plans/2026-11-18-agmag-v1-completion.md": {
+      "overview": "Vietnamese plan to complete v1 (P2-P5): hc subprocess integration, daemon without IPC, OpenCode and agy metering, Claude quota via statusline, user inbox, budgets, worker rotation and TUI.",
+      "sections": []
+    },
+    "docs/superpowers/plans/2026-11-20-model-routing-plan.md": {
+      "overview": "Short Vietnamese plan for updating harness model routing (NVIDIA background, DeepSeek Go interactive) and adding a dependency-free lint with good/bad test cases, plus an execution results section.",
+      "sections": []
+    },
+    "docs/superpowers/plans/2026-11-23-skill-routing-plan.md": {
+      "overview": "English implementation plan restoring phase and role skill routing via one canonical matrix, a checked contract, role-guide references and regression tests, while keeping Ponytail complementary.",
+      "sections": []
+    },
+    "docs/superpowers/specs/2026-11-18-agmag-design.md": {
+      "overview": "Vietnamese design spec for agmag: a Rust control panel (agm) for herdr/herdr-core teams covering goals, constraints, alternatives, components, log correlation, SQLite schema, quota/cost, CLI, policy, session rotation, TUI, testing and open questions.",
+      "sections": []
+    },
+    "docs/superpowers/specs/2026-11-20-model-routing-design.md": {
+      "overview": "Vietnamese Design A spec: NVIDIA models handle slow background work while DeepSeek Go handles interactive work, with alternatives, evidence, role split, operating rules, scope and acceptance criteria.",
+      "sections": []
+    },
+    "docs/superpowers/specs/2026-11-23-skill-routing-design.md": {
+      "overview": "English approved design for restoring the phase/role skill matrix: one workflow plus one domain skill by default, explicit additions per phase, constraints and acceptance criteria.",
+      "sections": []
+    },
+    ".opencode/agent/agm-worker.md": {
+      "overview": "OpenCode agent definition for the agmag worker: executes a single tasks/t<N>.md in a worktree using TDD, with permission rules and a cheap model.",
+      "sections": []
+    },
+    "docs/reviews/argon-v1-recheck.md": {
+      "overview": "Follow-up recheck of the v1 review findings, verifying which issues from the first agy review were fixed or remain.",
+      "sections": []
+    },
+    "docs/reviews/argon-v1.md": {
+      "overview": "Review of agmag v1 produced by the gemini-4-argon-high model across code groups (actions, policy, etc.), listing safety and correctness findings.",
+      "sections": []
+    },
+    "tests/agy_quota_test.rs": {
+      "overview": "Tests parsing of agy quota groups, error statuses, unknown buckets, report percent-left, and the background quota poller with interval handling.",
+      "sections": []
+    },
+    "tests/ask_test.rs": {
+      "overview": "Tests the ask flow: agy usage is recorded, error status is an error, and failures still record usage without inventing a model.",
+      "sections": []
+    },
+    "tests/branches_test.rs": {
+      "overview": "Extensive tests of the BRANCHES.md writer: entry read/upsert with comments and CRLF, validation, locking (stale, concurrent, permission-denied), readiness checks and git calls outside the lock.",
+      "sections": []
+    },
+    "tests/codex_quota_test.rs": {
+      "overview": "Tests Codex rate-limit parsing (JSON-RPC envelope, unknown buckets, bad input) and that a hanging binary is timed out and killed.",
+      "sections": []
+    },
+    "tests/config_test.rs": {
+      "overview": "Tests config loading: builtin defaults, aliases, bad TOML, user overrides, prices, context pct, cost, policy defaults and opencode provider model resolution.",
+      "sections": []
+    },
+    "tests/correlate_test.rs": {
+      "overview": "Tests linking terminals to agent sessions by cwd and time, hook links, one-to-one matching, rotation successors and opencode auto/manual link behaviour.",
+      "sections": []
+    },
+    "tests/daemon_test.rs": {
+      "overview": "Tests herdr event handling in the daemon: terminal creation, blocked/unblocked inbox items, snapshots, app detection, effective cwd and hc run argument ordering.",
+      "sections": []
+    },
+    "tests/dashboard_test.rs": {
+      "overview": "Large suite for dashboard rendering and command parsing: sections, ANSI/width clipping, quota lines, send/view commands, terminal columns and edge widths.",
+      "sections": []
+    },
+    "tests/fixtures/claude/mini.jsonl": {
+      "overview": "Minimal Claude Code transcript fixture used by ingest and parser tests.",
+      "sections": []
+    },
+    "tests/fixtures/codex/mini.jsonl": {
+      "overview": "Minimal Codex session log fixture used by ingest tests.",
+      "sections": []
+    },
+    "tests/fixtures/codex/real_sanitized.jsonl": {
+      "overview": "Sanitized real Codex session log fixture for realistic parser and ingest tests.",
+      "sections": []
+    },
+    "tests/git_test.rs": {
+      "overview": "Tests git helpers: detecting a handoff commit via the CLI and dirty-tree rules for untracked source versus task files.",
+      "sections": []
+    },
+    "tests/hook_test.rs": {
+      "overview": "Tests the statusline hook: recording Claude quota, context window and terminal linking, path key normalization and idempotent statusline installation.",
+      "sections": []
+    },
+    "tests/ingest_test.rs": {
+      "overview": "Tests transcript ingestion: Codex mini fixture, partial lines, rescans, replaced files, model on resume, discovery filters, transactions and locked files.",
+      "sections": []
+    },
+    "tests/launch_test.rs": {
+      "overview": "Tests launch command-line rewriting for codex and claude (flag stripping, rejection of shells/print mode), token parsing and hook installation check.",
+      "sections": []
+    },
+    "tests/model_test.rs": {
+      "overview": "Tests core model types: transcript sanitizer, usage totals, message summarization and RFC3339 parsing.",
+      "sections": []
+    },
+    "tests/opencode_quota_test.rs": {
+      "overview": "Tests opencode-go quota meter parsing, clamping, bad JSON handling and timeout-kill of a hanging fetch binary.",
+      "sections": []
+    },
+    "tests/opencode_test.rs": {
+      "overview": "Tests opencode SQLite ingestion: usage normalization, turns, incremental scans, bad JSON, missing DB, provider-prefixed models and legacy rescan.",
+      "sections": []
+    },
+    "tests/parse_agy_test.rs": {
+      "overview": "Integration tests for the Antigravity (agy) transcript parser and ingestion: usage/context/thinking extraction, summary correlation, file replacement, cwd backfill and file-URI decoding.",
+      "sections": []
+    },
+    "tests/parse_claude_test.rs": {
+      "overview": "Unit tests for the Claude Code JSONL transcript parser covering usage normalization, message dedup, context, cwd/meta, model and effort changes plus a real-fixture smoke test.",
+      "sections": []
+    },
+    "tests/parse_codex_test.rs": {
+      "overview": "Unit tests for the Codex rollout parser covering token_count usage, null info, context snapshots, quota windows, tool summaries, noise filtering and turn effort.",
+      "sections": []
+    },
+    "tests/report_test.rs": {
+      "overview": "Tests for the report module: session rows, cost by model, quota freshness and left-percent, price lookup/overrides, UTC/local day bucketing, subscription vs API cost and OpenCode Go budget windows.",
+      "sections": []
+    },
+    "tests/safety_test.rs": {
+      "overview": "Safety tests for session-rotation cleanup using a fake herdr client: handoff needs fresh reads, cleanup preserves old sessions on stale or drifting identity, and audit failures do not lose batch items.",
+      "sections": []
+    },
+    "tests/store_test.rs": {
+      "overview": "Tests for the SQLite Store: transactions, usage upsert last-wins, unicode cwd, context, turn idempotency, cursors, quota dedupe, last_ms tracking and concurrent fresh-DB opens.",
+      "sections": []
+    },
+    "tests/store_v2_test.rs": {
+      "overview": "Tests for Store schema migrations v1->v2->v3 and v2 features: terminals, inbox dedupe, messages, settings/budgets/actions, context window and terminal-session linking.",
+      "sections": []
+    },
+    "tests/sysmon_test.rs": {
+      "overview": "Tests for system monitoring: agent process classification and attribution, percentage/unit formatting, disk merging by volume identity, and TUI/report rendering of the system view.",
+      "sections": []
+    },
+    "tests/test_guardrail_examples.py": {
+      "overview": "Python unittest suite that runs the lint/CI guardrails against positive and negative example fixtures in temporary directories.",
+      "sections": []
+    },
+    "tests/test_harness_markdown.py": {
+      "overview": "Unit tests for the harness markdown parser (document parsing, slugs, link checking, case-exact paths).",
+      "sections": []
+    },
+    "tests/test_harness_routing.py": {
+      "overview": "Unit and integration tests for harness model-routing contracts and the lint_harness entry point.",
+      "sections": []
+    },
+    "tests/test_skill_routing.py": {
+      "overview": "Unit tests verifying skill-routing contract tables are consistent with the harness docs.",
+      "sections": []
+    },
+    "tools/argon_review.py": {
+      "overview": "CLI tool that builds a review prompt from a diff and sends it to a reviewer model, returning findings.",
+      "sections": []
+    },
+    "tools/test_sanitize_fixture.py": {
+      "overview": "Unit tests for sanitize_fixture, checking sanitization output and CLI behavior.",
+      "sections": []
+    }
+  }
+}

@@ -23,14 +23,16 @@
       "type": "file",
       "name": "agy.rs",
       "filePath": "src/agy.rs",
-      "summary": "Discovers and ingests Antigravity (agy) session logs, resolving workspace cwds from file URIs and linking ask-sessions into the store.",
+      "summary": "Ingests recent Antigravity CLI (`agy`) sessions by scanning each conversation's `transcript.jsonl` under `~/.gemini/antigravity-cli/brain` (or `AGM_AGY_DIR`) and reading `conversation_summaries.db` read-only for workspace URIs used as the session cwd. It skips or de-duplicates `agm ask` sessions so the same conversation isn't counted twice, and returns aggregate ingest statistics into the agm store.",
       "tags": [
-        "agy",
         "ingest",
-        "discovery",
+        "antigravity",
+        "session-discovery",
+        "sqlite",
+        "file-uri",
         "tested"
       ],
-      "complexity": "complex"
+      "complexity": "moderate"
     },
     {
       "id": "function:src/agy.rs:ingest_agy",
@@ -41,7 +43,7 @@
         70,
         123
       ],
-      "summary": "Ingests Antigravity session logs from a directory, resolving workspace cwd and registering sessions.",
+      "summary": "Runs the agy ingestion for a root and time window: loads conversation cwds from `conversation_summaries.db`, backfills `cwd` on existing agy sessions that lack it (excluding `agy://` ask paths), then for each discovered transcript skips sessions whose cwd equals the `agm ask` workdir or that already have an ask session with usage, otherwise calls `ingest_file`, sets the session identity from conversation id and cwd, de-duplicates a matching `agy://<conv_id>` ask session, and accumulates counts; per-file parse errors are logged to stderr and counted as skipped, while DB errors propagate as anyhow errors.",
       "tags": [
         "logic",
         "agy",
@@ -58,7 +60,7 @@
         31,
         66
       ],
-      "summary": "Finds Antigravity log files under the agy data directory.",
+      "summary": "Scans `<root>/brain` for subdirectories containing `.system_generated/logs/transcript.jsonl`, keeps only regular files whose modification time (milliseconds since UNIX epoch) is at or after `since_ms`, and returns the (conversation_id, log_path) pairs sorted by path, returning an empty vector if the brain directory cannot be read.",
       "tags": [
         "logic",
         "agy",
@@ -75,7 +77,7 @@
         172,
         202
       ],
-      "summary": "Converts a file URI to a local path with percent decoding and Windows drive handling.",
+      "summary": "Converts a `file://` URI into a local path: strips the scheme and an optional `localhost` authority, percent-decodes the remainder, maps non-absolute paths to `\\\\server\\share` on Windows or `//server/share` elsewhere, strips the leading slash before a Windows drive letter (e.g. `/C:/x`), and returns None when the prefix is missing or the decoded/trimmed path is empty, replacing `/` with `\\` on Windows.",
       "tags": [
         "logic",
         "agy",
@@ -88,14 +90,16 @@
       "type": "file",
       "name": "agy_quota.rs",
       "filePath": "src/agy_quota.rs",
-      "summary": "Polls the Antigravity usage endpoint and records quota windows (parse, fetch, record) via an AgyQuotaPoller tick loop.",
+      "summary": "Reads the Antigravity CLI's plan quotas by running `agy --print /usage --output-format json`, converts agy's remaining-fraction buckets into used-percent quota snapshots for the agy-gemini, agy-3p and agy-argon providers, and stores them in the shared quota table via a background poller so the agm daemon loop never blocks.",
       "tags": [
-        "quota",
-        "poller",
-        "agy",
+        "quota-polling",
+        "cli-subprocess",
+        "json-parsing",
+        "background-thread",
+        "provider-mapping",
         "tested"
       ],
-      "complexity": "complex",
+      "complexity": "moderate",
       "languageNotes": "Uses a child process with timeout and process-tree kill for external CLI queries."
     },
     {
@@ -107,7 +111,7 @@
         56,
         109
       ],
-      "summary": "Parses the Antigravity usage response into quota windows.",
+      "summary": "Parses the trimmed stdout of agy /usage into a UsageParse, bailing if it is not valid JSON, if status is not \"SUCCESS\" (including the error message), or if command.data.groups is missing; it maps each bucket's id prefix to a provider and its \"5h\"/\"weekly\" window to minutes, converts remaining_fraction (validated finite and within 0..1) to a clamped used_percent with reset_time parsed from RFC3339, silently counts disabled buckets, counts unrecognized buckets as unknown, and groups the resulting QuotaWindows into per-provider QuotaSnapshots stamped with now_ms.",
       "tags": [
         "logic",
         "agy_quota",
@@ -124,7 +128,7 @@
         121,
         148
       ],
-      "summary": "Fetches raw usage data from the agy backend.",
+      "summary": "Runs the agy binary (overridable via AGM_AGY_BIN env var) with `--print /usage --output-format json --print-timeout 20s` in a temp workdir outside the repo, returning its stdout as a String even when it contains error JSON, and failing with the exit status plus up to 300 characters of stderr if stdout is empty or the command cannot be spawned.",
       "tags": [
         "logic",
         "agy_quota",
@@ -141,7 +145,7 @@
         154,
         160
       ],
-      "summary": "Periodic poller that fetches and records agy quota snapshots.",
+      "summary": "Struct that polls agy /usage on its own interval: new() converts minutes to milliseconds (0 disables), and tick() non-blockingly collects the previous fetch's result from an mpsc channel, records its snapshots into the Store, warns once per distinct error message to stderr, and spawns a new thread running the injectable fetch closure when the interval has elapsed.",
       "tags": [
         "type-definition",
         "agy_quota",
@@ -154,11 +158,13 @@
       "type": "file",
       "name": "ask.rs",
       "filePath": "src/ask.rs",
-      "summary": "Implements the ask flow that runs an agy query in a workdir and records its usage and session into the store.",
+      "summary": "This file implements the `agm ask` subcommand, which runs the agy (Gemini) CLI once in read-only/sandboxed plan mode and records its JSON output, token usage, and turn summaries into the agm store. It parses agy's JSON response, upserts a usage record with deduplication in a single transaction, and returns the answer text.",
       "tags": [
-        "ask",
-        "agy",
-        "usage",
+        "cli-subcommand",
+        "agy-integration",
+        "token-usage",
+        "sqlite-persistence",
+        "json-parsing",
         "tested"
       ],
       "complexity": "moderate"
@@ -172,7 +178,7 @@
         13,
         108
       ],
-      "summary": "Records the result of an ask run (usage, session, turn) into the store.",
+      "summary": "Parses agy's `--output-format json` output (status, response, conversation_id, model, usage), resolves or creates a session keyed by `agy://<conv>`, upserts a UsageRecord and deduplicates agy ask sessions inside one transaction when token metrics exist, inserts user (and on success assistant) TurnSummary rows, and bails with an error if agy's status is not SUCCESS — recording consumed tokens even in that failure case.",
       "tags": [
         "logic",
         "ask",
@@ -189,7 +195,7 @@
         116,
         140
       ],
-      "summary": "Runs the agy CLI in the ask workdir and returns its output.",
+      "summary": "Runs the agy binary (overridable via AGM_AGY_BIN) once with `--mode plan --sandbox --output-format json` and a print timeout inside a temp working directory outside the repo, passing the question (and optional model) as arguments, then parses stdout as JSON and returns a contextual error including status, partial stdout, and stderr if the output is not valid JSON.",
       "tags": [
         "logic",
         "ask",
@@ -202,14 +208,16 @@
       "type": "file",
       "name": "codex_quota.rs",
       "filePath": "src/codex_quota.rs",
-      "summary": "Queries Codex quota by spawning the codex process and waiting on a JSON-RPC style reply, then stores quota snapshots through CodexQuotaPoller.",
+      "summary": "This module reads Codex account rate limits by driving `codex app-server` over JSON-RPC stdio (initialize then `account/rateLimits/read`), parses the used-percent windows, and stores them as quota snapshots for the agm CLI. It also provides a poller that schedules background fetches on an interval and warns once per distinct error, recording nothing on failures.",
       "tags": [
         "quota",
-        "poller",
         "codex",
+        "json-rpc",
+        "polling",
+        "subprocess",
         "tested"
       ],
-      "complexity": "complex",
+      "complexity": "moderate",
       "languageNotes": "Uses a child process with timeout and process-tree kill for external CLI queries."
     },
     {
@@ -221,7 +229,7 @@
         31,
         92
       ],
-      "summary": "Parses Codex rate-limit response into quota windows.",
+      "summary": "Parses a JSON-RPC response string, accepting a full envelope or bare result, reads the `primary` and `secondary` entries under `rateLimits`, and for windows with `usedPercent` in 0.0..=100.0, `windowDurationMins` of 300 or 10080, and a `resetsAt`, builds a single `QuotaSnapshot` for provider `codex` at `now_ms`, returning a UsageParse (with zero unknown/disabled) or bailing if no valid windows exist.",
       "tags": [
         "logic",
         "codex_quota",
@@ -238,7 +246,7 @@
         128,
         177
       ],
-      "summary": "Spawns codex, sends the rate-limit request and waits for the reply.",
+      "summary": "Takes a spawned `codex app-server` child, its binary name, and a deadline; it reads stdout lines on a spawned thread, writes an `initialize` and then an `account/rateLimits/read` JSON-RPC request to stdin, waits for responses matching ids 1 and 2 before the deadline or bails on timeout/disconnect/error, and returns the `result` serialized as a JSON string.",
       "tags": [
         "logic",
         "codex_quota",
@@ -255,7 +263,7 @@
         225,
         231
       ],
-      "summary": "Periodic poller that fetches and records Codex quota snapshots.",
+      "summary": "A struct holding an interval, a boxed fetch closure, the last start time, a pending channel receiver, and the last error; its `tick` checks a completed background fetch and records usage into the Store, starts a new fetch thread when the interval elapses and none is pending, and its `warn` prints a stderr warning only when the error message changes.",
       "tags": [
         "type-definition",
         "codex_quota",
@@ -268,11 +276,13 @@
       "type": "file",
       "name": "correlate.rs",
       "filePath": "src/correlate.rs",
-      "summary": "Correlates ingested sessions with herdr terminals by normalized cwd and app, including Codex rotation successor linking.",
+      "summary": "Correlates live herdr-core terminals with log sessions in the agm CLI by matching app/source, normalized cwd, and time windows, writing automatic or rotation-based links into the store.",
       "tags": [
-        "correlation",
-        "linking",
-        "sessions",
+        "terminal-correlation",
+        "session-linking",
+        "sqlite",
+        "opencode",
+        "codex",
         "tested"
       ],
       "complexity": "moderate"
@@ -286,7 +296,7 @@
         40,
         118
       ],
-      "summary": "Links sessions to terminals by cwd and app across all sources.",
+      "summary": "Scans live terminals without an agm.parent_rotation label, finds candidate sessions by matching source, normalized cwd, and a start-time window (with OpenCode allowed to relink auto-linked terminals to a newer session), then links only one-to-one terminal/session pairs via Store::link_terminal with source \"auto\", returning the count of new links.",
       "tags": [
         "logic",
         "correlate",
@@ -303,7 +313,7 @@
         122,
         176
       ],
-      "summary": "Links Codex rotation successor sessions to their predecessor terminals.",
+      "summary": "In a transaction, looks up a Codex successor session for a terminal by requiring a user turn from requested_ms whose summary starts with the [agm-rot:<rot_id>] tag, matching normalized cwd and no existing terminal link; if exactly one match exists it updates the terminal with link_source \"rotation\" and returns the session id, otherwise returns the existing linked session or None.",
       "tags": [
         "logic",
         "correlate",
@@ -316,11 +326,13 @@
       "type": "file",
       "name": "hook.rs",
       "filePath": "src/hook.rs",
-      "summary": "Installs the Claude statusline hook and implements the statusline command that feeds context and quota data into the store.",
+      "summary": "Implements the `agm hook statusline` subcommand of the agm CLI: it ingests the JSON that Claude Code pipes to a statusLine command on stdin, records quota/context/terminal-link data into the store, and prints a short status string for display. It also provides the installer that adds agm's statusLine entry to Claude Code's settings.json without overwriting someone else's.",
       "tags": [
-        "hook",
+        "claude-code",
         "statusline",
-        "claude",
+        "quota-tracking",
+        "settings-json",
+        "hooks",
         "tested"
       ],
       "complexity": "moderate"
@@ -334,7 +346,7 @@
         24,
         57
       ],
-      "summary": "Installs the agm statusline command into Claude settings, reporting an InstallOutcome.",
+      "summary": "Reads settings_path as JSON (treating a missing file as an empty object, but propagating other I/O errors and invalid-JSON errors), refuses with an error if it is not an object or if an existing statusLine is not agm's own (`hook statusline`), otherwise writes a pretty-printed statusLine command pointing at agm_exe and returns Added or AlreadyInstalled.",
       "tags": [
         "logic",
         "hook",
@@ -351,7 +363,7 @@
         60,
         134
       ],
-      "summary": "Reads statusline JSON from stdin, stores context and quota, and renders the status text.",
+      "summary": "Parses rate_limits five_hour/seven_day entries into QuotaWindows and inserts a Claude QuotaSnapshot, then for a non-empty transcript_path resolves the session via path_key, stores context_window_size and a computed used-token ContextSnapshot, upserts/links the hc_terminal as a live claude-code terminal when given, and finally returns a `model · ctx N% · 5h N% left · 7d N% left` string.",
       "tags": [
         "logic",
         "hook",
@@ -364,11 +376,13 @@
       "type": "file",
       "name": "ingest.rs",
       "filePath": "src/ingest.rs",
-      "summary": "Core log ingestion pipeline: discovers per-source log roots, tails files with cursors and head hashes, and parses them into usage, quota, context and turn records.",
+      "summary": "Implements incremental ingestion of Codex and Claude session JSONL logs into the agm CLI's SQLite store: it discovers recently modified log files, parses each line into events (meta, model, effort, usage, quota, context, turns), and persists them transactionally while tracking per-file read cursors and aggregate stats.",
       "tags": [
-        "ingest",
-        "pipeline",
-        "incremental",
+        "ingestion",
+        "jsonl-parsing",
+        "incremental-sync",
+        "sqlite",
+        "session-logs",
         "tested"
       ],
       "complexity": "complex"
@@ -382,7 +396,7 @@
         164,
         251
       ],
-      "summary": "Incrementally ingests a single log file using stored cursors and head hash, applying parse events to the store.",
+      "summary": "Incrementally ingests one JSONL log file inside a single unchecked SQLite transaction: it opens the file, computes an FNV-1a hash of the first 4096 bytes to validate the saved cursor (resetting the session's stored data if the file shrank or its head changed), seeks to the saved offset, seeds the parser with the stored model and last timestamp when resuming, parses each complete newline-terminated line and writes resulting ParseEvents to the store via set_meta/set_model/set_effort/upsert_usage/insert_quota/set_context/insert_turn while counting unknown and bad lines, then records line stats, saves the new cursor (offset, size, mtime, head hash), commits, and returns per-file IngestStats or an anyhow error on I/O or store failures.",
       "tags": [
         "logic",
         "ingest",
@@ -399,7 +413,7 @@
         27,
         65
       ],
-      "summary": "Discovers log files for one source under its root.",
+      "summary": "Recursively walks a root directory with walkdir and returns a sorted vector of .jsonl file paths whose modification time (in ms since the Unix epoch) is at least since_ms, additionally requiring a 'rollout-' filename prefix for Codex sources, plus a count of directory-walk errors excluding NotFound errors; it returns an empty list when the root does not exist.",
       "tags": [
         "logic",
         "ingest",
@@ -416,7 +430,7 @@
         108,
         123
       ],
-      "summary": "Runs discovery and ingestion across every source, accumulating IngestStats.",
+      "summary": "Runs ingest_source for both the Codex and Claude roots under the given Roots, accumulates their IngestStats into one total, and returns that combined result, propagating any error from either source.",
       "tags": [
         "logic",
         "ingest",
@@ -429,11 +443,12 @@
       "type": "file",
       "name": "lib.rs",
       "filePath": "src/lib.rs",
-      "summary": "Crate root declaring all agm modules (ingest, parsers, store, quota pollers, policy, rotation, MCP, dashboard).",
+      "summary": "This file is the crate root of the agm CLI library; it contains no logic of its own and solely declares the public module tree (actions, git, config, store, daemon, mcp, etc.) that makes up the CLI's functionality. It acts as the entry point that wires all submodules together for the rest of the binary to use.",
       "tags": [
-        "entry-point",
         "crate-root",
-        "modules"
+        "module-declaration",
+        "agm-cli",
+        "rust"
       ],
       "complexity": "simple"
     },
@@ -442,11 +457,13 @@
       "type": "file",
       "name": "model.rs",
       "filePath": "src/model.rs",
-      "summary": "Shared data model: Source enum, Usage, quota and context snapshots, session meta, parse events and RFC3339 timestamp parsing.",
+      "summary": "Defines the data model for the agm CLI: serde-derived enums and structs representing usage records, quota/context snapshots, session metadata, and parsed turn events, plus two helper functions for text summarization and timestamp parsing.",
       "tags": [
         "data-model",
-        "types",
-        "time",
+        "serde",
+        "timestamps",
+        "usage-tracking",
+        "parsing",
         "tested"
       ],
       "complexity": "moderate"
@@ -460,7 +477,7 @@
         118,
         125
       ],
-      "summary": "Summarizes turn text into a short TurnSummary string.",
+      "summary": "Collapses all whitespace in the input text into single spaces and returns the result unchanged if it is at most 200 characters, otherwise truncates it to the first 199 characters and appends an ellipsis character.",
       "tags": [
         "logic",
         "model",
@@ -477,7 +494,7 @@
         128,
         183
       ],
-      "summary": "Parses an RFC3339 timestamp into epoch milliseconds without external crates.",
+      "summary": "Parses a UTC timestamp string in YYYY-MM-DDTHH:MM:SS(.fff)?Z form by checking its length, separators and digits, validating calendar ranges (including leap years), and returning milliseconds since the Unix epoch as Some(i64), or None for any malformed or out-of-range input.",
       "tags": [
         "logic",
         "model",
@@ -490,14 +507,16 @@
       "type": "file",
       "name": "opencode.rs",
       "filePath": "src/opencode.rs",
-      "summary": "Ingests OpenCode sessions from its SQLite database, summarizing assistant messages into usage records and session meta.",
+      "summary": "Reads OpenCode v2 session data from the read-only SQLite database opencode.db, ingesting only session_v2 and session_message rows into the agm store. It tracks incremental progress with a dual cursor and converts OpenCode messages into session metadata, token usage, context snapshots, and turn summaries.",
       "tags": [
         "opencode",
-        "ingest",
         "sqlite",
+        "ingest",
+        "session-messages",
+        "usage-tracking",
         "tested"
       ],
-      "complexity": "complex"
+      "complexity": "moderate"
     },
     {
       "id": "function:src/opencode.rs:ingest_opencode",
@@ -508,7 +527,7 @@
         57,
         214
       ],
-      "summary": "Reads OpenCode SQLite messages and sessions and writes usage, model and turn records to the store.",
+      "summary": "Scans new OpenCode session_message rows from the given SQLite database into the Store, returning IngestStats; it skips missing databases, uses a (time_updated, rowid) cursor with optional full rescan on model-key version changes, upserts session metadata, assistant usage/context and turn summaries, user turn summaries, counts bad JSON rows, and commits cursor/settings updates in a transaction.",
       "tags": [
         "logic",
         "opencode",
@@ -521,11 +540,13 @@
       "type": "file",
       "name": "opencode_models.rs",
       "filePath": "src/opencode_models.rs",
-      "summary": "Loads and caches the OpenCode model catalog (context windows) by running the opencode CLI with process-tree cleanup on timeout.",
+      "summary": "Read-only OpenCode model catalog that maps `providerID/id` keys to their context window sizes by parsing the output of `opencode api GET /api/model`, with a process-wide cache. It lets the agm daemon look up token context limits without hitting the network on every loop or trusting a possibly stale local models.json.",
       "tags": [
-        "opencode",
-        "models",
-        "catalog",
+        "model-catalog",
+        "opencode-api",
+        "context-window",
+        "caching",
+        "subprocess",
         "tested"
       ],
       "complexity": "moderate",
@@ -540,7 +561,7 @@
         16,
         19
       ],
-      "summary": "Catalog of OpenCode model context windows loaded from JSON.",
+      "summary": "Struct wrapping a BTreeMap from `providerID/id` to a u64 context-window size, with from_json/from_value parsers that accept either a `{location,data:[...]}` envelope or a bare array and skip items missing providerID, id, or a non-zero `limit.context`; context() returns Option<u64> for a key (filtering zeros), cached() runs load() once via a OnceLock and clones the result (None on failure), load() tries the `opencode` then `opencode.cmd` binaries and returns the last error or `opencode not found`, and len()/is_empty() report the entry count.",
       "tags": [
         "type-definition",
         "opencode_models",
@@ -557,7 +578,7 @@
         99,
         146
       ],
-      "summary": "Runs a command to obtain the model list with timeout and parses it into a ModelCatalog.",
+      "summary": "Spawns the given binary with args `api GET /api/model`, pipes stdout and discards stderr, reads the output on a separate thread through an mpsc channel with a 5-second LOAD_TIMEOUT deadline to avoid pipe-buffer deadlock, then polls child.try_wait until exit within the same deadline; on timeout, read error, or non-success exit status it kills the process tree via kill_tree and returns an error, otherwise it parses the collected text into a ModelCatalog via from_json.",
       "tags": [
         "logic",
         "opencode_models",
@@ -570,14 +591,16 @@
       "type": "file",
       "name": "opencode_quota.rs",
       "filePath": "src/opencode_quota.rs",
-      "summary": "Polls OpenCode usage output, parses it into quota windows and records them via OpenCodeQuotaPoller.",
+      "summary": "Polls the OpenCode Go plan quota by spawning `opencode api GET /api/experimental/usage/limits`, parsing the JSON into per-window usage snapshots (rolling/weekly/monthly) that are persisted via the Store, and exposing a non-blocking interval poller used by the agm CLI. Missing or malformed meters are counted as unknown rather than fabricated as 0% or 100%.",
       "tags": [
-        "quota",
-        "poller",
-        "opencode",
+        "quota-polling",
+        "opencode-api",
+        "subprocess",
+        "json-parsing",
+        "background-thread",
         "tested"
       ],
-      "complexity": "complex",
+      "complexity": "moderate",
       "languageNotes": "Uses a child process with timeout and process-tree kill for external CLI queries."
     },
     {
@@ -589,7 +612,7 @@
         31,
         97
       ],
-      "summary": "Parses OpenCode usage output into quota windows.",
+      "summary": "Parses the trimmed stdout as JSON (erroring on invalid JSON), returns an empty default UsageParse when data is null, counts one unknown when the go object is missing, and for each known meter (rolling=300, weekly=10080, monthly=43200 minutes) clamps percent to 0-100, converts resetsAt from ms to seconds, and records the limited flag, counting unrecognized keys or meters with missing/null fields as unknown and emitting a single opencode-go QuotaSnapshot only if at least one valid window exists.",
       "tags": [
         "logic",
         "opencode_quota",
@@ -606,7 +629,7 @@
         135,
         190
       ],
-      "summary": "Runs the opencode usage command with timeout and kills the process tree on expiry.",
+      "summary": "Spawns the given binary with arguments `api GET /api/experimental/usage/limits`, reads its piped stdout on a helper thread, and waits with recv_timeout until the shared deadline, killing the whole process tree (taskkill /T /F on Windows) and returning an error on timeout, read failure, or nonzero exit status, otherwise returning the captured stdout text.",
       "tags": [
         "logic",
         "opencode_quota",
@@ -623,7 +646,7 @@
         209,
         215
       ],
-      "summary": "Periodic poller that fetches and records OpenCode quota snapshots.",
+      "summary": "Stateful poller holding an interval in milliseconds, an injectable Arc fetch closure, and a pending channel receiver; its tick method returns immediately when the interval is non-positive, drains any finished background fetch and records it via record_usage (deduplicating repeated warnings to stderr), and when due spawns a thread running the fetch closure, while new converts a minutes interval to milliseconds with saturating arithmetic.",
       "tags": [
         "type-definition",
         "opencode_quota",
@@ -636,10 +659,12 @@
       "type": "file",
       "name": "agy.rs",
       "filePath": "src/parse/agy.rs",
-      "summary": "Line parser for Antigravity logs extracting user requests, planner summaries, model and timestamps into ParseEvents.",
+      "summary": "This file implements the transcript.jsonl reader for the Antigravity CLI (agy) in the agm CLI: the AgyParser struct parses each JSONL line of conversation steps (USER_INPUT, PLANNER_RESPONSE, ignored/system kinds) and emits turn summaries, model changes, usage records with dedupe keys, and context snapshots.",
       "tags": [
         "parser",
-        "agy",
+        "antigravity-cli",
+        "jsonl",
+        "token-usage",
         "log-parsing",
         "tested"
       ],
@@ -654,7 +679,7 @@
         11,
         14
       ],
-      "summary": "Stateful LogParser for Antigravity logs.",
+      "summary": "A LogParser implementation holding an optional seeded model and last-seen timestamp whose parse_line method deserializes a JSONL line, updates last_ts from created_at, and for USER_INPUT lines extracts and summarizes the user request into a User TurnSummary (failing with MissingTimestamp when no timestamp is available), for PLANNER_RESPONSE lines emits a Model event when the non-empty model field changes, computes Usage with input/cache-read/output/reasoning tokens (output being max of output_tokens and thinking_tokens, cache_write always 0) plus a ContextSnapshot when input+cache_read > 0, deduplicating usage by step_index or byte offset, and returns Unknown for unrecognized types, Ignored for known but empty kinds, or the collected events otherwise.",
       "tags": [
         "type-definition",
         "agy",
@@ -667,11 +692,13 @@
       "type": "file",
       "name": "claude.rs",
       "filePath": "src/parse/claude.rs",
-      "summary": "Line parser for Claude Code JSONL transcripts producing usage, model and turn events.",
+      "summary": "Implements the LogParser used by the agm CLI to parse Claude Code JSONL log lines into a timeline of typed ParseEvents (session metadata, model/effort changes, token usage, context snapshots, and turn summaries). It is the parser selected for Source::Claude during log ingestion and keeps per-session state so metadata and model/effort transitions are emitted only when they change.",
       "tags": [
-        "parser",
-        "claude",
+        "log-parsing",
+        "claude-code",
         "jsonl",
+        "event-extraction",
+        "token-usage",
         "tested"
       ],
       "complexity": "moderate"
@@ -685,7 +712,7 @@
         7,
         11
       ],
-      "summary": "Stateful LogParser for Claude Code transcripts.",
+      "summary": "Stateful LogParser that deserializes each Claude Code log line with serde_json (returning ParseError::BadJson on malformed input), emits a one-time ParseEvent::Meta from sessionId/cwd/version/timestamp once those fields appear, and on 'assistant' lines emits Model/Effort changes when the model or effort differs from stored state plus a Usage record (keyed by message id, reading input/cache/output/thinking counters) and Context snapshot of saturated input+cache tokens, while producing summarized Turn events for assistant and 'user' text/tool-use content and returning LineOutcome::Unknown or Ignored for unhandled kinds.",
       "tags": [
         "type-definition",
         "claude",
@@ -698,11 +725,13 @@
       "type": "file",
       "name": "codex.rs",
       "filePath": "src/parse/codex.rs",
-      "summary": "Line parser for Codex rollout JSONL producing usage, context and quota events.",
+      "summary": "Implements a LogParser for Codex JSONL session logs, converting line records into normalized agm parse events such as session metadata, model/effort changes, token usage, context/quota snapshots, and turn summaries. It tracks the current model state and ignores or marks unknown Codex record types.",
       "tags": [
-        "parser",
         "codex",
+        "log-parsing",
         "jsonl",
+        "session-events",
+        "usage-tracking",
         "tested"
       ],
       "complexity": "moderate"
@@ -716,7 +745,7 @@
         7,
         9
       ],
-      "summary": "Stateful LogParser for Codex rollouts.",
+      "summary": "A default-initialized LogParser that stores an optional current model, seeds it via seed_model, and parses Codex JSON lines in parse_line by dispatching on record type to emit Meta, Model/Effort, Usage, Context/Quota, or Turn events; it ignores unsupported records, returns Unknown for unrecognized types, and handles missing/malformed fields with defaults or ignored outcomes.",
       "tags": [
         "type-definition",
         "codex",
@@ -729,11 +758,13 @@
       "type": "file",
       "name": "mod.rs",
       "filePath": "src/parse/mod.rs",
-      "summary": "Parser module barrel defining ParseError, the LogParser trait and the parser_for factory by Source.",
+      "summary": "Defines the shared parsing contract for agm's line-based session log parsers, re-exporting the agy, claude, and codex submodules and providing a source-to-parser factory plus a ParseError type. It is the dispatch point that turns a detected Source into a mutable LogParser used to stream log lines into LineOutcome events.",
       "tags": [
-        "barrel",
-        "parser",
+        "parsing",
+        "log-parser",
+        "dispatch",
         "trait",
+        "error-handling",
         "tested"
       ],
       "complexity": "simple"
@@ -747,7 +778,7 @@
         21,
         28
       ],
-      "summary": "Factory returning the right boxed LogParser for a Source.",
+      "summary": "Returns a boxed LogParser for the given Source by constructing the default CodexParser, ClaudeParser, or AgyParser, and panics via unreachable! for Source::OpenCode because that source is not read line by line.",
       "tags": [
         "logic",
         "mod",
@@ -764,7 +795,7 @@
         15,
         19
       ],
-      "summary": "Trait defining parse_line and seed methods for per-source log parsers.",
+      "summary": "A trait implemented by each source-specific parser, requiring parse_line to turn a single log line plus its byte offset into a LineOutcome or ParseError and seed_model to set the current model name, with an optional seed_last_ts hook that defaults to doing nothing.",
       "tags": [
         "type-definition",
         "mod",
@@ -777,11 +808,13 @@
       "type": "file",
       "name": "mod.rs",
       "filePath": "src/store/mod.rs",
-      "summary": "SQLite-backed Store: schema initialization, busy-retry, savepoints, usage, quota, context and turn upserts, cursors and session identity.",
+      "summary": "Defines the SQLite-backed persistence layer for the agm CLI: a Store wrapping a rusqlite Connection that opens or creates the database, sets WAL mode and a 5-second busy timeout, and migrates the schema up to version 4 inside a write transaction with busy/locked retries. It provides write and read operations for sessions, token usage, quota snapshots, conversation turns, context snapshots, and file-ingestion cursors, using savepoints for atomic multi-statement writes so the daemon and CLI can share the database safely.",
       "tags": [
-        "store",
         "sqlite",
         "persistence",
+        "schema-migration",
+        "token-usage",
+        "session-store",
         "tested"
       ],
       "complexity": "complex"
@@ -795,7 +828,7 @@
         13,
         15
       ],
-      "summary": "SQLite connection wrapper exposing all persistence operations.",
+      "summary": "A struct holding a single rusqlite Connection that exposes the database API for agm, with constructors open (creating parent directories and opening a file-backed DB) and open_in_memory, savepoint-wrapped writers for sessions/usage/turns/quota/cursors, and a conn() accessor returning the underlying connection.",
       "tags": [
         "type-definition",
         "mod",
@@ -812,7 +845,7 @@
         66,
         128
       ],
-      "summary": "Creates the schema and runs additive column migrations.",
+      "summary": "A private constructor that configures a Connection with a 5-second busy_timeout, enables WAL and foreign keys via retry_busy, returns early without a write lock if PRAGMA user_version is already at least 4, otherwise runs BEGIN IMMEDIATE and migrates from the stored version (applying schema.sql/schema_v2.sql, normalizing Windows session/cursor paths for v1 databases, adding rotation/terminal columns and schema_v3.sql for v3, and adding the sessions.effort column for v4), rolling back and returning the error on failure or committing and returning the Store on success.",
       "tags": [
         "logic",
         "mod",
@@ -829,7 +862,7 @@
         228,
         254
       ],
-      "summary": "Inserts or accumulates per-session usage records.",
+      "summary": "Inserts a UsageRecord's token counters (input_uncached, cache_read, cache_write, output, reasoning, each converted from u64 to i64 with try_from, which errors on overflow) into the usage table for session sid, updating all fields on conflict of (session, dedupe_key), then refreshes the session's last_ms to the max timestamp across usage and turns, all inside a savepoint that is rolled back on error.",
       "tags": [
         "logic",
         "mod",
@@ -842,14 +875,16 @@
       "type": "file",
       "name": "v2.rs",
       "filePath": "src/store/v2.rs",
-      "summary": "Store v2 extension for terminals, inbox, messages, settings, budgets and action log with row types and CRUD methods.",
+      "summary": "This file implements the SQLite (rusqlite) data-access API for the agm CLI's v2 tables — terminals, inbox, messages, budgets, actions, and settings — by adding methods on Store and serializable row structs. It handles upserts, deduplicated inbox opening/resolving, and status tracking for managed terminals.",
       "tags": [
-        "store",
         "sqlite",
+        "rusqlite",
+        "data-access",
         "inbox",
+        "terminal-management",
         "tested"
       ],
-      "complexity": "complex"
+      "complexity": "moderate"
     },
     {
       "id": "class:src/store/v2.rs:TerminalRow",
@@ -860,7 +895,7 @@
         12,
         36
       ],
-      "summary": "Row struct describing a herdr terminal with status, labels, launch and handoff state.",
+      "summary": "A serializable struct holding one terminal's record (address, name, app, cwd, labels, task/role, state, status, turn, parent, timestamps, exit code, session link, handoff state, managed flag, launch spec) with a Default impl that sets handoff_state to \"active\" and turn/created_ms to 0.",
       "tags": [
         "type-definition",
         "v2",
@@ -877,7 +912,7 @@
         151,
         185
       ],
-      "summary": "Inserts or updates a terminal row.",
+      "summary": "Inserts or updates a terminals row keyed by address with an ON CONFLICT upsert that coalesces new non-null fields over existing ones, keeps the max of reported/turn-like flags and the original created_ms, derives task/role from agm.task/agm.role labels when absent, and serializes labels to JSON (propagating serialization errors via ?).",
       "tags": [
         "logic",
         "v2",
@@ -894,7 +929,7 @@
         412,
         438
       ],
-      "summary": "Resolves multiple inbox items in one batch.",
+      "summary": "Marks many inbox ids resolved in one transaction using a named SAVEPOINT, returning early without doing anything if ids is empty, releasing the savepoint on success and rolling it back (preserving any existing reply, since it only sets resolved_ms) if any UPDATE fails.",
       "tags": [
         "logic",
         "v2",
@@ -911,7 +946,7 @@
         371,
         393
       ],
-      "summary": "Opens an inbox item deduplicated by key.",
+      "summary": "Opens an inbox item deduplicating by (terminal, source, kind): if no unresolved item with that key exists it inserts one and returns Some(new rowid), otherwise it updates the existing item's text in place and returns None.",
       "tags": [
         "logic",
         "v2",

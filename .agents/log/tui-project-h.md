@@ -15,3 +15,12 @@
 - Nên sửa 1: `width = 0` fixture must not panic; fixed `(width - 1)` → `width.saturating_sub(1)`.
 - Nên sửa 3: ctx bar pinned present at width 60, absent at 40.
 - Gates: `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` green.
+
+### Project identity (`src/project.rs`, `tests/project_test.rs`)
+
+- Nên sửa 2: empty terminal names are ignored by `list_projects`, `parties` and `tree_order`
+  (an inbox row naming `""` counts as no-project); duplicate names prefer a live terminal,
+  then the newest — same order as `Store::terminal`.
+- Nhỏ 2: `ambiguous_entries` detects shared names case-insensitively, matching
+  `match_project`.
+- Gates green; committed.

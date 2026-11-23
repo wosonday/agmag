@@ -41,7 +41,9 @@ DB ghi t8c `created_ms=1795450665328`, còn `hc get t8c` trả `1795450665482` (
    - hc báo `state` là live;
    - cùng `app` (cả hai khác rỗng);
    - cùng cwd theo `crate::correlate::norm_cwd`, hoặc DB không có cwd;
-   - hàng do agm mở (`launch` = true / có launch spec; xem `set_terminal_launch` trong store);
+   - hàng do agm mở: `managed == true`, hoặc có `launch_spec`, hoặc có `template` (các field của `TerminalRow` trong
+     `src/store/v2.rs`; `agm spawn` thường đặt `template`, còn rotation đặt `managed`/`launch_spec` qua
+     `set_terminal_launch`);
    - `0 < hc_created − db_created ≤ 60_000` ms, vì giá trị sai luôn là `now` lấy trước khi herdr tạo terminal.
 
    Mỗi lần sửa thì ghi `store.log_action("agm", "resync_created_ms", addr, "<cũ> → <mới>", true, now)`.

@@ -208,6 +208,35 @@ fn scoped_text(
     }
 }
 
+/// Resolves a `cd` / `cd -t` query against the current project list. Errors carry the note kind the
+/// text UI shows (`ambiguous` is a warning, unknown is an error), as before the board existed.
+fn lookup_project(
+    store: &Store,
+    snap: Option<&Snapshot>,
+    query: &str,
+    cache: &mut RootCache,
+) -> std::result::Result<ProjectKey, (NoteKind, String)> {
+    let Some(s) = snap else {
+        return Err((NoteKind::Err, "failed to read database".into()));
+    };
+    let inbox = store
+        .inbox(true)
+        .map_err(|e| (NoteKind::Err, format!("error: {e:#}")))?;
+    let terms = store
+        .terminals(false)
+        .map_err(|e| (NoteKind::Err, format!("error: {e:#}")))?;
+    let roots = project::compute_roots(&terms, s, cache, &project::git_common_root);
+    let (list, _) = project::list_projects(&terms, &inbox, &roots);
+    match project::match_project(&list, query) {
+        CdMatch::Found(key) => Ok(key),
+        CdMatch::Ambiguous(candidates) => Err((
+            NoteKind::Warn,
+            format!("ambiguous: {}", candidates.join(", ")),
+        )),
+        CdMatch::NotFound => Err((NoteKind::Err, format!("no project matching '{query}'"))),
+    }
+}
+
 pub fn run(
     store: &Store,
     db_path: &Path,
@@ -216,10 +245,15 @@ pub fn run(
     mut scan: impl FnMut(&Store) -> Result<()>,
     backfill: impl FnOnce(&Store, i64) -> Result<()> + Send + 'static,
 ) -> Result<()> {
+    // The reader hands one line over and then waits for `resume`, so no line read is pending while
+    // the board owns the console (the board must not lose key events to a blocked stdin reader).
     let (tx, rx) = mpsc::channel::<String>();
+    let (resume_tx, resume_rx) = mpsc::channel::<()>();
     std::thread::spawn(move || {
-        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
+        let stdin = std::io::stdin();
+        let input = stdin.lock();
+        for line in input.lines().map_while(Result::ok) {
+            if tx.send(line).is_err() || resume_rx.recv().is_err() {
                 break;
             }
         }
@@ -349,6 +383,7 @@ pub fn run(
                 cleanup_list = None;
                 note = Some((NoteKind::Warn, "cleanup cancelled".into()));
             }
+            let _ = resume_tx.send(());
             continue;
         }
 
@@ -374,6 +409,7 @@ pub fn run(
             } else {
                 note = Some((NoteKind::Warn, "cancelled".into()));
             }
+            let _ = resume_tx.send(());
             continue;
         }
 
@@ -553,44 +589,36 @@ pub fn run(
                 if q == ".." || q == "/" {
                     scope = None;
                     note = Some((NoteKind::Ok, "back to all projects".into()));
-                } else if let Some(s) = &snap {
-                    match store.inbox(true) {
-                        Ok(inbox) => match store.terminals(false) {
-                            Ok(terms) => {
-                                let roots = project::compute_roots(
-                                    &terms,
-                                    s,
-                                    &mut roots_cache,
-                                    &project::git_common_root,
-                                );
-                                let (list, _) = project::list_projects(&terms, &inbox, &roots);
-                                match project::match_project(&list, &q) {
-                                    // Entering keeps the scope even if the project has no members left.
-                                    CdMatch::Found(key) => {
-                                        note =
-                                            Some((NoteKind::Ok, format!("project: {}", key.name)));
-                                        scope = Some(key);
-                                    }
-                                    CdMatch::Ambiguous(candidates) => {
-                                        note = Some((
-                                            NoteKind::Warn,
-                                            format!("ambiguous: {}", candidates.join(", ")),
-                                        ));
-                                    }
-                                    CdMatch::NotFound => {
-                                        note = Some((
-                                            NoteKind::Err,
-                                            format!("no project matching '{q}'"),
-                                        ));
-                                    }
-                                }
-                            }
-                            Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
-                        },
-                        Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
-                    }
                 } else {
-                    note = Some((NoteKind::Err, "failed to read database".into()));
+                    match lookup_project(store, snap.as_ref(), &q, &mut roots_cache) {
+                        Ok(key) => {
+                            // The board owns the console until the user quits; the scope stays global.
+                            if let Err(e) =
+                                agmag::board::run(store, cfg, &hc, Some(key), refresh, &mut scan)
+                            {
+                                note = Some((NoteKind::Err, format!("error: {e:#}")));
+                            }
+                            // The alternate screen is gone: repaint the whole text frame.
+                            last_frame = None;
+                            after_input = true;
+                        }
+                        Err((kind, text)) => note = Some((kind, text)),
+                    }
+                }
+            }
+            Ok(TuiCmd::CdText(q)) => {
+                if q == ".." || q == "/" {
+                    scope = None;
+                    note = Some((NoteKind::Ok, "back to all projects".into()));
+                } else {
+                    match lookup_project(store, snap.as_ref(), &q, &mut roots_cache) {
+                        // Entering keeps the scope even if the project has no members left.
+                        Ok(key) => {
+                            note = Some((NoteKind::Ok, format!("project: {}", key.name)));
+                            scope = Some(key);
+                        }
+                        Err((kind, text)) => note = Some((kind, text)),
+                    }
                 }
             }
             Ok(TuiCmd::Show(id)) => match store.inbox_item(id) {
@@ -600,6 +628,9 @@ pub fn run(
             },
             Err(e) => note = Some((NoteKind::Err, e)),
         }
+        // This line is fully handled (the board, if it ran, has given the console back): let the
+        // reader fetch exactly one more line.
+        let _ = resume_tx.send(());
     }
 }
 

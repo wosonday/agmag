@@ -261,6 +261,14 @@ enum Cmd {
         #[arg(long, default_value_t = 2)]
         refresh: u64,
     },
+    /// Full-screen project board
+    Board {
+        /// Project name, path, or unique prefix (opens the project list when omitted)
+        project: Option<String>,
+        /// Refresh interval in seconds
+        #[arg(long, default_value_t = 2)]
+        refresh: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -720,6 +728,24 @@ fn run(cli: Cli) -> Result<()> {
             |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ()),
             |s, since| scan(s, since).map(|_| ()),
         ),
+        Cmd::Board { project, refresh } => {
+            let hc = agmag::hc::HcCli::default();
+            agmag::board::require_human(&store, &hc)?;
+            let cfg_loaded = cfg()?;
+            let mut cache = agmag::project::RootCache::new();
+            let key = match project.as_deref() {
+                Some(q) => Some(agmag::board::resolve_project(
+                    &store,
+                    &cfg_loaded,
+                    &mut cache,
+                    q,
+                )?),
+                None => None,
+            };
+            agmag::board::run(&store, &cfg_loaded, &hc, key, refresh, &mut |s: &Store| {
+                scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ())
+            })
+        }
         Cmd::Scan { .. } => emit(json, &stats_json(&stats), || {
             println!(
                 "Scanned {} files, {} new lines ({} events, {} unknown lines, {} bad lines).",

@@ -947,6 +947,38 @@ fn view_command_picks_up_to_three_sections() {
 }
 
 #[test]
+fn parse_cd_and_show() {
+    // `cd` alone lists projects; arguments enter a project (`..` and `/` leave it).
+    assert_eq!(parse_command("cd"), Ok(TuiCmd::Cd(None)));
+    assert_eq!(
+        parse_command("cd  shop "),
+        Ok(TuiCmd::Cd(Some("shop".into())))
+    );
+    assert_eq!(parse_command("cd .."), Ok(TuiCmd::Cd(Some("..".into()))));
+    assert_eq!(parse_command("cd /"), Ok(TuiCmd::Cd(Some("/".into()))));
+    assert_eq!(parse_command("show 43"), Ok(TuiCmd::Show(43)));
+    assert_eq!(parse_command("show #43"), Ok(TuiCmd::Show(43)));
+    for line in ["show", "show x"] {
+        let err = parse_command(line).unwrap_err();
+        assert!(err.contains("show <#>"), "{line}: {err}");
+    }
+}
+
+#[test]
+fn footer_lists_cd_and_show() -> anyhow::Result<()> {
+    use agmag::dashboard::{Section, render_view};
+    let store = seeded()?;
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    let plain = strip_ansi(&render_view(&snap, 110, &[Section::Quota], None));
+    let bar = &plain[plain.rfind("cmd:").expect("cmd bar")..];
+    assert!(bar.contains("cd [project|..]"), "{bar}");
+    assert!(bar.contains("show <#>"), "{bar}");
+    // cd/show carry no short alias: an empty entry must not show as a stray separator.
+    assert!(!bar.contains("·  ·"), "{bar}");
+    Ok(())
+}
+
+#[test]
 fn render_view_shows_only_chosen_sections_and_fits_height() -> anyhow::Result<()> {
     use agmag::dashboard::{Section, render_view};
     let store = seeded()?;

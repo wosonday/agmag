@@ -416,8 +416,10 @@ pub fn load_project_view(
 ) -> anyhow::Result<ProjectView> {
     let terms = store.terminals(false)?;
     let open = store.inbox(true)?;
-    let kept: Vec<&TerminalRow> = members(&terms, roots, key)
-        .into_iter()
+    let all_members = members(&terms, roots, key);
+    let kept: Vec<&TerminalRow> = all_members
+        .iter()
+        .copied()
         .filter(|t| {
             t.state == "live"
                 || open.iter().any(|item| {
@@ -432,7 +434,8 @@ pub fn load_project_view(
     let sessions: Vec<i64> = kept.iter().filter_map(|t| t.session).collect();
     let turns = store.latest_turns(&sessions)?;
     let buckets = store.usage_buckets(&sessions, now_ms - 3_600_000, 300_000, 12)?;
-    let messages = store.messages_involving(&ps, 20)?;
+    // MESSAGES covers all project members, including exited ones without open inbox items.
+    let messages = store.messages_involving(&parties(&all_members), 20)?;
     let inbox: Vec<InboxRow> = open
         .into_iter()
         .filter(|item| {
@@ -470,7 +473,11 @@ pub fn load_project_view(
             app: t.app.clone().unwrap_or_default(),
             model: view.map(|v| v.model.clone()).unwrap_or_default(),
             effort: view.map(|v| v.effort.clone()).unwrap_or_default(),
-            status: t.status.clone().unwrap_or_else(|| "-".into()),
+            // Live agents use the snapshot's formatted status ("BLOCKED (kind)",
+            // "[HANDED OFF]"); exited ones keep the stored status, "-" when unknown.
+            status: view
+                .map(|v| v.status.clone())
+                .unwrap_or_else(|| t.status.clone().unwrap_or_else(|| "-".into())),
             state: t.state.clone(),
             depth,
             last_sibling,

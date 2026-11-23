@@ -372,3 +372,26 @@ pub fn branch_entry_for(cwd: Option<&str>, task: Option<&str>) -> Option<String>
     }
     task.and_then(entry_from)
 }
+
+/// Terminal address → root for every terminal: cwd from the row, else the live `TermView.cwd`.
+/// (Stub for Task 5c; Task 5a provides the body.)
+pub fn compute_roots(
+    terms: &[TerminalRow],
+    snap: &crate::dashboard::Snapshot,
+    cache: &mut RootCache,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Roots {
+    todo!("Task 5a")
+}
+
+/// Everything the project view renders, loaded only while scoped.
+/// (Stub for Task 5c; Task 5a provides the body.)
+pub fn load_project_view(
+    store: &crate::store::Store,
+    snap: &crate::dashboard::Snapshot,
+    key: &ProjectKey,
+    roots: &Roots,
+    now_ms: i64,
+) -> anyhow::Result<ProjectView> {
+    todo!("Task 5a")
+}

@@ -108,6 +108,11 @@ impl BoardState {
         if key.kind == KeyEventKind::Release {
             return Effect::None;
         }
+        // Notes report the previous action or a failed refresh; any key the user presses in
+        // normal mode dismisses it before the key itself is handled.
+        if self.mode == Mode::Normal {
+            self.note = None;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
         {
@@ -1026,6 +1031,28 @@ mod tests {
         st.msg_scroll = 5;
         st.on_key(key(KeyCode::Down), &d);
         assert_eq!(st.msg_scroll, 0);
+    }
+
+    #[test]
+    fn normal_key_clears_note() {
+        let (mut s, d) = state_with_data();
+        s.note = Some(crate::board::Note {
+            ok: true,
+            text: "replied to #1".into(),
+        });
+        s.on_key(key(KeyCode::Up), &d);
+        assert_eq!(s.note, None, "a normal-mode key must clear the note");
+
+        // Popup modes are not Normal: their keys leave the note alone.
+        s.note = Some(crate::board::Note {
+            ok: false,
+            text: "no inbox item selected".into(),
+        });
+        s.mode = Mode::Filter {
+            input: String::new(),
+        };
+        s.on_key(char_key('x'), &d);
+        assert!(s.note.is_some(), "popup keys must not clear the note");
     }
 
     #[test]

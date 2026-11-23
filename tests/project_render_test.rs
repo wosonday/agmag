@@ -1,6 +1,6 @@
-use agmag::project::{AgentView, ProjectKey, ProjectSummary, ProjectView, TurnRow};
+use agmag::project::{AgentView, ProjectKey, ProjectSummary, ProjectView, TurnRow, tree_order};
 use agmag::project_render::{render_inbox_item, render_project_body, render_project_list};
-use agmag::store::{InboxRow, MessageRow};
+use agmag::store::{InboxRow, MessageRow, TerminalRow};
 use unicode_width::UnicodeWidthStr;
 
 fn strip_ansi(s: &str) -> String {
@@ -48,6 +48,23 @@ fn agent(address: &str, depth: usize, last_sibling: bool) -> AgentView {
     }
 }
 
+fn terminal(
+    address: &str,
+    name: Option<&str>,
+    parent: Option<&str>,
+    created_ms: i64,
+) -> TerminalRow {
+    TerminalRow {
+        address: address.into(),
+        name: name.map(Into::into),
+        cwd: None,
+        parent: parent.map(Into::into),
+        state: "live".into(),
+        created_ms,
+        ..Default::default()
+    }
+}
+
 fn view(agents: Vec<AgentView>, inbox: Vec<InboxRow>, messages: Vec<MessageRow>) -> ProjectView {
     ProjectView {
         key: key("agmag"),
@@ -82,7 +99,7 @@ fn section_lines<'a>(out: &'a str, start: &str, end: Option<&str>) -> Vec<&'a st
 fn agent_lines_show_tree_status_doing_and_unknowns() {
     let now = 1_700_000_000_000i64;
 
-    let mut root = agent("ceo", 0, true);
+    let mut root = agent("ceo", 0, false);
     root.app = "claude-code".into();
     root.model = "opus".into();
     root.effort = "high".into();
@@ -117,8 +134,18 @@ fn agent_lines_show_tree_status_doing_and_unknowns() {
         plain.contains("doing: -  · last msg: REPORT sent"),
         "{plain}"
     );
-    assert!(plain.contains("├ t7"), "{plain}");
-    assert!(plain.contains("└ t9"), "{plain}");
+    // Root `last_sibling` is false, exactly as `tree_order` produces at depth 0: the tree
+    // must not paint a dangling `│` column for the root.
+    assert!(plain.contains("\n ├ t7"), "{plain}");
+    assert!(plain.contains("\n └ t9"), "{plain}");
+    let root_doing = plain
+        .lines()
+        .find(|line| line.contains("doing: [tool] Bash"))
+        .expect("root doing line");
+    assert!(
+        !root_doing.contains('│'),
+        "root doing line has a dangling column: {root_doing:?}"
+    );
     assert!(plain.contains("AGENTS · agmag (3)"), "{plain}");
 
     let leaf_line = plain
@@ -130,6 +157,54 @@ fn agent_lines_show_tree_status_doing_and_unknowns() {
     assert!(
         leaf_line.matches("  -").count() >= 2,
         "leaf line: {leaf_line}"
+    );
+}
+
+#[test]
+fn tree_prefix_follows_tree_order_output() {
+    let now = 1_700_000_000_000i64;
+    let terms = [
+        terminal("ceo", Some("ceo"), None, 1),
+        terminal("t7", Some("t7"), Some("ceo"), 2),
+        terminal("t9", Some("t9"), Some("ceo"), 3),
+    ];
+    let refs: Vec<&TerminalRow> = terms.iter().collect();
+    let order = tree_order(&refs);
+    assert_eq!(order, vec![(0, 0, false), (1, 1, false), (2, 1, true)]);
+
+    let agents: Vec<AgentView> = order
+        .iter()
+        .map(|&(index, depth, last_sibling)| {
+            let mut a = agent(&refs[index].address, depth, last_sibling);
+            a.label = refs[index]
+                .name
+                .clone()
+                .unwrap_or_else(|| refs[index].address.clone());
+            if depth == 0 {
+                a.doing = Some(TurnRow {
+                    ts_ms: now,
+                    role: "assistant".into(),
+                    summary: "root work".into(),
+                });
+            }
+            a
+        })
+        .collect();
+
+    let plain = strip_ansi(&render_project_body(
+        &view(agents, vec![], vec![]),
+        110,
+        now,
+    ));
+    assert!(plain.contains("\n ├ t7"), "{plain}");
+    assert!(plain.contains("\n └ t9"), "{plain}");
+    let root_doing = plain
+        .lines()
+        .find(|line| line.contains("doing: root work"))
+        .expect("root doing line");
+    assert!(
+        !root_doing.contains('│'),
+        "root doing line has a dangling column: {root_doing:?}"
     );
 }
 
@@ -274,6 +349,13 @@ fn no_line_exceeds_width_at_40_60_110() {
                 !plain.contains('▂'),
                 "at 60 the sparkline must be dropped: {plain}"
             );
+            assert!(plain.contains("ctx -"), "at 60 ctx stays: {plain}");
+        }
+        if width == 40 {
+            assert!(
+                !plain.contains("ctx"),
+                "at 40 the ctx bar must be dropped: {plain}"
+            );
         }
         if width == 110 {
             assert!(
@@ -282,6 +364,43 @@ fn no_line_exceeds_width_at_40_60_110() {
             );
         }
     }
+}
+
+#[test]
+fn zero_width_does_not_panic() {
+    let now = 1_700_000_000_000i64;
+    let mut a = agent("ceo", 0, false);
+    a.doing = Some(TurnRow {
+        ts_ms: now,
+        role: "tool".into(),
+        summary: "Bash".into(),
+    });
+    let inbox = vec![InboxRow {
+        id: 1,
+        terminal: Some("ceo".into()),
+        text: "x".repeat(100),
+        ..Default::default()
+    }];
+    let messages = vec![MessageRow {
+        from: "ceo".into(),
+        to: "t7".into(),
+        kind: "REPORT".into(),
+        text: "y".repeat(100),
+        ..Default::default()
+    }];
+    let out = render_project_body(&view(vec![a], inbox, messages), 0, now);
+    for line in strip_ansi(&out).lines() {
+        assert_eq!(UnicodeWidthStr::width(line), 0, "{line:?}");
+    }
+
+    let _ = render_project_list(&[], 1, 0);
+    let _ = render_inbox_item(
+        &InboxRow {
+            text: "x".repeat(10),
+            ..Default::default()
+        },
+        0,
+    );
 }
 
 #[test]
@@ -297,6 +416,11 @@ fn project_list_and_show() {
             live_agents: 1,
             open_inbox: 0,
         },
+        ProjectSummary {
+            key: key("long-project-name"),
+            live_agents: 2,
+            open_inbox: 1,
+        },
     ];
 
     let plain = strip_ansi(&render_project_list(&list, 3, 60));
@@ -306,6 +430,19 @@ fn project_list_and_show() {
     assert!(plain.contains("1 live · 0 inbox"), "{plain}");
     assert!(plain.contains("(no project)"), "{plain}");
     assert!(plain.contains("3 inbox"), "{plain}");
+    assert!(plain.contains("long-project-name"), "{plain}");
+    // A 17-cell name widens the name column past `(no project)`: the `(no project)` name
+    // cell must be padded to that width like every project row (the painted name must not
+    // be measured by `pad_cells`).
+    let expected_row = format!(
+        "  (no project){}  - · 3 inbox",
+        " ".repeat("long-project-name".len() - "(no project)".len())
+    );
+    assert!(
+        plain.lines().any(|line| line == expected_row),
+        "expected {expected_row:?}:\n{plain}"
+    );
+    assert_eq!(plain.matches("inbox").count(), 4, "{plain}");
     for line in plain.lines() {
         assert!(UnicodeWidthStr::width(line) <= 59, "{line:?}");
     }

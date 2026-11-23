@@ -71,10 +71,12 @@ pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: us
         name_w = name_w.max("(no project)".width());
     }
     let name_w = name_w.clamp(6, 24);
-    let row = |name: String, live: String, inbox: String| {
+    // Pad the plain name before painting: `pad_cells` measures display cells, so it must not
+    // see ANSI escapes (otherwise the `(no project)` row drifts left of the project rows).
+    let row = |style: &str, name: &str, live: String, inbox: String| {
         format!(
             "  {}  {} {} {}",
-            paint(WHITE, &pad_cells(&name, name_w)),
+            paint(style, &pad_cells(&one_line(name, name_w), name_w)),
             live,
             paint(GRAY, "·"),
             inbox,
@@ -82,16 +84,17 @@ pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: us
     };
     let mut lines: Vec<String> = Vec::new();
     for p in list {
-        let name = one_line(&p.key.name, name_w);
         lines.push(row(
-            name,
+            WHITE,
+            &p.key.name,
             paint(BOLD_CYAN, &format!("{} live", p.live_agents)),
             paint(BRIGHT_YELLOW, &format!("{} inbox", p.open_inbox)),
         ));
     }
     if no_project > 0 {
         lines.push(row(
-            paint(GRAY, &one_line("(no project)", name_w)),
+            GRAY,
+            "(no project)",
             paint(GRAY, "-"),
             paint(GRAY, &format!("{no_project} inbox")),
         ));
@@ -253,7 +256,8 @@ fn agent_lines(agents: &[AgentView], width: usize, now_ms: i64) -> Vec<String> {
             stack.push(false);
         }
         let mut prefix = String::from(" ");
-        for more in stack.iter().take(depth) {
+        // Skip layer 0: the root never paints a branch or a dangling column.
+        for more in stack.iter().take(depth).skip(1) {
             prefix.push_str(if *more { "│ " } else { "  " });
         }
         if depth > 0 {
@@ -266,7 +270,7 @@ fn agent_lines(agents: &[AgentView], width: usize, now_ms: i64) -> Vec<String> {
         }
 
         let mut cont = String::from(" ");
-        for more in stack.iter().take(depth + 1) {
+        for more in stack.iter().take(depth + 1).skip(1) {
             cont.push_str(if *more { "│ " } else { "  " });
         }
         cont.push_str("  ");
@@ -331,7 +335,8 @@ fn agent_doing_line(agent: &AgentView, cont: &str, width: usize, now_ms: i64) ->
     if let Some(turn) = &agent.doing {
         let age = format!("{} ago", age_label((now_ms - turn.ts_ms) / 1000));
         let summary = sanitize_one_line(&turn.summary);
-        let avail = (width - 1)
+        let avail = width
+            .saturating_sub(1)
             .saturating_sub(cont.width() + "doing:".len() + " · ".len() + age.width())
             .max(1);
         return format!(

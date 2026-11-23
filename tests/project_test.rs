@@ -200,6 +200,107 @@ fn membership_matches_address_or_name() {
 }
 
 #[test]
+fn empty_names_are_ignored() {
+    let terms = vec![
+        term("t1", Some(""), Some(r"D:\Project\shop"), "live", None, 1),
+        term(
+            "t2",
+            Some("ceo"),
+            Some(r"D:\Project\shop"),
+            "live",
+            Some(""),
+            2,
+        ),
+        term(
+            "t3",
+            Some("other"),
+            Some(r"D:\Project\agmag"),
+            "live",
+            None,
+            3,
+        ),
+    ];
+    let roots = roots(&[
+        ("t1", r"D:\Project\shop"),
+        ("t2", r"D:\Project\shop"),
+        ("t3", r"D:\Project\agmag"),
+    ]);
+    let key = ProjectKey {
+        root: norm_cwd(r"D:\Project\shop"),
+        name: "shop".into(),
+    };
+    let got = members(&terms, &roots, &key);
+
+    // An empty name is not a membership key.
+    let ps = parties(&got);
+    assert!(!ps.iter().any(|p| p.is_empty()), "empty party: {ps:?}");
+    assert!(ps.contains(&"t1".to_string()), "{ps:?}");
+    assert!(ps.contains(&"ceo".to_string()), "{ps:?}");
+
+    // An empty parent name resolves to nothing: both are roots, in created_ms order.
+    assert_eq!(tree_order(&got), vec![(0, 0, false), (1, 0, false)]);
+
+    // An inbox row naming "" belongs to no project instead of the first unnamed terminal.
+    let inbox = vec![inbox_item(1, Some(""))];
+    let (list, no_project) = list_projects(&terms, &inbox, &roots);
+    assert_eq!(no_project, 1, "{list:?}");
+    assert!(list.iter().all(|p| p.open_inbox == 0), "{list:?}");
+}
+
+#[test]
+fn duplicate_names_prefer_live_then_newest() {
+    // `Store::terminals(false)` yields created_ms ASC, so the exited row comes first.
+    let terms = vec![
+        term(
+            "old",
+            Some("ceo"),
+            Some(r"D:\Project\old"),
+            "exited",
+            None,
+            1,
+        ),
+        term("new", Some("ceo"), Some(r"D:\Project\new"), "live", None, 2),
+        term(
+            "live-old",
+            Some("boss"),
+            Some(r"D:\Project\live-old"),
+            "live",
+            None,
+            3,
+        ),
+        term(
+            "live-new",
+            Some("boss"),
+            Some(r"D:\Project\live-new"),
+            "live",
+            None,
+            4,
+        ),
+    ];
+    let roots = roots(&[
+        ("old", r"D:\Project\old"),
+        ("new", r"D:\Project\new"),
+        ("live-old", r"D:\Project\live-old"),
+        ("live-new", r"D:\Project\live-new"),
+    ]);
+    let inbox = vec![inbox_item(1, Some("ceo")), inbox_item(2, Some("boss"))];
+    let (list, no_project) = list_projects(&terms, &inbox, &roots);
+    assert_eq!(no_project, 0);
+    let inbox_of = |name: &str| {
+        list.iter()
+            .find(|p| p.key.name == name)
+            .map(|p| p.open_inbox)
+            .unwrap_or(0)
+    };
+    // A live terminal wins over an older exited one with the same name.
+    assert_eq!(inbox_of("old"), 0, "{list:?}");
+    assert_eq!(inbox_of("new"), 1, "{list:?}");
+    // Between two live terminals the newer one wins, like `Store::terminal`.
+    assert_eq!(inbox_of("live-old"), 0, "{list:?}");
+    assert_eq!(inbox_of("live-new"), 1, "{list:?}");
+}
+
+#[test]
 fn match_project_rules() {
     // Exact name (case-insensitive) wins over a longer prefix.
     let list = vec![
@@ -257,6 +358,18 @@ fn match_project_rules() {
     ];
     expected.sort();
     assert_eq!(match_project(&dups, "shop"), CdMatch::Ambiguous(expected));
+
+    // Names differing only in case are the same name, matching the case-insensitive query.
+    let cased = vec![
+        summary(r"D:\Project\a", "Shop"),
+        summary(r"D:\Project\b", "shop"),
+    ];
+    let mut expected = vec![
+        format!("Shop ({})", norm_cwd(r"D:\Project\a")),
+        format!("shop ({})", norm_cwd(r"D:\Project\b")),
+    ];
+    expected.sort();
+    assert_eq!(match_project(&cased, "SHOP"), CdMatch::Ambiguous(expected));
 
     assert_eq!(match_project(&list, "zzz"), CdMatch::NotFound);
     assert_eq!(match_project(&list, "  "), CdMatch::NotFound);

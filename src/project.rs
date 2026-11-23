@@ -138,7 +138,9 @@ pub fn list_projects(
     roots: &Roots,
 ) -> (Vec<ProjectSummary>, usize) {
     let mut by_address: HashMap<&str, &str> = HashMap::new();
-    let mut by_name: HashMap<&str, &str> = HashMap::new();
+    // name → (root, live, created_ms); a live terminal wins over an exited one, then the
+    // newest wins — the same order `Store::terminal` uses for a name lookup.
+    let mut by_name: HashMap<&str, (&str, bool, i64)> = HashMap::new();
     let mut projects: HashMap<&str, ProjectSummary> = HashMap::new();
 
     for t in terms {
@@ -146,8 +148,14 @@ pub fn list_projects(
             continue;
         };
         by_address.insert(t.address.as_str(), root);
-        if let Some(name) = t.name.as_deref() {
-            by_name.entry(name).or_insert(root);
+        if let Some(name) = t.name.as_deref().filter(|name| !name.is_empty()) {
+            let candidate = (root, t.state == "live", t.created_ms);
+            let better = by_name.get(name).is_none_or(|&(_, live, created_ms)| {
+                (candidate.1, candidate.2) > (live, created_ms)
+            });
+            if better {
+                by_name.insert(name, candidate);
+            }
         }
         let entry = projects.entry(root).or_insert_with(|| ProjectSummary {
             key: ProjectKey {
@@ -167,10 +175,12 @@ pub fn list_projects(
         if item.resolved_ms.is_some() {
             continue;
         }
-        let root = item
-            .terminal
-            .as_deref()
-            .and_then(|t| by_address.get(t).or_else(|| by_name.get(t)).copied());
+        let root = item.terminal.as_deref().and_then(|t| {
+            by_address
+                .get(t)
+                .copied()
+                .or_else(|| by_name.get(t).map(|(root, _, _)| *root))
+        });
         match root.and_then(|r| projects.get_mut(r)) {
             Some(p) => p.open_inbox += 1,
             None => no_project += 1,
@@ -230,7 +240,7 @@ fn ambiguous_entries(candidates: &[&ProjectSummary], all: &[ProjectSummary]) -> 
         .map(|p| {
             let shared = all
                 .iter()
-                .filter(|other| other.key.name == p.key.name)
+                .filter(|other| other.key.name.to_lowercase() == p.key.name.to_lowercase())
                 .count()
                 > 1;
             if shared {
@@ -262,7 +272,7 @@ pub fn parties(members: &[&TerminalRow]) -> Vec<String> {
         if !out.contains(&m.address) {
             out.push(m.address.clone());
         }
-        if let Some(name) = m.name.as_deref()
+        if let Some(name) = m.name.as_deref().filter(|name| !name.is_empty())
             && !out.iter().any(|p| p == name)
         {
             out.push(name.to_string());
@@ -284,7 +294,7 @@ pub fn tree_order(members: &[&TerminalRow]) -> Vec<(usize, usize, bool)> {
         by_key.entry(m.address.as_str()).or_insert(i);
     }
     for (i, m) in members.iter().enumerate() {
-        if let Some(name) = m.name.as_deref() {
+        if let Some(name) = m.name.as_deref().filter(|name| !name.is_empty()) {
             by_key.entry(name).or_insert(i);
         }
     }

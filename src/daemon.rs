@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::hc::{app_from_argv, terminal_row_from};
-use crate::store::Store;
+use crate::store::{Store, TerminalRow};
 
 /// Áp một dòng của `hc events --json` vào CSDL. Dòng lạ bị bỏ qua (định dạng sự kiện có thể thêm loại mới).
 pub fn apply_event(store: &Store, line: &Value, now: i64) -> Result<()> {
@@ -104,11 +104,52 @@ fn apply_terminal(store: &Store, t: &Value, now: i64) -> Result<()> {
     if row.address.is_empty() {
         return Ok(());
     }
+    if let Some(db) = store.terminal(&row.address)? {
+        resync_created_ms(store, &db, &row, now)?;
+    }
     store.upsert_terminal(&row)?;
     if !t["status"].is_null() {
         apply_status(store, &row.address, &t["status"], t["turn"].as_i64(), now)?;
     }
     Ok(())
+}
+
+/// Sửa `created_ms` cũ do agm ghi bằng giờ tick (trước khi herdr tạo terminal).
+///
+/// `upsert_terminal` cố ý không đụng `created_ms` của hàng đã có, nên chỉ sửa khi mọi dấu hiệu
+/// cho thấy vẫn là CÙNG một terminal do agm mở và herdr chỉ đang báo giờ tạo thật.
+fn resync_created_ms(store: &Store, db: &TerminalRow, fresh: &TerminalRow, now: i64) -> Result<()> {
+    let same_app = matches!(
+        (db.app.as_deref(), fresh.app.as_deref()),
+        (Some(a), Some(b)) if !a.is_empty() && a == b
+    );
+    let same_cwd = db.cwd.as_deref().is_none_or(str::is_empty)
+        || matches!(
+            (db.cwd.as_deref(), fresh.cwd.as_deref()),
+            (Some(a), Some(b)) if crate::correlate::norm_cwd(a) == crate::correlate::norm_cwd(b)
+        );
+    let agm_owned = db.managed || db.launch_spec.is_some() || db.template.is_some();
+    let delta = fresh.created_ms - db.created_ms;
+    if db.address != fresh.address
+        || fresh.state != "live"
+        || !same_app
+        || !same_cwd
+        || !agm_owned
+        || db.created_ms <= 0
+        || delta <= 0
+        || delta > 60_000
+    {
+        return Ok(());
+    }
+    store.set_terminal_created_ms(&db.address, fresh.created_ms)?;
+    store.log_action(
+        "agm",
+        "resync_created_ms",
+        &db.address,
+        &format!("{} → {}", db.created_ms, fresh.created_ms),
+        true,
+        now,
+    )
 }
 
 /// `status` là đối tượng 7501 ({app, state, kind, msg}) hoặc chuỗi (dạng `hc ls`).

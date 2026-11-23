@@ -26,3 +26,18 @@ Sửa `created_ms` sai khiến `agm cleanup` bỏ qua mọi cặp bàn giao. Tas
   `upsert_terminal`).
 - Xanh: actions_test 7/7 test khớp `spawn_`, rotation_test 34/34.
 - Commit: `fix(identity): stamp created_ms from herdr when spawning terminals`.
+
+### Step 2: daemon sửa lại hàng đã ghi sai (RED → GREEN)
+- tests/daemon_test.rs: thêm 9 test quanh `resync_created_ms`:
+  - dương: `daemon_resyncs_created_ms_for_agm_owned_terminal` (DB 1000, ảnh chụp herdr 1500 → DB
+    1500 + action `resync_created_ms` detail `1000 → 1500`), `daemon_resync_allows_missing_db_cwd`.
+  - âm: không phải hàng agm mở, khác app, herdr không báo app, khác cwd, lệch âm, lệch > 60 s,
+    herdr không còn `live`.
+  - Đỏ: hai test dương giữ 1000 (7 test âm xanh sẵn vì `upsert_terminal` không sửa `created_ms`).
+- src/daemon.rs: `apply_terminal` gọi `resync_created_ms(store, db, fresh, now)` trước upsert.
+  Hàm mới chỉ UPDATE `created_ms` khi: cùng address, herdr `live`, cùng app khác rỗng, cùng cwd theo
+  `correlate::norm_cwd` (hoặc DB chưa có cwd), hàng do agm mở (`managed`/`launch_spec`/`template`),
+  và `0 < hc − db ≤ 60_000` ms; mỗi lần sửa ghi action `agm/resync_created_ms`.
+  `upsert_terminal` giữ nguyên hành vi.
+- Xanh: daemon_test 22/22.
+- Commit: `fix(identity): resync wrong created_ms from herdr snapshots`.

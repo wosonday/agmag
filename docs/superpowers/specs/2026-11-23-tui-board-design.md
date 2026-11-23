@@ -160,6 +160,19 @@ doing right now — and to answer from there.
 - Existing gates: `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`; manual run in
   Windows Terminal and a herdr pane at 140 and 90 columns.
 
+## Builder-check answers (my calls, 2026-11-23)
+
+- **Flows need more than the 20 project messages.** Add two bounded read-only store queries for the board:
+  the latest message for every pair among the project's parties (one row per unordered pair) for the connector
+  labels, and the newest 30 messages of the selected agent for its conversation panel. `ProjectView` stays as is.
+- **`d` on a blocked inbox item.** The board acts on one selected item after a `y` confirmation, which is the same
+  as `agm done <single id>` today (the single-ID path may close a blocked item). Bulk/filtered done stays out of the
+  board, so the "explicit `--source blocked`" guard for bulk dismissals is unchanged.
+- **Stage pipeline mapping** (`branches::STATUSES`): `wip` → step 1, `ready` → 2, `merging` → 3, `merged` and
+  `deployed` → 4 (`deployed` adds a badge). `blocked` and `needs-rebase` → step 1 drawn in the warn color with the
+  status as a badge; `failed` → error badge, no step highlighted. Unknown/custom value → raw text, no pipeline.
+  No entry → `-`.
+
 ## Phase 2 — move the whole `agm tui` onto the board framework (user request, 2026-11-23)
 
 The user asked, "if possible", to move the current `agm tui` onto ratatui too, to reuse code as much as possible.

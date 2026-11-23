@@ -1024,7 +1024,7 @@ pub(crate) fn render_footer(width: usize) -> String {
 }
 
 /// Dashboard sections, in display order. `agm tui` shows at most [`MAX_VIEW`] of them at once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Section {
     Quota,
     Usage,
@@ -1220,6 +1220,15 @@ fn fit_blocks(blocks: &mut [Vec<String>], budget: usize) {
             GRAY,
             &format!("  … {hidden} more lines (widen the pane or `view` fewer sections)"),
         ));
+    }
+}
+
+/// `render_section` without its first (header) line: the body a titled panel shows.
+pub fn render_section_body(s: &Snapshot, sec: Section, width: usize) -> String {
+    let full = render_section(s, sec, width);
+    match full.split_once('\n') {
+        Some((_, body)) => body.to_string(),
+        None => String::new(),
     }
 }
 
@@ -1963,4 +1972,30 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
             .map_err(|_| usage("show"))?,
         other => return Err(usage(other)),
     })
+}
+
+#[cfg(test)]
+mod section_body_tests {
+    use super::*;
+
+    fn empty() -> Snapshot {
+        let store = crate::store::Store::open_in_memory().expect("in-memory store");
+        snapshot(&store, &crate::config::Config::builtin(), 1_800_000_000_000).expect("snapshot")
+    }
+
+    #[test]
+    fn section_body_drops_header() {
+        let s = empty();
+        for sec in Section::ALL {
+            let full = render_section(&s, sec, 100);
+            let body = render_section_body(&s, sec, 100);
+            let (header, rest) = full.split_once('\n').expect("section has a header line");
+            assert!(header.contains("── "), "{sec:?}: {header:?}");
+            assert_eq!(body, rest, "{sec:?}");
+            assert!(
+                !body.contains("── "),
+                "{sec:?} body keeps a header: {body:?}"
+            );
+        }
+    }
 }

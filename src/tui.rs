@@ -22,12 +22,7 @@ use agmag::project_render;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
 
-#[derive(Clone, Copy)]
-enum NoteKind {
-    Ok,
-    Warn,
-    Err,
-}
+use agmag::board::cmd::NoteKind;
 
 /// Clear the screen AND the scrollback, then home. The full frame is printed on the normal screen, so the part
 /// above the pane stays reachable with the mouse wheel, and older frames never pile up above it.

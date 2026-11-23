@@ -3,7 +3,12 @@
 //! Pure parts: `flows` (edges between agents), `state` (keys → effects), `theme`, `view`
 //! (ratatui rendering). This file owns all I/O: terminal guard, data loading, effects, loop.
 
+pub mod ansi;
+pub mod app;
+pub mod cmd;
 pub mod flows;
+pub mod global;
+pub mod global_view;
 pub mod state;
 pub mod theme;
 pub mod view;

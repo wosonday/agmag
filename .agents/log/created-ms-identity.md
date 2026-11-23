@@ -53,3 +53,11 @@ Sửa `created_ms` sai khiến `agm cleanup` bỏ qua mọi cặp bàn giao. Tas
 - Không nới điều kiện so khớp `created_ms` trong `fresh_cleanup_terminal` (actions.rs ~1031) hay
   điều kiện phiên kế nhiệm (~1118).
 - Commit: `test(identity): cleanup works after daemon resyncs created_ms`.
+
+### Gates (final, 2026-11-24)
+- `cargo test`: tất cả test binary xanh (0 failed), gồm actions_test 36/36, rotation_test 34/34,
+  daemon_test 22/22.
+- `cargo fmt --check`: sạch.
+- `cargo clippy --all-targets -- -D warnings`: sạch.
+- Không push / merge / đổi branch; làm việc trên `fix/created-ms-identity` tại
+  D:\Project\agmag.wt\created-ms.

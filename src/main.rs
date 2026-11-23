@@ -20,6 +20,7 @@ use agmag::store::Store;
 
 mod ops;
 mod tui;
+mod tui_cmd;
 
 #[derive(Parser)]
 #[command(

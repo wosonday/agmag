@@ -56,7 +56,7 @@ Mỗi nhánh ghi 1 khối `### <lane>/<slug>` chuẩn khóa-giá trị:
 - touches_hotspot: -
 - summary: Cảnh báo hàng sắp hết khi tồn dưới ngưỡng cấu hình
 - verify: <lệnh test/lint thực tế + số đếm>
-- review: opencode-go/deepseek-v4-pro, 0 bắt buộc sửa, .agents/reviews/tap-hoa--low-stock-1.md
+- review: .agents/reviews/tap-hoa--low-stock-1.md@3c2b1a0f9e8d opencode-go/deepseek-v4-pro, 0 bắt buộc sửa
 - docs: gemini-3.8-flash-medium (đã cập nhật docs/inventory.md) | không đổi
 - registered: 2026-11-22T08:40+07:00
 - git: -
@@ -69,15 +69,15 @@ Mỗi nhánh ghi 1 khối `### <lane>/<slug>` chuẩn khóa-giá trị:
 ```bash
 # Giữ chỗ / cập nhật một mục (BRANCHES.md phải có sẵn; dùng đường dẫn tuyệt đối tới checkout chính)
 agm branch set <lane>/<slug> status=wip lane=<lane> touches_hotspot=- --file /abs/BRANCHES.md
-# Chốt ready: --worktree để agm kiểm worktree sạch và HEAD khớp head
-agm branch set <lane>/<slug> status=ready head=$HEAD_SHA "verify=..." "review=..." --file /abs/BRANCHES.md --worktree /abs/.wt/<lane>--<slug>
+# Chốt ready: --worktree để agm kiểm worktree sạch, HEAD khớp head và bằng chứng review
+agm branch set <lane>/<slug> status=ready head=$HEAD_SHA "verify=..." "review=.agents/reviews/<ID>-<n>.md@$REVIEWED_SHA <model>, <số blocker>" --file /abs/BRANCHES.md --worktree /abs/.wt/<lane>--<slug>
 # Đọc một mục
 agm branch get <lane>/<slug> --file /abs/BRANCHES.md
 ```
 
 - Agent có MCP server `agm` dùng `agm_branch_update` (`branches_file` tuyệt đối) / `agm_branch_get`.
 - Khóa là `.agents/.runtime/locks/branches` cạnh `BRANCHES.md` (đã `.gitignore`); `agm` giữ vài mili-giây, chờ tối đa 30 giây và **thu hồi khóa cũ hơn 60 giây**, nên **cấm `mkdir`/`rmdir` khóa tay**. Terminal vai `worker` bị từ chối ghi.
-- **Giới hạn của guard `ready`:** agm chỉ kiểm `head` là SHA 12–40 ký tự hex, worktree sạch (bỏ qua `.agents/tasks/`, `.agents/.runtime/`) và HEAD thật khớp `head`. Guard **không** kiểm Audit/Reviewer đã chạy và không đọc `verify`/`review`. CEO tự đảm bảo đã có kết quả Audit và `.agents/reviews/<ID>-<n>.md` ĐẠT **trên đúng `head` này** trước khi đặt `ready`.
+- **Guard `ready` (agm ≥ 0.4.1):** agm kiểm `head` là SHA 12–40 ký tự hex, worktree sạch (bỏ qua `.agents/tasks/`, `.agents/.runtime/`), HEAD thật khớp `head`, và `review=.agents/reviews/<ID>-<n>.md@<sha>` (token đầu; phía sau được ghi chú tự do): tệp review phải đã commit ở HEAD, nhắc 7 ký tự đầu của `<sha>`, và từ `<sha>` tới HEAD không đổi tệp nào ngoài `.agents/`. `$REVIEWED_SHA` là commit Reviewer đã đọc (tệp review ghi nó ở dòng `Đối tượng: HEAD ...`); commit tệp review/log sau đó vẫn hợp lệ, còn sửa mã sau review thì bị từ chối và phải review lại. Guard **không** đọc verdict và không kiểm Audit: CEO vẫn tự xác nhận review ĐẠT và `verify=` xanh. Đổi `review` của mục đã `ready` cũng chạy lại guard.
 
 ---
 
@@ -99,7 +99,7 @@ agm branch get <lane>/<slug> --file /abs/BRANCHES.md
 3. **Giữ chỗ & giao việc trực tiếp:** Ghi `status: wip` bằng `agm branch set` (hoặc `agm_branch_update`). Viết `.agents/tasks/<ID>.md` (mục tiêu, `files_allowed`, `tier`, `phase`, `work_type`, `ponytail`, `skills`, `skill_refs`, lý do bổ sung và lệnh kiểm; nguồn/model đã kiểm qua `agm quota --refresh`). Chọn một workflow + một domain theo [Skill Routing](docs/SKILL-ROUTING.md), giữ verification và các skill bắt buộc, kiểm khả dụng đúng runtime rồi gọi `dispatch.sh <ID>` (`agm spawn`). Nhiều đầu việc độc lập (tệp/module/test tách biệt) thì khởi động song song trong cùng một đợt, trong mức `max_workers` (chỉ đếm `--role worker`) và ngân sách đã duyệt.
 4. **Theo dõi & chặn vòng lặp:** Nhận tín hiệu ngắn qua `agm send`; câu hỏi cần người dùng quyết đi qua `agm send user --type HỎI`. Khi vòng review trả `CHƯA ĐẠT`, chỉ đính kèm mục `Previous blockers` vào Brief (không truyền lịch sử chat). **Tối đa 2 vòng sửa** — lần 2 vẫn fail thì CEO trực tiếp chẩn đoán/leo thang.
 5. **Cổng chất lượng:** `Audit (script/CI + ESLint --max-warnings 0)` → `Reviewer (1 tầng độc lập, không tự review)` → `Docs & Report (agy flash-medium / hydrogen-low nếu có thay đổi)`.
-6. **Rebase & bàn giao `copilot-git`:** Rebase lên `main`, chạy lại kiểm chứng, lấy `HEAD_SHA=$(git rev-parse --short=12 HEAD)`, đặt `status: ready` bằng `agm branch set ... status=ready head=$HEAD_SHA verify=... review=... docs=... registered=... --worktree <worktree>` (guard chỉ kiểm git, xem §3) và nhắn `agm send copilot-git --type GIAO --task <ID> "..."`.
+6. **Rebase & bàn giao `copilot-git`:** Rebase lên `main`, chạy lại kiểm chứng, lấy `HEAD_SHA=$(git rev-parse --short=12 HEAD)`, đặt `status: ready` bằng `agm branch set ... status=ready head=$HEAD_SHA verify=... review=.agents/reviews/<ID>-<n>.md@<sha đã review> docs=... registered=... --worktree <worktree>` (guard kiểm git và bằng chứng review, xem §3) và nhắn `agm send copilot-git --type GIAO --task <ID> "..."`.
 7. **Chốt Shared Memory & Đồ thị (sau merge):**
    - Duyệt `.agents/memory/inbox/` (proposals từ Codex/Agy và conflict flags từ Agy) → gộp tri thức dài hạn vào `.agents/memory/published/`, **xóa tệp đã xử lý trong `inbox/`**, cập nhật `HANDOFF.md` (≤ 30 dòng).
    - Khi có thay đổi cấu trúc/module lớn, chạy batch incremental `/understand` trên `main` và commit `.ua/`.

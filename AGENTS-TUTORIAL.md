@@ -180,7 +180,7 @@ Lưu giữ các thông tin có giá trị qua nhiều task trong `.agents/memory
 6. **Chốt tri thức & Đồ thị (Claude CEO):** duyệt `.agents/memory/inbox/` → publish vào `.agents/memory/published/` (xóa inbox), cập nhật `HANDOFF.md`, và chạy batch incremental `/understand` khi có thay đổi cấu trúc.
 7. **Phát hành:** chỉ người dùng phê duyệt push/tag/deploy.
 
-> **Guard `status: ready` không thay cổng:** `agm branch set ... status=ready --worktree <wt>` chỉ kiểm `head` là SHA hợp lệ, worktree sạch (bỏ qua `.agents/tasks/`, `.agents/.runtime/`) và HEAD khớp `head`. Nó **không** chứng minh Audit/Reviewer đã chạy. CEO chỉ đặt `ready` khi đã có kết quả Audit và `.agents/reviews/<ID>-<n>.md` ĐẠT trên **đúng** `head` đó, và ghi chúng vào `verify=` / `review=`.
+> **Guard `status: ready` (agm ≥ 0.4.1):** `agm branch set ... status=ready --worktree <wt>` kiểm `head` là SHA hợp lệ, worktree sạch (bỏ qua `.agents/tasks/`, `.agents/.runtime/`), HEAD khớp `head` và có bằng chứng review `review=.agents/reviews/<ID>-<n>.md@<sha>` (token đầu; phía sau được ghi chú tự do): tệp review phải đã commit ở HEAD, nhắc 7 ký tự đầu của `<sha>`, và từ `<sha>` tới HEAD không đổi tệp nào ngoài `.agents/`. Guard chứng minh Reviewer **đã chạy trên đúng mã đó**, nhưng **không** đọc verdict và không kiểm Audit (`verify=` vẫn là văn bản tự do). CEO chỉ đặt `ready` khi review ĐẠT và Audit xanh.
 
 ---
 

@@ -176,7 +176,7 @@ Kiểm tra với client thật:
 - touches_hotspot: -
 - summary: Cảnh báo hàng sắp hết khi tồn dưới ngưỡng cấu hình
 - verify: npm test — 42 passed
-- review: opencode/non-openai, 0 bắt buộc sửa, .agents/reviews/tap-hoa--low-stock-1.md
+- review: .agents/reviews/tap-hoa--low-stock-1.md@3c2b1a0f9e8d opencode/non-openai, 0 bắt buộc sửa
 - docs: không đổi
 - registered: 2026-11-22T08:40+07:00
 - git: -
@@ -220,6 +220,7 @@ agm branch set tap-hoa/low-stock status=wip lane=ceo-tap-hoa tier=nhanh `
 # Báo sẵn sàng merge (bắt buộc có --worktree)
 agm branch set tap-hoa/low-stock status=ready head=9f8e7d6c5b4a `
   "verify=npm test — 42 passed" "registered=2026-11-22T08:40+07:00" `
+  "review=.agents/reviews/tap-hoa--low-stock-1.md@3c2b1a0f9e8d deepseek-v4-pro, 0 blocker" `
   --worktree D:\Project\shop.wt\low-stock --file D:\Project\shop\BRANCHES.md
 ```
 
@@ -234,7 +235,7 @@ agm branch set tap-hoa/low-stock status=ready head=9f8e7d6c5b4a `
 
 Bảo vệ được kích hoạt khi:
 - cập nhật đặt `status=ready`, **hoặc**
-- cập nhật đổi `head` của một mục **đã** `ready`.
+- cập nhật đổi `head` hoặc `review` của một mục **đã** `ready` (đổi `review` từ 0.4.1).
 
 Khi đó, mọi điều kiện sau phải đúng:
 
@@ -244,8 +245,13 @@ Khi đó, mọi điều kiện sau phải đúng:
 | Có `--worktree` (CLI) hoặc `worktree` (MCP) | Bị từ chối. |
 | `git status` trong worktree sạch | Bị từ chối, vì còn thay đổi chưa commit. |
 | HEAD thật của worktree **bắt đầu bằng** `head` | Bị từ chối, vì SHA không khớp. |
+| (0.4.1) `review` có dạng `.agents/reviews/<tệp>.md@<sha>` ở token đầu, `<sha>` hex 12–40 ký tự (lấy từ lần cập nhật hoặc từ tệp) | Bị từ chối: thiếu bằng chứng review hoặc sai định dạng. |
+| (0.4.1) Tệp review đã **commit ở HEAD** và nhắc 7 ký tự đầu của `<sha>` | Bị từ chối: review chưa commit, hoặc review một commit khác. |
+| (0.4.1) Từ `<sha>` tới HEAD không đổi tệp nào ngoài `.agents/` | Bị từ chối và liệt kê tệp đã đổi: mã sửa sau review, phải review lại. |
 
 Khi bị từ chối, tệp **không đổi một byte**. Lần thử vẫn được ghi vào nhật ký `actions`.
+
+> Guard chứng minh Reviewer **đã chạy trên đúng mã đang `ready`**, không chứng minh review **ĐẠT** (verdict không được đọc) và không kiểm Audit (`verify` là văn bản tự do). Các lệnh git của guard (`ls-tree`, `show`, `diff`) chạy trước khi lấy khóa; SHA lạ hoặc git lỗi thì guard từ chối.
 
 ### 4.5. Ai được ghi
 
@@ -334,7 +340,7 @@ Lưu ý: tin gửi qua MCP mà **không có** `HC_TERMINAL_ID` sẽ mang ngườ
 3. **Giữ chỗ:** `agm_branch_update` với `fields: {"status":"wip","lane":"ceo-<lane>","touches_hotspot":"…"}`.
 4. **Sinh thợ:** `agm_spawn` (template theo tier). Nếu đã chạm `max_workers` thì tool báo lỗi; chờ một thợ xong rồi gọi lại.
 5. **Nhận báo cáo:** thợ gửi `agm_send` tới BOT-CEO với `kind: REPORT`. BOT-CEO đọc tin qua `agm_inbox` hoặc qua terminal của mình.
-6. **Chốt nhánh:** sau khi audit, review và docs đều xong, gọi `agm_branch_update` với `status: ready`, `head: <SHA>` và `worktree`.
+6. **Chốt nhánh:** sau khi audit, review và docs đều xong, gọi `agm_branch_update` với `status: ready`, `head: <SHA>`, `review: .agents/reviews/<ID>-<n>.md@<SHA đã review>` và `worktree`.
 7. **Giao merge:** `agm_send` tới `copilot-git` với `kind: ASSIGN`.
 
 ### 6.2. Copilot (`copilot-git`)

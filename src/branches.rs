@@ -408,21 +408,91 @@ fn is_sha(s: &str) -> bool {
     (12..=40).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Kết quả git lấy trước khi giữ khóa: (worktree sạch, HEAD thật).
+/// Kết quả git lấy trước khi giữ khóa: (worktree sạch, HEAD thật, bằng chứng review).
 struct GitSnapshot {
     wt: String,
     clean: bool,
     head: String,
+    review: Option<ReviewEvidence>,
 }
 
-/// Bảo vệ ready: head hợp lệ, có worktree, worktree sạch và HEAD khớp head đã khai.
-/// Chỉ so sánh chuỗi — mọi lệnh git đã chạy xong trước khi giữ khóa.
-fn check_ready(merged: &[(String, String)], snap: Option<&GitSnapshot>) -> Result<()> {
-    let head = merged
+/// Những gì git nói về tệp review mà trường `review` trỏ tới.
+struct ReviewEvidence {
+    /// Giá trị `review` đã dùng để truy vấn git (phải trùng giá trị sau khi gộp).
+    value: String,
+    /// Nội dung tệp review trong commit HEAD (None = chưa commit).
+    text: Option<String>,
+    /// Tệp ngoài `.agents/` đã đổi từ commit được review tới HEAD.
+    changed: Vec<String>,
+}
+
+const REVIEW_FORMAT: &str = ".agents/reviews/<ID>-<n>.md@<sha>";
+
+/// Tách `<tệp>@<sha>` ở token đầu của `review`; phần sau khoảng trắng là ghi chú tự do.
+fn parse_review(value: &str) -> Result<(&str, &str)> {
+    let token = value.split_whitespace().next().unwrap_or("");
+    let Some((path, sha)) = token.rsplit_once('@') else {
+        bail!("không thể đặt ready: review phải có dạng {REVIEW_FORMAT} (đang là {value:?})");
+    };
+    let safe = path.starts_with(".agents/reviews/")
+        && path.ends_with(".md")
+        && !path.contains('\\')
+        && path
+            .split('/')
+            .all(|p| !p.is_empty() && p != "." && p != "..");
+    if !safe {
+        bail!(
+            "không thể đặt ready: review phải trỏ tệp .md trong .agents/reviews/ (đang là {path:?})"
+        );
+    }
+    if !is_sha(sha) {
+        bail!(
+            "không thể đặt ready: SHA đã review phải là 12-40 ký tự hex thường (đang là {sha:?})"
+        );
+    }
+    Ok((path, sha))
+}
+
+fn field<'a>(fields: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    fields
         .iter()
-        .find(|(k, _)| k == "head")
-        .map(|(_, v)| v.as_str())
-        .unwrap_or("");
+        .rfind(|(k, _)| k == key)
+        .map(|(_, v)| v.trim())
+}
+
+/// Bằng chứng review phải: đã commit ở HEAD, nhắc đúng commit được review, và từ commit đó
+/// tới HEAD không đổi gì ngoài `.agents/` (chỉ thêm tệp review/log).
+fn check_review(merged: &[(String, String)], snap: &GitSnapshot) -> Result<()> {
+    let Some(value) = field(merged, "review") else {
+        bail!("không thể đặt ready: thiếu review={REVIEW_FORMAT} (bằng chứng Reviewer đã chạy)");
+    };
+    let (path, sha) = parse_review(value)?;
+    let Some(ev) = snap.review.as_ref().filter(|e| e.value == value) else {
+        bail!("không thể đặt ready: BRANCHES.md đổi trong lúc kiểm review — chạy lại");
+    };
+    let Some(text) = ev.text.as_deref() else {
+        bail!(
+            "không thể đặt ready: {path} chưa commit ở HEAD của {}",
+            snap.wt
+        );
+    };
+    let short = &sha[..7];
+    if !text.contains(short) {
+        bail!("không thể đặt ready: {path} không nhắc commit được review {short}");
+    }
+    if !ev.changed.is_empty() {
+        bail!(
+            "không thể đặt ready: mã đổi sau commit được review {short}: {}",
+            ev.changed.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Bảo vệ ready: head hợp lệ, có worktree, worktree sạch, HEAD khớp head đã khai và có bằng
+/// chứng review cho đúng mã đó. Chỉ so sánh chuỗi — mọi lệnh git đã chạy xong trước khi giữ khóa.
+fn check_ready(merged: &[(String, String)], snap: Option<&GitSnapshot>) -> Result<()> {
+    let head = field(merged, "head").unwrap_or("");
     if !is_sha(head) {
         bail!("không thể đặt ready: head phải là SHA 12-40 ký tự hex thường (đang là {head:?})");
     }
@@ -441,7 +511,7 @@ fn check_ready(merged: &[(String, String)], snap: Option<&GitSnapshot>) -> Resul
             snap.head
         );
     }
-    Ok(())
+    check_review(merged, snap)
 }
 
 /// Ghi tệp qua tệp tạm rồi đổi tên; `PermissionDenied` (Defender/indexer giữ tệp) thử lại.
@@ -510,10 +580,11 @@ fn do_update(
         .rfind(|(k, _)| k == "status")
         .map(|(_, v)| v.trim());
     let sets_head = req.fields.iter().any(|(k, _)| k == "head");
+    let sets_review = req.fields.iter().any(|(k, _)| k == "review");
     let to_ready = last_status == Some("ready");
     let may_guard = match last_status {
         Some(s) => s == "ready",
-        None => sets_head,
+        None => sets_head || sets_review,
     };
     if last_status == Some("ready")
         && let Some((_, h)) = req.fields.iter().rfind(|(k, _)| k == "head")
@@ -525,11 +596,31 @@ fn do_update(
         );
     }
     let snap = match req.worktree.as_deref() {
-        Some(wt) if may_guard => Some(GitSnapshot {
-            wt: wt.to_string(),
-            clean: git.is_clean(wt)?,
-            head: git.head(wt)?,
-        }),
+        Some(wt) if may_guard => {
+            // review mới trong lệnh, không thì giá trị đang có (đọc không khóa; so lại trong khóa)
+            let review = match field(&req.fields, "review") {
+                Some(v) => Some(v.to_string()),
+                None => get(&req.file, &req.entry)?
+                    .and_then(|f| field(&f, "review").map(str::to_string)),
+            };
+            let review = match review {
+                Some(value) => match parse_review(&value) {
+                    Ok((path, sha)) => Some(ReviewEvidence {
+                        text: git.file_at_head(wt, path)?,
+                        changed: git.changed_outside_agents(wt, sha)?,
+                        value,
+                    }),
+                    Err(_) => None, // check_ready báo lỗi định dạng
+                },
+                None => None,
+            };
+            Some(GitSnapshot {
+                wt: wt.to_string(),
+                clean: git.is_clean(wt)?,
+                head: git.head(wt)?,
+                review,
+            })
+        }
         _ => None,
     };
     let _lock = acquire_lock(&lock_dir(&req.file), timeout, LOCK_STALE)?;
@@ -543,7 +634,7 @@ fn do_update(
     let (new_text, created) = upsert_entry(&text, &req.entry, &req.fields)?;
     let merged = read_entry(&new_text, &req.entry)?.unwrap_or_default();
     let merged_ready = merged.iter().any(|(k, v)| k == "status" && v == "ready");
-    if merged_ready && (to_ready || sets_head) {
+    if merged_ready && (to_ready || sets_head || sets_review) {
         check_ready(&merged, snap.as_ref())?;
     }
     write_atomic_with(&req.file, &new_text, &|a, b| std::fs::rename(a, b))?;

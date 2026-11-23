@@ -64,3 +64,61 @@ fn untracked_source_files_make_tree_dirty_but_task_files_do_not() -> anyhow::Res
     assert!(!GitCli.is_clean(&cwd)?);
     Ok(())
 }
+
+fn repo() -> anyhow::Result<tempfile::TempDir> {
+    let tmp = tempfile::tempdir()?;
+    let d = tmp.path();
+    git(d, &["init", "-q"]);
+    git(d, &["config", "user.email", "t@example.invalid"]);
+    git(d, &["config", "user.name", "t"]);
+    fs::write(d.join("a.txt"), "1")?;
+    git(d, &["add", "."]);
+    git(d, &["commit", "-qm", "init"]);
+    Ok(tmp)
+}
+
+#[test]
+fn file_at_head_reads_committed_files_only() -> anyhow::Result<()> {
+    let tmp = repo()?;
+    let d = tmp.path();
+    let cwd = d.to_string_lossy();
+    fs::create_dir_all(d.join(".agents/reviews"))?;
+    fs::write(d.join(".agents/reviews/x-1.md"), "verdict: ĐẠT\n")?;
+    // Chưa commit: không tính là bằng chứng.
+    assert_eq!(GitCli.file_at_head(&cwd, ".agents/reviews/x-1.md")?, None);
+    git(d, &["add", "."]);
+    git(d, &["commit", "-qm", "review"]);
+    assert_eq!(
+        GitCli.file_at_head(&cwd, ".agents/reviews/x-1.md")?,
+        Some("verdict: ĐẠT\n".to_string())
+    );
+    assert_eq!(GitCli.file_at_head(&cwd, ".agents/reviews/none.md")?, None);
+    Ok(())
+}
+
+#[test]
+fn changed_outside_agents_ignores_harness_only_commits() -> anyhow::Result<()> {
+    let tmp = repo()?;
+    let d = tmp.path();
+    let cwd = d.to_string_lossy();
+    let reviewed = GitCli.head(&cwd)?;
+    fs::create_dir_all(d.join(".agents/reviews"))?;
+    fs::write(d.join(".agents/reviews/x-1.md"), "ĐẠT")?;
+    git(d, &["add", "."]);
+    git(d, &["commit", "-qm", "review"]);
+    assert!(GitCli.changed_outside_agents(&cwd, &reviewed)?.is_empty());
+    fs::write(d.join("a.txt"), "2")?;
+    git(d, &["add", "."]);
+    git(d, &["commit", "-qm", "code after review"]);
+    assert_eq!(
+        GitCli.changed_outside_agents(&cwd, &reviewed)?,
+        vec!["a.txt".to_string()]
+    );
+    // SHA không tồn tại: lỗi, không được coi là "không đổi gì".
+    assert!(
+        GitCli
+            .changed_outside_agents(&cwd, "0123456789ab0123456789ab0123456789ab0123")
+            .is_err()
+    );
+    Ok(())
+}

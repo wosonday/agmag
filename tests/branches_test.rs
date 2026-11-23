@@ -167,6 +167,10 @@ use std::time::Duration;
 struct FakeGit {
     head: String,
     clean: bool,
+    /// Nội dung tệp review ở HEAD (None = HEAD không chứa tệp).
+    review_text: Option<String>,
+    /// Tệp ngoài `.agents/` đổi từ commit đã review tới HEAD.
+    changed: Vec<String>,
 }
 
 impl Git for FakeGit {
@@ -179,12 +183,24 @@ impl Git for FakeGit {
     fn touched_since(&self, _: &str, _: &str, _: &str) -> anyhow::Result<Option<String>> {
         Ok(None)
     }
+    fn file_at_head(&self, _: &str, path: &str) -> anyhow::Result<Option<String>> {
+        Ok(self.review_text.clone().filter(|_| path == REVIEW_PATH))
+    }
+    fn changed_outside_agents(&self, _: &str, _: &str) -> anyhow::Result<Vec<String>> {
+        Ok(self.changed.clone())
+    }
 }
+
+const REVIEW_PATH: &str = ".agents/reviews/x-1.md";
+/// Review đã chạy trên commit `aaaa11112222`; sau đó chỉ commit tệp review (HEAD deadbeef…).
+const REVIEW: &str = ".agents/reviews/x-1.md@aaaa11112222";
 
 fn fake(clean: bool) -> FakeGit {
     FakeGit {
         head: "deadbeef0000ffff".into(),
         clean,
+        review_text: Some("- Đối tượng: HEAD `aaaa11112222`\n## KẾT LUẬN: ĐẠT\n".into()),
+        changed: vec![],
     }
 }
 
@@ -301,7 +317,11 @@ fn ready_requires_head_worktree_clean_and_matching_sha() {
     let ok = req(
         &file,
         "a/x",
-        &[("status", "ready"), ("head", "deadbeef0000")],
+        &[
+            ("status", "ready"),
+            ("head", "deadbeef0000"),
+            ("review", REVIEW),
+        ],
         wt,
     );
     update(&store, &fake(true), None, &ok, T, 1).unwrap();
@@ -480,6 +500,20 @@ struct LockSpyGit {
 }
 
 impl Git for LockSpyGit {
+    fn file_at_head(&self, _: &str, path: &str) -> anyhow::Result<Option<String>> {
+        assert!(
+            !lock_dir(&self.file).exists(),
+            "git file_at_head chạy khi đang giữ khóa"
+        );
+        Ok((path == REVIEW_PATH).then(|| "HEAD aaaa11112222 ĐẠT".to_string()))
+    }
+    fn changed_outside_agents(&self, _: &str, _: &str) -> anyhow::Result<Vec<String>> {
+        assert!(
+            !lock_dir(&self.file).exists(),
+            "git changed_outside_agents chạy khi đang giữ khóa"
+        );
+        Ok(vec![])
+    }
     fn head(&self, _: &str) -> anyhow::Result<String> {
         assert!(
             !lock_dir(&self.file).exists(),
@@ -530,7 +564,11 @@ fn git_calls_happen_outside_the_lock() {
         &req(
             &file,
             "a/x",
-            &[("status", "ready"), ("head", "deadbeef0000")],
+            &[
+                ("status", "ready"),
+                ("head", "deadbeef0000"),
+                ("review", REVIEW),
+            ],
             Some("/wt"),
         ),
         T,
@@ -574,7 +612,7 @@ fn git_error_before_lock_writes_nothing_and_leaves_no_lock() {
 fn head_change_on_ready_entry_runs_the_guard() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("BRANCHES.md");
-    let before = "### a/x\n- status: ready\n- head: cafebabe0000\n";
+    let before = "### a/x\n- status: ready\n- head: cafebabe0000\n- review: .agents/reviews/x-1.md@aaaa11112222\n";
     std::fs::write(&file, before).unwrap();
     let store = Store::open_in_memory().unwrap();
     let e = update(
@@ -778,13 +816,13 @@ fn write_retries_sharing_and_lock_violations() {
 fn ready_without_head_update_checks_head_from_file() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("BRANCHES.md");
-    let before = "### a/x\n- status: wip\n- head: deadbeef0000\n";
+    let before = "### a/x\n- status: wip\n- head: deadbeef0000\n- review: .agents/reviews/x-1.md@aaaa11112222\n";
     std::fs::write(&file, before).unwrap();
     let store = Store::open_in_memory().unwrap();
     let r = req(&file, "a/x", &[("status", "ready")], Some("/wt"));
     let other = FakeGit {
         head: "cafebabe0000ffff".into(),
-        clean: true,
+        ..fake(true)
     };
     assert!(update(&store, &other, None, &r, T, 1).is_err());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
@@ -794,4 +832,142 @@ fn ready_without_head_update_checks_head_from_file() {
             .unwrap()
             .contains("- status: ready")
     );
+}
+
+// ---- Guard ready đòi bằng chứng review ----
+
+fn ready_with(review: Option<&str>) -> Vec<(&str, &str)> {
+    let mut f = vec![("status", "ready"), ("head", "deadbeef0000")];
+    if let Some(r) = review {
+        f.push(("review", r));
+    }
+    f
+}
+
+#[test]
+fn ready_requires_committed_review_of_the_same_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    let before = "### a/x\n- status: wip\n";
+    std::fs::write(&file, before).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let wt = Some("/wt");
+    let not_committed = FakeGit {
+        review_text: None,
+        ..fake(true)
+    };
+    let other_sha = FakeGit {
+        review_text: Some("HEAD `bbbb2222` ĐẠT".into()),
+        ..fake(true)
+    };
+    let code_after_review = FakeGit {
+        changed: vec!["src/lib.rs".into()],
+        ..fake(true)
+    };
+    let cases: Vec<(Option<&str>, FakeGit, &str)> = vec![
+        (None, fake(true), "review"),
+        (Some("opencode, 0 blocker"), fake(true), "@"),
+        (Some(".agents/reviews/x-1.md@abc"), fake(true), "SHA"),
+        (
+            Some("src/x-1.md@aaaa11112222"),
+            fake(true),
+            ".agents/reviews/",
+        ),
+        (
+            Some(".agents/reviews/../../x.md@aaaa11112222"),
+            fake(true),
+            ".agents/reviews/",
+        ),
+        (Some(REVIEW), not_committed, "chưa commit"),
+        (Some(REVIEW), other_sha, "aaaa111"),
+        (Some(REVIEW), code_after_review, "src/lib.rs"),
+    ];
+    for (review, g, want) in &cases {
+        let e = update(
+            &store,
+            g,
+            None,
+            &req(&file, "a/x", &ready_with(*review), wt),
+            T,
+            1,
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains(want), "{review:?}: {e}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+        assert!(!lock_dir(&file).exists());
+    }
+    // Có ghi chú sau bằng chứng vẫn hợp lệ.
+    let noted = format!("{REVIEW} opencode-go/deepseek-v4-pro, 0 blocker");
+    update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &ready_with(Some(&noted)), wt),
+        T,
+        1,
+    )
+    .unwrap();
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("- status: ready")
+    );
+}
+
+#[test]
+fn ready_uses_review_already_recorded_in_the_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(
+        &file,
+        format!("### a/x\n- status: wip\n- review: {REVIEW}\n"),
+    )
+    .unwrap();
+    let store = Store::open_in_memory().unwrap();
+    update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &ready_with(None), Some("/wt")),
+        T,
+        1,
+    )
+    .unwrap();
+}
+
+#[test]
+fn changing_review_on_a_ready_entry_runs_the_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    let before = format!("### a/x\n- status: ready\n- head: deadbeef0000\n- review: {REVIEW}\n");
+    std::fs::write(&file, &before).unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let e = update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &[("review", "đã review miệng")], Some("/wt")),
+        T,
+        1,
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("@"), "{e}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+}
+
+#[test]
+fn review_on_non_ready_entry_is_free_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("BRANCHES.md");
+    std::fs::write(&file, "### a/x\n- status: wip\n").unwrap();
+    let store = Store::open_in_memory().unwrap();
+    update(
+        &store,
+        &fake(true),
+        None,
+        &req(&file, "a/x", &[("review", "đang chờ reviewer")], None),
+        T,
+        1,
+    )
+    .unwrap();
 }

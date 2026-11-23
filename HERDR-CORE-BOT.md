@@ -148,7 +148,7 @@ Workflow chính là `code-review` đã kiểm khả dụng theo `skill_refs`, th
 1. Đọc `.agents/tasks/<ID>.md`, `.agents/log/<ID>.md`, `git diff <base>...HEAD`, và truy vấn `.ua/` (hiểu tác động diff) + `.agents/memory/published/` (kiểm bất biến).
 2. Kiểm tập trung: correctness, security, testing, performance, complexity (Ponytail full; không chất vấn phạm vi CEO đã duyệt).
 3. Ghi kết quả ngắn gọn vào `.agents/reviews/<ID>-<n>.md` (ĐẠT | CHƯA ĐẠT; mỗi Blocker ghi `file:line`, hậu quả, cách sửa tối thiểu). Nếu có phát hiện dài hạn hoặc xung đột bộ nhớ, ghi đề xuất vào `.agents/memory/inbox/<ID>-<agent>.md`.
-4. Áp dụng verification, ghi base/head đầu vào và phần chưa kiểm, commit tệp review trên nhánh rồi báo `agm send <MANAGER> --type ĐẠT|CHƯA ĐẠT --task <ID> "xem .agents/reviews/<ID>-<n>.md"`.
+4. Áp dụng verification, ghi base/head đầu vào (dòng `Đối tượng: HEAD <sha>` — guard `ready` đòi tệp review nhắc đúng SHA này) và phần chưa kiểm, commit tệp review trên nhánh rồi báo `agm send <MANAGER> --type ĐẠT|CHƯA ĐẠT --task <ID> "xem .agents/reviews/<ID>-<n>.md"`.
 ```
 
 **4) `sparring-opus.md` (Đồng Kiến trúc sư & Reviewer cấp cao — `agy` Opus High):**

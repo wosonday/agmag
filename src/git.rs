@@ -10,6 +10,14 @@ pub trait Git {
     fn is_clean(&self, cwd: &str) -> Result<bool>;
     /// Commit mới nhất kể từ `since` có chạm `path`; None nếu không có.
     fn touched_since(&self, cwd: &str, since: &str, path: &str) -> Result<Option<String>>;
+    /// Nội dung `path` trong commit HEAD; None nếu HEAD không chứa tệp (kể cả khi tệp có trên đĩa).
+    fn file_at_head(&self, _cwd: &str, _path: &str) -> Result<Option<String>> {
+        bail!("git: file_at_head chưa được hỗ trợ")
+    }
+    /// Tệp ngoài `.agents/` khác nhau giữa `since` và HEAD; SHA lạ là lỗi.
+    fn changed_outside_agents(&self, _cwd: &str, _since: &str) -> Result<Vec<String>> {
+        bail!("git: changed_outside_agents chưa được hỗ trợ")
+    }
 }
 
 pub struct GitCli;
@@ -52,6 +60,42 @@ impl Git for GitCli {
         let range = format!("{since}..HEAD");
         let out = git(cwd, &["log", "-1", "--format=%H", &range, "--", path])?;
         Ok((!out.is_empty()).then_some(out))
+    }
+
+    fn file_at_head(&self, cwd: &str, path: &str) -> Result<Option<String>> {
+        if git(cwd, &["ls-tree", "--name-only", "HEAD", "--", path])?.is_empty() {
+            return Ok(None);
+        }
+        // Không qua `git()`: giữ nguyên nội dung, không trim.
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(["show", &format!("HEAD:{path}")])
+            .output()?;
+        if !out.status.success() {
+            bail!(
+                "git show HEAD:{path} lỗi: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned()))
+    }
+
+    fn changed_outside_agents(&self, cwd: &str, since: &str) -> Result<Vec<String>> {
+        let commit = format!("{since}^{{commit}}");
+        let out = git(
+            cwd,
+            &[
+                "diff",
+                "--name-only",
+                &commit,
+                "HEAD",
+                "--",
+                ".",
+                ":(exclude).agents",
+            ],
+        )?;
+        Ok(out.lines().map(str::to_string).collect())
     }
 }
 

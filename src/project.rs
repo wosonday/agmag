@@ -372,3 +372,112 @@ pub fn branch_entry_for(cwd: Option<&str>, task: Option<&str>) -> Option<String>
     }
     task.and_then(entry_from)
 }
+
+/// address → root for every terminal with a cwd: the row's cwd, else the live `TermView.cwd`
+/// (the linked session's cwd) from the snapshot. Empty cwds are skipped.
+pub fn compute_roots(
+    terms: &[TerminalRow],
+    snap: &crate::dashboard::Snapshot,
+    cache: &mut RootCache,
+    resolve: &dyn Fn(&str) -> Option<String>,
+) -> Roots {
+    let mut out = Roots::new();
+    for t in terms {
+        let cwd = t.cwd.as_deref().filter(|c| !c.is_empty()).or_else(|| {
+            snap.terminals
+                .iter()
+                .find(|v| v.address == t.address)
+                .map(|v| v.cwd.as_str())
+                .filter(|c| !c.is_empty())
+        });
+        if let Some(cwd) = cwd {
+            out.insert(t.address.clone(), cache.root_of(cwd, resolve));
+        }
+    }
+    out
+}
+
+/// Everything the project view renders: member agents (live always, exited only while they have
+/// an open inbox item), the project's open inbox items and its newest 20 messages.
+pub fn load_project_view(
+    store: &crate::store::Store,
+    snap: &crate::dashboard::Snapshot,
+    key: &ProjectKey,
+    roots: &Roots,
+    now_ms: i64,
+) -> anyhow::Result<ProjectView> {
+    let terms = store.terminals(false)?;
+    let open = store.inbox(true)?;
+    let kept: Vec<&TerminalRow> = members(&terms, roots, key)
+        .into_iter()
+        .filter(|t| {
+            t.state == "live"
+                || open.iter().any(|item| {
+                    item.terminal.as_deref().is_some_and(|term| {
+                        term == t.address.as_str() || t.name.as_deref() == Some(term)
+                    })
+                })
+        })
+        .collect();
+
+    let ps = parties(&kept);
+    let sessions: Vec<i64> = kept.iter().filter_map(|t| t.session).collect();
+    let turns = store.latest_turns(&sessions)?;
+    let buckets = store.usage_buckets(&sessions, now_ms - 3_600_000, 300_000, 12)?;
+    let messages = store.messages_involving(&ps, 20)?;
+    let inbox: Vec<InboxRow> = open
+        .into_iter()
+        .filter(|item| {
+            item.terminal
+                .as_deref()
+                .is_some_and(|term| ps.iter().any(|p| p.as_str() == term))
+        })
+        .collect();
+
+    let branches_file = std::path::Path::new(&key.root).join("BRANCHES.md");
+    let mut agents = Vec::with_capacity(kept.len());
+    for (i, depth, last_sibling) in tree_order(&kept) {
+        let t = kept[i];
+        // Snapshot fields exist for live terminals only; exited → ""/None, never guessed.
+        let view = if t.state == "live" {
+            snap.terminals.iter().find(|v| v.address == t.address)
+        } else {
+            None
+        };
+        let stage = branch_entry_for(t.cwd.as_deref(), t.task.as_deref())
+            .and_then(|entry| branches::get(&branches_file, &entry).ok().flatten())
+            .and_then(|fields| {
+                fields
+                    .iter()
+                    .rfind(|(k, _)| k == "status")
+                    .map(|(_, v)| v.clone())
+            });
+        agents.push(AgentView {
+            address: t.address.clone(),
+            label: t
+                .name
+                .clone()
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| t.address.clone()),
+            app: t.app.clone().unwrap_or_default(),
+            model: view.map(|v| v.model.clone()).unwrap_or_default(),
+            effort: view.map(|v| v.effort.clone()).unwrap_or_default(),
+            status: t.status.clone().unwrap_or_else(|| "-".into()),
+            state: t.state.clone(),
+            depth,
+            last_sibling,
+            doing: t.session.and_then(|sid| turns.get(&sid).cloned()),
+            last_msg: view.and_then(|v| v.last_msg.clone()),
+            context_pct: view.and_then(|v| v.context_pct),
+            tokens: view.and_then(|v| v.tokens),
+            spark: t.session.and_then(|sid| buckets.get(&sid).cloned()),
+            stage,
+        });
+    }
+    Ok(ProjectView {
+        key: key.clone(),
+        agents,
+        inbox,
+        messages,
+    })
+}

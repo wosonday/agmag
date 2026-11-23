@@ -45,3 +45,15 @@ context % (session not linked), so this is a phase-boundary handoff, target ≤ 
 - Pending user decisions: push main; remove merged worktrees (tui-project-a..k, fix-caller-shell, tui-review,
   tui-verify, tui-board, tui-board-a..d, -c2, -fix1); owner of the uncommitted delegated-approval work in D:/Project/agmag;
   `cargo install --path D:\Project\agmag.wt\main`.
+
+## Update 2026-11-24 later — main pushed, Phase 2 in progress
+- main pushed (origin/main 75df4cd). Merged worktrees removed; kept: D:/Project/agmag (someone's uncommitted work),
+  created-ms (fix/created-ms-identity, NOT merged), branch support/agy-review (unchecked).
+- Phase 2 (whole `agm tui` on ratatui, approach 3 hybrid) approved: spec docs/superpowers/specs/2026-11-24-tui-phase2-design.md,
+  plan docs/superpowers/plans/2026-11-24-tui-phase2.md. Branch feat/tui-app (worktree D:/Project/agmag.wt/tui-app):
+  tracks a–e merged + Task F wiring (d8714df: `agm tui` = app, `agm tui --plain` = line UI). 571 tests, clippy, fmt, harness OK.
+- Review round 1 (.agents/reviews/tui-app-1.md, agy gemini-4-hydrogen-high): CHƯA ĐẠT, 4 must + 4 should; fix worker
+  running in D:/Project/agmag.wt/tui-app-fix1 (deepseek-v4.1-flash) with 2 extra CEO items (Terminals column widths,
+  one-line messages when wide). Next: merge fix1 → review round 2 → CHANGELOG → merge to local main → ask user to try
+  `agm tui` and before push. Preview tool: copy ~/.agmag/agm.db + providers.toml to scratchpad and render draw_global
+  with TestBackend (temporary test file, never committed).

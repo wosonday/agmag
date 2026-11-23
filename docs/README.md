@@ -15,6 +15,7 @@ This directory specifies startup commands, permission boundaries, `agm`/`hc` usa
 | [HARNESS-LINT.md](HARNESS-LINT.md) | Python 3.11+, standard library only | Links/anchors, Markdown structure, model IDs, bilingual routing and safety contracts |
 | [COPILOT-GIT.md](COPILOT-GIT.md) | GitHub Copilot CLI (`copilot`) | Git version manager: reads `BRANCHES.md`, merges exact SHA, post-merge verification, reverts, cleans up worktrees/branches |
 | [ESLINT-CI-GUARDRAILS.md](ESLINT-CI-GUARDRAILS.md) | ESLint (`--max-warnings 0`) + Git Diff Check + GitHub Actions CI | **Mandatory guardrails for all models:** blocks `any`, `@ts-ignore`, `eslint-disable`, bloated functions, missing `await`; enforced at Audit/CI so lightweight models can be used safely |
+| [AGM-0.4.0-GUIDE.md](AGM-0.4.0-GUIDE.md) | `agm` 0.4.0 (`agm branch`, `agm mcp`) | Upgrade & usage guide (Vietnamese): locked `BRANCHES.md` writer (`agm branch get/set`) and 7-tool stdio MCP server (`agm mcp`) |
 
 ## Quick Quota Check Before Dispatch
 

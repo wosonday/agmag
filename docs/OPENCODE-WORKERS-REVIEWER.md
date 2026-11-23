@@ -72,9 +72,9 @@ The `worker-fast`/`reviewer` agents must already exist with scoped permissions. 
 
 *(Use the v2 directory for new configs. Standalone sessions need `mode: primary` or `all`; `mode: subagent` is only for OpenCode child sessions.)*
 
-- **Strict per-role permissions:**
-  - `worker-*`: use v2 `permissions` to restrict `edit` and `shell`. Allow only approved writes; block out-of-role Git operations and deny access to secrets through both file and shell tools.
-  - `auditor` / `reviewer` / `gitnexus-sync`: forbidden from editing product source code.
+- **Strict per-role permissions & `agm mcp` scoping:**
+  - `worker-*`: use v2 `permissions` to restrict `edit` and `shell`. Allow only approved writes; block out-of-role Git operations and deny access to secrets through both file and shell tools. **Do NOT attach `agm` MCP (`"mcp": { "agm": ... }`) to regular worker profiles** (because `agm_spawn` can spawn terminals); workers report via CLI `agm send` (`REPORT|BLOCKED|ERROR` or Vietnamese equivalents) and are rejected from writing `BRANCHES.md`.
+  - `auditor` / `reviewer` / `gitnexus-sync`: forbidden from editing product source code. Only manager/review profiles (such as `reviewer`) may mount `agm` MCP (`type: "local", command: ["agm", "mcp"]`).
 - **Automatic rotation via `agm daemon`:**
   - When an OpenCode worker (`agm spawn ... --role worker`) hits **`ctx_rotate` (default 70%)**, `agm` prompts it to write a handoff entry to `.agents/log/<ID>.md` + commit, verifies a clean worktree, then kills the old session and spawns a fresh successor in the same worktree.
 - **Concurrency:** hard-capped by `[policy].max_workers` in `~/.agmag/providers.toml` (keep within your Ollama Cloud plan's concurrent limit if applicable).

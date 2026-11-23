@@ -4,7 +4,7 @@ Tài liệu bổ sung cho [AGENTS-TUTORIAL.md](AGENTS-TUTORIAL.md) (mục 2.2, 3
 
 **Quản lý phiên bản Git giao cho GitHub Copilot** (`AGENTS-TUTORIAL.md` §3.3.1, [docs/COPILOT-GIT.md](docs/COPILOT-GIT.md)). `agm` và lớp wrapper worktree lo sinh/theo dõi/xoay vòng phiên và đo token; BOT-CEO (hoặc Codex ở dự án 1 luồng) quản lý đầu việc và bàn giao nhánh + SHA cuối (sau Review và bước cập nhật docs của Hydrogen Medium) + kết quả kiểm. Copilot tích hợp, revert và dọn worktree/nhánh đã tích hợp trong phạm vi được cho phép. Với MATHY-AI, tuân theo `docs/harness/GIT_BOT.md`.
 
-Phạm vi: (1) dùng **`agm` (`agmag` v0.3.0)** đứng trên `hc` (`herdr-core`) để chạy nền, giao việc, nhắn tin, kiểm soát ngân sách/xoay vòng, và các template cho từng vai; (2) quy tắc tin nhắn & hộp thư; (3) đồng bộ GitNexus khi worktree nằm ở `.wt/` trong dự án.
+Phạm vi: (1) dùng **`agm` (`agmag` v0.4.0)** đứng trên `hc` (`herdr-core`) để chạy nền, giao việc, nhắn tin, khóa `BRANCHES.md` (`agm branch`), MCP server 7 tool (`agm mcp`), kiểm soát ngân sách/xoay vòng, và các template cho từng vai; (2) quy tắc tin nhắn & hộp thư; (3) đồng bộ GitNexus khi worktree nằm ở `.wt/` trong dự án. Xem chi tiết tính năng mới tại [docs/AGM-0.4.0-GUIDE.md](docs/AGM-0.4.0-GUIDE.md).
 
 > **Mức tin cậy:**
 > - **Đã xác minh từ mã nguồn & nghiên cứu của `agmag` (`v0.2.0`, 2026-11-18/19):** kiến trúc lệnh `agm` (`daemon`, `tui`, `spawn`, `send`, `inbox`, `reply`, `done`, `ask`, `manage`, `rotate`, `cleanup`, `budget`, `policy`, `hook`, `ps`, `ls`, `cost`, `quota`, `log`, `scan`, `link`), sự kiện `hc events --json` (gồm `created`, `restarted`, `status`, `turn`, `title`, `labels`, `size`, `foreground`, `finished`, `lost`, `removed`), biến môi trường `HC_TERMINAL_ID`, và việc terminal của HERDR app có hiện trong `hc`.
@@ -21,7 +21,7 @@ Thay vì viết script bash tự bắt `hc events --json`, tự đếm `jq` và 
 | Thành phần | Đảm nhận | Lệnh chính |
 |---|---|---|
 | **`hc` (`herdr-core`)** | Chạy nền terminal, đọc màn hình, gõ phím, phát luồng sự kiện `hc events --json`, đặt `HC_TERMINAL_ID` | `hc run`, `hc read`, `hc attach`, `hc ls`, `hc events`, `hc server start\|status` |
-| **`agm` (`agmag` v0.3.0)** | Theo dõi `hc events`, đo token/hạn mức gói (Claude/Codex/OpenCode/`agy`), hộp thư người dùng, gửi tin có ghi sổ, giới hạn `max_workers` và ngân sách, xoay vòng thợ OpenCode & bàn giao phiên Claude/Codex, bảo vệ không tự kill Claude/Codex | `agm daemon`, `agm tui`, `agm spawn`, `agm send`, `agm inbox`, `agm reply`, `agm done`, `agm ask`, `agm manage`, `agm rotate`, `agm cleanup`, `agm budget`, `agm policy`, `agm hook` |
+| **`agm` (`agmag` v0.4.0)** | Theo dõi `hc events`, đo token/hạn mức gói (Claude/Codex/OpenCode/`agy`), hộp thư người dùng, gửi tin có ghi sổ, khóa ghi `BRANCHES.md`, MCP server stdio (7 tool cho quản lý/duyệt), giới hạn `max_workers` và ngân sách, xoay vòng thợ OpenCode & bàn giao phiên Claude/Codex, bảo vệ không tự kill Claude/Codex | `agm daemon`, `agm tui`, `agm spawn`, `agm send`, `agm inbox`, `agm reply`, `agm done`, `agm branch`, `agm mcp`, `agm ask`, `agm manage`, `agm rotate`, `agm cleanup`, `agm budget`, `agm policy`, `agm hook` |
 | **Wrapper worktree (tùy chọn)** | Tạo `git worktree`, kiểm tra `tier:` / `skills:` trong `.agents/tasks/<ID>.md`, chạy `gitnexus analyze`, rồi gọi `agm spawn`; tự nhặt `.agents/inbox/*.md` | `dispatch.sh` (hoặc PowerShell tương đương), `cleanup-wt.sh` |
 
 **Phân biệt ngân sách:** Claude CEO phân bổ kinh phí; [Go Console](https://opencode.ai/console/go) là nguồn kiểm hạn mức Go và nơi xem Extra Usage/budget. `agm quota` đã đọc được hạn mức Go (5h/tuần/tháng, provider `opencode-go`) qua `opencode api GET /api/experimental/usage/limits`; `agm` đo token và thực thi các ngưỡng đã cấu hình, không thay CEO duyệt nguồn tính phí.
@@ -283,7 +283,7 @@ Làm theo đúng thứ tự:
 
 **NVIDIA không đi qua script worker dưới đây.** Giao phiên chỉ đọc có quyền tối thiểu, theo [NVIDIA-BACKGROUND.md](docs/NVIDIA-BACKGROUND.md). Task ID/model, phạm vi đọc, mức cấp, deadline và SHA/snapshot là thông tin brief, không là tham số `agm` mới. CEO điều phối thủ công tối đa 1 task NVIDIA trên cả nhóm alias; `max_workers` không bảo đảm trần cho mọi vai nền. Đầu ra trả điều phối, không tự ghi log/docs/code. Không chờ NVIDIA trước merge.
 
-So với phiên bản cũ, `dispatch.sh` không còn phải dùng `jq` để đếm `hc ls` hay kiểm tra giới hạn thợ bằng tay — **`agm spawn` tự kiểm tra `max_workers`, ngân sách `task:<ID>`, gắn nhãn `agm.task`/`agm.role`, tên `w-<ID>-<số>`, `--bg --outlive-parent` và lưu vào `agm.db`**. Nếu `agm spawn` từ chối (ví dụ đã chạm `max_workers`), script tự dọn worktree vừa tạo để không để lại worktree mồ côi.
+So với phiên bản cũ, `dispatch.sh` không còn phải dùng `jq` để đếm `hc ls` hay kiểm tra giới hạn thợ bằng tay — **`agm spawn` tự kiểm tra `max_workers` (chỉ đếm `--role worker`), ngân sách `task:<ID>`, gắn nhãn `agm.task`/`agm.role`, tên `w-<ID>-<số>`, `--bg --outlive-parent` và lưu vào `agm.db`**. Vì `agm spawn` chạy nền không chặn (`--bg`), có thể gọi `dispatch.sh` song song cho nhiều đầu việc độc lập đã duyệt nguồn/ngân sách; đoạn tạo worktree dùng khóa ngắn `.agents/.runtime/locks/wt` để tránh đụng `.git/worktrees` khi sinh đồng thời. Nếu `agm spawn` từ chối (ví dụ đã chạm `max_workers`), script tự dọn worktree vừa tạo để không để lại worktree mồ côi.
 
 **Trước `dispatch.sh`:** CEO xác nhận nguồn/model và mức đã cấp. Ví dụ dưới đây không kiểm điều đó hoặc hạn mức Go; không dùng làm cổng tự động cho model tính phí. Với việc dùng Go hoặc nguồn tính phí, giữ bước phê duyệt thủ công trước khi giao hoặc sinh lại phiên, trừ khi đã có cơ chế được kiểm chứng chỉ mở model đã phê duyệt trong phần được cấp.
 
@@ -319,9 +319,15 @@ fi
 WT="$WT_DIR/$ID"
 CREATED_WT=0
 if [ ! -d "$WT" ]; then
-  git worktree add "$WT" -b "feat/$ID" "$BASE_BRANCH"
-  CREATED_WT=1
-  if [ "$GITNEXUS_SYNC" = worktree ]; then
+  mkdir -p .agents/.runtime/locks
+  for _ in $(seq 30); do mkdir .agents/.runtime/locks/wt 2>/dev/null && break; sleep 0.2; done
+  trap 'rmdir .agents/.runtime/locks/wt 2>/dev/null || true' EXIT
+  if [ ! -d "$WT" ]; then
+    git worktree add "$WT" -b "feat/$ID" "$BASE_BRANCH"
+    CREATED_WT=1
+  fi
+  rmdir .agents/.runtime/locks/wt 2>/dev/null || true
+  if [ "$CREATED_WT" -eq 1 ] && [ "$GITNEXUS_SYNC" = worktree ]; then
     ( cd "$WT" && flock /tmp/gitnexus.lock gitnexus analyze --index-only )
   fi
 fi
@@ -355,16 +361,21 @@ source "$(dirname "$0")/../bot.env"
 cd "$PROJECT_DIR"; mkdir -p "$RUNTIME_DIR" .agents/inbox .agents/tasks
 
 while true; do
+  pids=()
   for f in .agents/inbox/*.md; do
     [ -e "$f" ] || continue
-    id=$(basename "$f" .md)
-    cp "$f" ".agents/tasks/$id.md"
-    if .agents/bot/dispatch.sh "$id"; then
-      rm -f "$f"
-    else
-      echo "$(date -Is) dispatch $id lỗi/xếp hàng (giữ lại trong inbox)" >> "$RUNTIME_DIR/bot.log"
-    fi
+    (
+      id=$(basename "$f" .md)
+      cp "$f" ".agents/tasks/$id.md"
+      if .agents/bot/dispatch.sh "$id"; then
+        rm -f "$f"
+      else
+        echo "$(date -Is) dispatch $id lỗi/xếp hàng (giữ lại trong inbox)" >> "$RUNTIME_DIR/bot.log"
+      fi
+    ) &
+    pids+=($!)
   done
+  for p in "${pids[@]:-}"; do [ -n "$p" ] && wait "$p" || true; done
   sleep 10
 done
 ```
@@ -404,7 +415,7 @@ Nguyên tắc: **tin nhắn là tín hiệu tạm; nội dung bền nằm trong 
 
 ### 2.2. Quy tắc cho người gửi (`agm send`)
 
-1. Dùng đúng 7 loại tin mà `agm send` chấp nhận: `GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`.
+1. Dùng đúng 7 loại tin mà `agm send` / `agm_send` chấp nhận: mã tiếng Anh `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` hoặc mã tiếng Việt tương đương `GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT` (CSDL lưu thống nhất theo mã Việt). Với `agm mcp`, chỉ gắn MCP server `agm` cho profile quản lý/duyệt (`BOT-CEO`, `Copilot`, `reviewer`), không gắn cho profile thợ (`worker-*`).
 2. Mỗi tin **1 đến 3 dòng**, một việc, kèm đường dẫn tệp thay vì dán nội dung dài.
 3. Nội dung đầy đủ phải đã nằm trong tệp bền (`.agents/tasks/`, `log/`, `reviews/`) **trước khi** gửi tin trỏ tới.
 4. Cần người dùng trả lời hoặc xin quyết định → `agm send user --type HỎI --task <ID> "..."`. Không gửi tin tiến độ vụn ("đang đọc", "đang chạy"), vì trạng thái đã hiện trong `agm tui` / `agm ps` / `hc get`.
@@ -495,7 +506,7 @@ cd "$PROJECT_DIR" && flock /tmp/gitnexus.lock gitnexus analyze --index-only
 
 Làm theo thứ tự, ghi kết quả vào `.agents/decisions/bot-setup.md`:
 
-1. `agm --version` (`agm 0.3.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`, `gitnexus-sync`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
+1. `agm --version` (`agm 0.4.0`), `hc --version`, `hc templates` thấy đủ template cần dùng (`worker-fast/mid/strong`, `auditor`, `reviewer`, `researcher`, `sparring-opus`, `docs-hydrogen`, `argon-advisor`, `gitnexus-sync`). Kiểm thêm `agm cost --by source` và `agm quota` hoạt động đúng để theo dõi tỷ lệ chuyển token sang model miễn phí / OpenCode / `agy`.
 2. `agm hook install` (nếu dùng Claude Code) và mở `hc run --bg --no-parent --name agm-daemon agm daemon`; mở `agm tui` kiểm tra thấy các phiên đang chạy, hạn mức gói và không báo lỗi cấu hình `providers.toml`.
 3. Chạy thử `agm ask --model gemini-4-argon-medium "Trả lời OK"` và kiểm tra token hiện trong `agm cost --window today --by source`; kiểm tra tên slug của **Opus High** qua `agy models`.
 4. Kiểm thử tương tác qua `hc`: mở một phiên thử **Hydrogen Medium** (`docs-hydrogen`) và **Gemini Argon** (`argon-advisor`) trong worktree thử nghiệm, kiểm tra `agm send` đẩy lệnh vào đúng prompt và commit đúng phạm vi.
@@ -508,7 +519,7 @@ Làm theo thứ tự, ghi kết quả vào `.agents/decisions/bot-setup.md`:
 
 ## Nguồn tham khảo
 
-- `agmag` (`agm` v0.3.0): https://github.com/wosonday/agmag/ (`README_vi.md`, `CHANGELOG.md`, `src/main.rs`, `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `src/daemon.rs`, `assets/providers.default.toml`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
+- `agmag` (`agm` v0.4.0): https://github.com/wosonday/agmag/ (`README_vi.md`, `CHANGELOG.md`, `src/main.rs`, `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `src/daemon.rs`, `assets/providers.default.toml`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
 - herdr-core (`hc`, template, OSC 7501, `hc events`): https://github.com/herdrdev/herdr-core ; https://github.com/herdrdev/herdr-core/blob/master/docs/commands.md ; https://github.com/herdrdev/herdr-core/blob/master/docs/templates.md ; https://herdr.dev/app
 - GitNexus: https://github.com/abhigyanpatwari/GitNexus ; https://unpkg.com/gitnexus@latest/README.md
 - git worktree: `git help worktree`

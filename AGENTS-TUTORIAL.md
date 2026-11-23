@@ -14,7 +14,7 @@ Chỉ dẫn dùng chung cho dự án code hoặc việc khác (tài liệu, báo
 > - **Cập nhật tài liệu tự động theo cổng:** **Gemini 4 Hydrogen Medium** (`gemini-4-hydrogen-medium` qua `agy`) nhận lệnh cập nhật docs khi có thay đổi (và có thể tổng hợp luôn `.agents/reports/<ID>.md`) **sau khi Reviewer đã duyệt/chỉnh sửa và trước khi gọi GitHub Copilot**.
 > - **Cố vấn kỹ thuật & tối ưu Harnessing:** **Gemini Argon** (`gemini-4-argon-*` qua `agy`) đóng vai trò cố vấn kỹ thuật giống Codex, với trách nhiệm đặc thù là cập nhật và tối ưu hóa hệ thống harnessing giữa các phiên để khắc phục những vấn đề lớn của phiên trước (bao gồm hiệu chỉnh phân bậc `tier:` cho model miễn phí).
 > - **Bỏ phần ảnh 2D/3D và video** khỏi chỉ dẫn chung (nếu dự án nào cần, sẽ tối ưu riêng trong harness của dự án đó).
-> - **Điều phối nền bằng `agm` (`agmag` v0.3.0):** thay cơ chế theo dõi/giao tiếp thủ công trong `herdr-core` bằng `agm` (`agm daemon`, `agm spawn`, `agm send`, `agm ask`, `agm inbox`, `agm tui`, xoay vòng và ngân sách). Chi tiết xem [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md).
+> - **Điều phối nền bằng `agm` (`agmag` v0.4.0):** thay cơ chế theo dõi/giao tiếp thủ công trong `herdr-core` bằng `agm` (`agm daemon`, `agm spawn`, `agm send`, `agm ask`, `agm inbox`, `agm tui`, `agm branch`, `agm mcp`, xoay vòng và ngân sách). Chi tiết xem [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md) và [docs/AGM-0.4.0-GUIDE.md](docs/AGM-0.4.0-GUIDE.md).
 > - **Mô hình đa mảng (BOT-CEO):** với dự án lớn cần tách nhiều mảng độc lập để tránh phình ngữ cảnh, xem [BOT-CEO.md](BOT-CEO.md).
 > - **Hướng dẫn riêng từng model:** xem [docs/README.md](docs/README.md).
 
@@ -300,10 +300,12 @@ agy --model gemini-4-argon-medium --mode plan --sandbox --print-timeout 600s --o
 
 **Kênh mặc định trong `herdr-core` là `agm send` / `agm inbox`** (từ dự án `agmag`, mục 5–6 của `README_vi.md`). `agm` bọc `hc send` nhưng **ghi lịch sử tin nhắn vào `~/.agmag/agm.db`**, tự nhận diện người gửi qua biến `HC_TERMINAL_ID`, và định tuyến tin gửi `user` vào **hộp thư người dùng** (`agm inbox` / `agm tui`).
 
-1. **Cho agent dùng `agm`:** thêm đoạn sau vào `AGENTS.md` và `CLAUDE.md` của dự án:
-   - Gửi tin cho agent khác: `agm send <tên-terminal> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<nội dung ngắn>"` (CLI giữ mã tiếng Việt; trong `agm tui` người dùng gõ tên tiếng Anh tương ứng `ASSIGN|REPORT|ERROR|QUESTION|BLOCKED|PASS|FAIL`, tin vẫn lưu bằng mã tiếng Việt)
-   - Cần người dùng quyết định: `agm send user --type HỎI --task <ID> "<câu hỏi>"` (vào hộp thư người dùng)
-   - Xem hộp thư (Codex quản lý / người dùng): `agm inbox --json`
+1. **Cho agent dùng `agm` (`v0.4.0`):** thêm đoạn sau vào `AGENTS.md` và `CLAUDE.md` của dự án:
+   - **Agent quản lý / duyệt (BOT-CEO, `copilot-git`, `reviewer`):** có thể gọi trực tiếp **7 tool MCP của `agm mcp`** (`agm_send`, `agm_inbox`, `agm_ps`, `agm_quota`, `agm_spawn`, `agm_branch_get`, `agm_branch_update`) thay cho gõ CLI. **Không gắn `agm` MCP cho profile thợ (`worker-*`)** vì MCP có `agm_spawn`.
+   - **Ghi `BRANCHES.md` an toàn:** luôn dùng `agm branch get/set` hoặc `agm_branch_update` (agm tự giữ khóa nguyên tử, không `mkdir` khóa bằng tay; thợ bị từ chối ghi `BRANCHES.md`).
+   - Gửi tin cho agent khác (CLI hoặc `agm_send`): `agm send <tên-terminal> --type ASSIGN|REPORT|ERROR|QUESTION|BLOCKED|PASS|FAIL --task <ID> "<nội dung ngắn>"` (chấp nhận cả mã tiếng Anh và mã tiếng Việt tương đương `GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT`; CSDL vẫn lưu mã tiếng Việt)
+   - Cần người dùng quyết định: `agm send user --type HỎI --task <ID> "<câu hỏi>"` (hoặc `QUESTION`, vào hộp thư người dùng)
+   - Xem hộp thư (quản lý / người dùng): `agm inbox --json` hoặc `agm_inbox`
    - Không dùng `agm kill` với phiên Codex/Claude — chỉ người dùng được làm việc đó.
 2. **Tên agent / terminal:** chỉ gồm chữ thường, số, `-`, `_`, bắt đầu bằng chữ cái, tối đa 32 ký tự. Quy ước: `arch`, `sparring` (`agy` Opus High), `review`, `codex-mgr`, `argon-adv` (Gemini Argon), `docs-hyd` (Hydrogen Medium), `copilot-git` (quản lý Git), `gitnexus-sync` (cập nhật chỉ mục GitNexus), `w-<feature>-<số>` (thợ), `agm-daemon`. Cả `hc run --name` và `agm spawn` đều áp đúng giới hạn này, nên **mã việc `<ID>` phải viết thường**.
 3. **Trước khi gửi / đọc kết quả:** `agm send` gọi `hc send --if idle` nên an toàn khi đích đang làm việc; mỗi lần chỉ gửi một tin ngắn một đến ba dòng, một việc. Khi cần đọc đầu ra màn hình, dùng `hc read <t> --lines N` (chỉ lấy phần mới, không đọc cả pane để tiết kiệm ngữ cảnh).
@@ -469,7 +471,7 @@ GitNexus **không phải công cụ quản lý tác vụ**. Nó lập chỉ mụ
 - **`agm daemon`** chạy nền trong `herdr-core` (`hc run --bg --no-parent --name agm-daemon agm daemon`) để lắng nghe `hc events --json`, quét token/hạn mức, kiểm ngân sách, mở hộp thư khi agent bị `blocked` và tự động xoay vòng phiên khi đầy ngữ cảnh.
 - **Lớp wrapper công việc (worktree + inbox):** khi có đầu việc mới trong `.agents/inbox/<ID>.md`, script `dispatch.sh` (xem [HERDR-CORE-BOT.md](HERDR-CORE-BOT.md)) thực hiện:
   1. Tạo git worktree + nhánh mới: `git worktree add .wt/<ID> -b feat/<ID>` (hoặc đường dẫn quy ước của dự án như `../MATHY-AI.wt/<slug>`).
-  2. Khởi động phiên thợ bằng **`agm spawn <template> --task <ID> --role worker --cwd <worktree> -- "..."`** (tự gắn `hc run --bg --outlive-parent`, kiểm `max_workers` và ngân sách cứng, đặt tên `w-<ID>-<số>`).
+  2. Khởi động song song nhiều phiên thợ độc lập bằng **`agm spawn <template> --task <ID> --role worker --cwd <worktree> -- "..."`** (`--bg` không chặn, tự gắn `--outlive-parent`, kiểm `max_workers` chỉ đếm vai `worker` và ngân sách cứng, đặt tên `w-<ID>-<số>`).
   3. Khi thợ xong hoặc bị chặn, báo cho quản lý bằng **`agm send`** (hoặc `agm send user --type HỎI ...` nếu cần người dùng quyết); **không tự merge**.
 - Giới hạn an toàn bắt buộc: `max_workers` và ngưỡng ngữ cảnh trong `~/.agmag/providers.toml`, trần token qua `agm budget set`, quyền `edit`/`shell` của OpenCode đặt rõ, nút dừng khẩn **`agm policy off`**, và **chỉ người dùng mới được `agm kill` phiên Codex/Claude**. Cổng kinh phí của CEO phải đứng trước wrapper/phiên tự động dùng Go hoặc nguồn tính phí.
 - GitHub Copilot phụ trách dọn worktree/nhánh đã tích hợp và sạch; `agm cleanup` chỉ dọn các terminal cũ đã bàn giao trong `agm`/`hc` khi người dùng xác nhận.
@@ -554,7 +556,7 @@ Do **Gemini 4 Hydrogen Medium** (lúc cập nhật docs cuối nhánh) hoặc **
 
 ## Nguồn tham khảo
 
-- `agmag` (`agm` v0.3.0): https://github.com/wosonday/agmag/ (`README_vi.md`, `src/main.rs`, `src/actions.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
+- `agmag` (`agm` v0.4.0): https://github.com/wosonday/agmag/ (`README_vi.md`, [docs/AGM-0.4.0-GUIDE.md](docs/AGM-0.4.0-GUIDE.md), `src/main.rs`, `src/actions.rs`, `src/branch_cmd.rs`, `src/mcp.rs`, `src/policy.rs`, `src/rotation.rs`, `src/ask.rs`, `.agents/decisions/p0-research.md`, `tools/argon_review.py`)
 - GitHub Copilot CLI (khởi động và prompt `-p`): https://docs.github.com/en/copilot/get-started/cli-quickstart ; https://docs.github.com/en/copilot/how-tos/copilot-cli/automate-copilot-cli/run-cli-programmatically
 - herdr-core (`hc`): `hc --help`, `hc <lệnh> --help`, `hc --skill`; https://github.com/herdrdev/herdr-core
 - HERDR (kiến trúc TUI/core/app, attach từ xa): https://herdr.dev/app ; https://github.com/yigitkonur/awesome-herdr/blob/main/README.md

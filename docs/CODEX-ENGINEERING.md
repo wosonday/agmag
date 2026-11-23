@@ -37,5 +37,5 @@
 ## 4. Worktree & Git Discipline
 
 - When acting as an engineering worker in a worktree: edit only files listed in `.agents/tasks/<ID>.md`, log steps in `.agents/log/<ID>.md`, prefix commits with `<ID>:`, never touch `BRANCHES.md`, and never merge/push.
-- When acting as manager (single-lane): do not edit worker code directly; check `agm inbox --json`, escalate worker models after 2 failures, verify `git status` / `git diff --stat`, and hand off branch + final SHA to `copilot-git`.
+- When acting as manager (single-lane): do not edit worker code directly; check `agm inbox --json`, escalate worker models after 2 failures, verify `git status` / `git diff --stat`, update `BRANCHES.md` via `agm branch set` (when used), and hand off branch + final SHA to `copilot-git` via `agm send copilot-git --type ASSIGN --task <ID> ...`.
 - Like Claude, interactive Codex sessions are **never auto-killed by `agm`**—only the user (TTY + `y`) can stop them.

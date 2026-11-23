@@ -190,7 +190,7 @@ Mỗi BOT-CEO vận hành theo 9 bước gọn:
 4. **Tạo worktree & giao thợ trực tiếp qua `agm spawn` (ưu tiên model nhẹ trước):**
      - Tạo `.agents/tasks/<ID>.md` (mục tiêu, phạm vi, `tier:`, `skills:` tối đa 2, lệnh kiểm, nguồn/model, mức cấp và yêu cầu tương tác/nền). Fast/mid ưu tiên Flash Go đã qualification; việc vượt năng lực chuyển Pro phù hợp hoặc Codex ca khó trong mức cấp, không chỉ đổi template cùng model. Miễn phí/local đủ năng lực đã duyệt là dự phòng.
     - CEO kiểm [Go Console](https://opencode.ai/console/go) và ngân sách trước khi giao, đổi nguồn hoặc mở phiên lại. Nếu Go cạn/không rõ hạn mức, chọn nguồn đã duyệt đủ năng lực hoặc chuyển `blocked`; không chuyển tự động sang API ngoài gói.
-   - Chạy `dispatch.sh <ID>` (gọi `agm spawn`): tự kiểm `max_workers` và ngân sách `task:<ID>`, tạo worktree riêng, gắn nhãn `agm.task`/`agm.role`.
+   - Chạy `dispatch.sh <ID>` (gọi `agm spawn` hoặc `agm_spawn`): tự kiểm `max_workers` (chỉ tính `--role worker`) và ngân sách `task:<ID>`, tạo worktree riêng, gắn nhãn `agm.task`/`agm.role`. Khi có nhiều đầu việc độc lập (tệp/module/test tách biệt), đặt `wip` và **khởi động song song trong cùng một đợt** trong mức `max_workers` và ngân sách Go đã duyệt — không chờ xong từng việc một.
 5. **Theo dõi & gỡ vướng:**
    - Thợ báo cáo hoặc hỏi trực tiếp về BOT-CEO của lane qua `agm send`; câu hỏi cần người dùng quyết đi thẳng vào `agm send user --type HỎI ...` (bạn trả lời tập trung trong `agm tui` hoặc `agm reply`).
     - Nếu thợ chạm `ctx_rotate`, ghi và commit `.agents/log/<ID>.md` trước khi bàn giao. Chỉ dùng tự xoay vòng Go khi đã kiểm cơ chế giữ đúng model và không vượt phần được cấp; nếu không, CEO duyệt khi mở phiên kế nhiệm.

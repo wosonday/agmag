@@ -10,26 +10,24 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use agmag::actions::{self, Caller, CleanupCandidate, eligible_cleanups, execute_cleanup_batch};
+use agmag::actions::{self, Caller, CleanupCandidate};
 use agmag::config::Config;
 use agmag::dashboard::{
-    Section, Snapshot, TuiCmd, bounded_styled_line, one_line, parse_command, parse_view,
-    render_scoped, render_view, snapshot,
+    Snapshot, bounded_styled_line, one_line, render_scoped, render_view, snapshot,
 };
 use agmag::hc::HcCli;
-use agmag::project::{self, CdMatch, ProjectKey, RootCache};
+use agmag::project::{self, ProjectKey, RootCache};
 use agmag::project_render;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
 
-use agmag::board::cmd::NoteKind;
+use agmag::board::cmd::{NoteKind, Outcome};
+
+use crate::tui_cmd::{self, CmdState, Ctx, Front};
 
 /// Clear the screen AND the scrollback, then home. The full frame is printed on the normal screen, so the part
 /// above the pane stays reachable with the mouse wheel, and older frames never pile up above it.
 const CLEAR_ALL: &[u8] = b"\x1b[2J\x1b[3J\x1b[H";
-
-/// Settings key that remembers the sections chosen with `view`.
-const VIEW_SETTING: &str = "tui_view";
 
 fn env_usize(name: &str) -> Option<usize> {
     std::env::var(name)
@@ -92,20 +90,7 @@ fn needs_redraw(frame: &str, last: Option<&str>, after_input: bool) -> bool {
     after_input || last != Some(frame)
 }
 
-fn load_view(store: &Store) -> Vec<Section> {
-    store
-        .setting(VIEW_SETTING)
-        .ok()
-        .flatten()
-        .and_then(|v| parse_view(&v).ok())
-        .unwrap_or_else(|| Section::DEFAULT.to_vec())
-}
-
-fn view_names(view: &[Section]) -> String {
-    view.iter().map(|s| s.name()).collect::<Vec<_>>().join(" ")
-}
-
-fn confirmation_note(action: &str) -> String {
+pub(crate) fn confirmation_note(action: &str) -> String {
     format!("type y + Enter to confirm {action} (anything else cancels)")
 }
 
@@ -120,24 +105,7 @@ fn render_frame(
     let mut body = String::with_capacity(text.len() + 512);
     body.push_str(text);
     if let Some(list) = cleanup_list {
-        let hdr = one_line(
-            "── MANUAL CLEANUP (enter 'cleanup 1,2' or 'cleanup all'; Enter to refresh) ──",
-            max_w,
-        );
-        let _ = writeln!(body, "\x1b[1;93m{hdr}\x1b[0m");
-        for (i, c) in list.iter().enumerate() {
-            let st = if c.old_live { "live" } else { "exited" };
-            let old = one_line(&c.old_terminal, 24);
-            let succ = one_line(
-                c.new_terminal.as_deref().unwrap_or("-"),
-                max_w.saturating_sub(old.chars().count() + 18),
-            );
-            let _ = writeln!(
-                body,
-                "  \x1b[1;93m#{}\x1b[0m {old} ({st}) \x1b[90m→\x1b[0m \x1b[96m{succ}\x1b[0m",
-                i + 1
-            );
-        }
+        body.push_str(&crate::tui_cmd::cleanup_block(list, max_w));
     }
     if let Some((kind, msg)) = note {
         let color = match kind {
@@ -203,35 +171,6 @@ fn scoped_text(
     }
 }
 
-/// Resolves a `cd` / `cd -t` query against the current project list. Errors carry the note kind the
-/// text UI shows (`ambiguous` is a warning, unknown is an error), as before the board existed.
-fn lookup_project(
-    store: &Store,
-    snap: Option<&Snapshot>,
-    query: &str,
-    cache: &mut RootCache,
-) -> std::result::Result<ProjectKey, (NoteKind, String)> {
-    let Some(s) = snap else {
-        return Err((NoteKind::Err, "failed to read database".into()));
-    };
-    let inbox = store
-        .inbox(true)
-        .map_err(|e| (NoteKind::Err, format!("error: {e:#}")))?;
-    let terms = store
-        .terminals(false)
-        .map_err(|e| (NoteKind::Err, format!("error: {e:#}")))?;
-    let roots = project::compute_roots(&terms, s, cache, &project::git_common_root);
-    let (list, _) = project::list_projects(&terms, &inbox, &roots);
-    match project::match_project(&list, query) {
-        CdMatch::Found(key) => Ok(key),
-        CdMatch::Ambiguous(candidates) => Err((
-            NoteKind::Warn,
-            format!("ambiguous: {}", candidates.join(", ")),
-        )),
-        CdMatch::NotFound => Err((NoteKind::Err, format!("no project matching '{query}'"))),
-    }
-}
-
 pub fn run(
     store: &Store,
     db_path: &Path,
@@ -283,14 +222,9 @@ pub fn run(
     }
 
     let mut note: Option<(NoteKind, String)> = None;
-    let mut view = load_view(store);
-    let mut pending: Option<TuiCmd> = None;
-    let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;
-    let mut cleanup_selected: Option<Vec<CleanupCandidate>> = None;
-    // Project scope of this session: the project entered with `cd`, the cwd → root cache, and the
-    // `show` / `cd` listing block printed above the note until the next command.
-    let mut scope: Option<ProjectKey> = None;
-    let mut roots_cache = RootCache::new();
+    // `view`, `scope`, the pending confirmations and the printed candidate list all live in the
+    // dispatcher now; the plain loop only keeps what it prints itself.
+    let mut st = CmdState::new(store);
     let mut shown: Option<String> = None;
 
     // RAM/CPU/disk for the header and SYSTEM section; kept across frames because CPU % is a difference.
@@ -304,16 +238,14 @@ pub fn run(
         let _ = scan(store);
         let now = crate::now_ms();
         let w = pane_width();
-        let mut snap: Option<Snapshot> = None;
+        let scope = st.scope().cloned();
         let text = match snapshot(store, cfg, now) {
             Ok(mut s) => {
                 s.system = sampler.as_mut().map(|m| m.sample());
-                let text = match &scope {
-                    Some(key) => scoped_text(store, &s, key, &mut roots_cache, w, now),
-                    None => render_view(&s, w, &view, None),
-                };
-                snap = Some(s);
-                text
+                match &scope {
+                    Some(key) => scoped_text(store, &s, key, st.roots_cache_mut(), w, now),
+                    None => render_view(&s, w, st.view(), None),
+                }
             }
             Err(e) => db_error_text(&e, w),
         };
@@ -324,7 +256,7 @@ pub fn run(
         let frame = render_frame(
             &text,
             w,
-            cleanup_list.as_deref(),
+            st.cleanup_list(),
             note.as_ref().map(|(k, s)| (*k, s.as_str())),
             scope.as_ref().map(|k| k.name.as_str()),
         );
@@ -346,282 +278,33 @@ pub fn run(
         note = None;
         shown = None;
 
-        if let Some(sel) = cleanup_selected.take() {
-            if line.trim() == "y" {
-                let user = match &who {
-                    Caller::User { .. } => Caller::User { confirmed: true },
-                    agent => agent.clone(),
-                };
-                note = Some(match execute_cleanup_batch(store, &hc, &user, &sel, now) {
-                    Ok(rep) => {
-                        cleanup_list = None;
-                        let kind = if !rep.errors.is_empty() {
-                            NoteKind::Err
-                        } else if !rep.skipped.is_empty() {
-                            NoteKind::Warn
-                        } else {
-                            NoteKind::Ok
-                        };
-                        (
-                            kind,
-                            format!(
-                                "cleaned {}, skipped {}, errors {}",
-                                rep.done,
-                                rep.skipped.len(),
-                                rep.errors.len()
-                            ),
-                        )
-                    }
-                    Err(e) => (NoteKind::Err, format!("cleanup error: {e:#}")),
-                });
-            } else {
-                cleanup_list = None;
-                note = Some((NoteKind::Warn, "cleanup cancelled".into()));
-            }
-            let _ = resume_tx.send(());
-            continue;
-        }
-
-        // Kill/interrupt require confirmation: the prior command set `pending`, this line must be "y".
-        if let Some(cmd) = pending.take() {
-            if line.trim() == "y" {
-                let user = match &who {
-                    Caller::User { .. } => Caller::User { confirmed: true },
-                    agent => agent.clone(),
-                };
-                let res = match &cmd {
-                    TuiCmd::Kill(t) => {
-                        actions::kill(store, &hc, &user, t, now).map(|()| format!("killed {t}"))
-                    }
-                    TuiCmd::Interrupt(t) => actions::interrupt(store, &hc, &user, t, now)
-                        .map(|()| format!("interrupted {t}")),
-                    _ => Ok(String::new()),
-                };
-                note = Some(match res {
-                    Ok(msg) => (NoteKind::Ok, msg),
-                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                });
-            } else {
-                note = Some((NoteKind::Warn, "cancelled".into()));
-            }
-            let _ = resume_tx.send(());
-            continue;
-        }
-
-        match parse_command(&line) {
-            Ok(TuiCmd::Quit) => return Ok(()),
-            Ok(TuiCmd::Refresh) => {}
-            Ok(TuiCmd::Cleanup(arg)) => {
-                if let Some(sel_expr) = arg {
-                    let list = match cleanup_list.take() {
-                        Some(l) => l,
-                        None => eligible_cleanups(store).unwrap_or_default(),
-                    };
-                    if list.is_empty() {
-                        note = Some((
-                            NoteKind::Warn,
-                            "no handed-off sessions ready for cleanup".into(),
-                        ));
-                    } else {
-                        match crate::ops::parse_selection(&sel_expr, list.len()) {
-                            Ok(indices) if !indices.is_empty() => {
-                                let chosen: Vec<CleanupCandidate> =
-                                    indices.into_iter().map(|i| list[i].clone()).collect();
-                                let items: Vec<String> = chosen
-                                    .iter()
-                                    .map(|c| {
-                                        format!(
-                                            "{}→{}",
-                                            c.old_terminal,
-                                            c.new_terminal.as_deref().unwrap_or("-")
-                                        )
-                                    })
-                                    .collect();
-                                note = Some((
-                                    NoteKind::Warn,
-                                    confirmation_note(&format!(
-                                        "cleanup of {} session(s) ({})",
-                                        chosen.len(),
-                                        items.join(", ")
-                                    )),
-                                ));
-                                cleanup_selected = Some(chosen);
-                            }
-                            Ok(_) => note = Some((NoteKind::Warn, "no items selected".into())),
-                            Err(e) => {
-                                cleanup_list = Some(list);
-                                note = Some((NoteKind::Err, format!("selection error: {e:#}")));
-                            }
-                        }
-                    }
-                } else {
-                    match eligible_cleanups(store) {
-                        Ok(list) if list.is_empty() => {
-                            cleanup_list = None;
-                            note = Some((
-                                NoteKind::Warn,
-                                "no handed-off sessions ready for cleanup".into(),
-                            ));
-                        }
-                        Ok(list) => cleanup_list = Some(list),
-                        Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
-                    }
+        let ctx = Ctx {
+            store,
+            cfg,
+            hc: &hc,
+            who: who.clone(),
+            now_ms: now,
+        };
+        match tui_cmd::dispatch(&line, &mut st, &ctx, Front::Plain).outcome {
+            Outcome::Note(kind, text) => note = Some((kind, text)),
+            Outcome::Shown(text) => {
+                // `render_frame` draws the cleanup candidate list itself; never print it twice.
+                if !(st.cleanup_list().is_some() && tui_cmd::is_cleanup_listing(&text)) {
+                    shown = Some(text);
                 }
             }
-            Ok(cmd @ (TuiCmd::Kill(_) | TuiCmd::Interrupt(_))) => {
-                let prompt_desc = match &cmd {
-                    TuiCmd::Kill(t) => format!("kill {t}"),
-                    TuiCmd::Interrupt(t) => format!("interrupt {t}"),
-                    _ => unreachable!(),
-                };
-                note = Some((NoteKind::Warn, confirmation_note(&prompt_desc)));
-                pending = Some(cmd);
-            }
-            Ok(TuiCmd::Reply(id, text)) => {
-                note = Some(match actions::reply(store, &hc, id, &text, now) {
-                    Ok(()) => (NoteKind::Ok, format!("replied to #{id}")),
-                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                });
-            }
-            Ok(TuiCmd::Send(to, kind, text)) => {
-                note = Some(
-                    match actions::send(store, &hc, "user", &to, &kind, None, &text, now) {
-                        Ok(m) => (
-                            NoteKind::Ok,
-                            format!("msg #{} → {}: {}", m.id, m.to, m.status),
-                        ),
-                        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                    },
-                );
-            }
-            Ok(TuiCmd::Done {
-                ids,
-                filters,
-                explicit_source_blocked,
-                legacy_single,
-            }) => {
-                note = Some(
-                    match actions::dismiss_done(
-                        store,
-                        ids,
-                        filters,
-                        explicit_source_blocked,
-                        legacy_single,
-                        now,
-                    ) {
-                        Ok(report) => {
-                            if report.done.is_empty() && report.skipped.is_empty() {
-                                (NoteKind::Warn, "Nothing to dismiss.".into())
-                            } else {
-                                (
-                                    NoteKind::Ok,
-                                    format!(
-                                        "dismissed {} (skipped {})",
-                                        report.done.len(),
-                                        report.skipped.len()
-                                    ),
-                                )
-                            }
-                        }
-                        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                    },
-                );
-            }
-            Ok(TuiCmd::Policy(on)) => {
-                // Never swallow errors: the user must know whether policy actually toggled.
-                note = Some(
-                    match store.set_setting("policy", if on { "on" } else { "off" }) {
-                        Ok(()) => (
-                            if on { NoteKind::Ok } else { NoteKind::Warn },
-                            format!("policy {}", if on { "ON" } else { "OFF" }),
-                        ),
-                        Err(e) => (NoteKind::Err, format!("ERROR — policy NOT changed: {e:#}")),
-                    },
-                );
-            }
-            Ok(TuiCmd::View(None)) => {
-                note = Some((
-                    NoteKind::Ok,
-                    format!(
-                        "view: {} (choose up to 3 of {}; `view default`)",
-                        view_names(&view),
-                        Section::names()
-                    ),
-                ));
-            }
-            Ok(TuiCmd::View(Some(v))) => {
-                view = v;
-                note = Some(match store.set_setting(VIEW_SETTING, &view_names(&view)) {
-                    Ok(()) => (NoteKind::Ok, format!("view: {}", view_names(&view))),
-                    Err(e) => (
-                        NoteKind::Warn,
-                        format!("view: {} (not saved: {e:#})", view_names(&view)),
-                    ),
-                });
-            }
-            Ok(TuiCmd::Cd(None)) => {
-                if let Some(s) = &snap {
-                    match (store.terminals(false), store.inbox(true)) {
-                        (Ok(terms), Ok(inbox)) => {
-                            let roots = project::compute_roots(
-                                &terms,
-                                s,
-                                &mut roots_cache,
-                                &project::git_common_root,
-                            );
-                            let (list, no_project) = project::list_projects(&terms, &inbox, &roots);
-                            shown = Some(project_render::render_project_list(&list, no_project, w));
-                        }
-                        (Err(e), _) | (_, Err(e)) => {
-                            note = Some((NoteKind::Err, format!("error: {e:#}")))
-                        }
-                    }
-                } else {
-                    note = Some((NoteKind::Err, "failed to read database".into()));
+            Outcome::NeedsConfirm(prompt) => note = Some((NoteKind::Warn, prompt)),
+            Outcome::OpenBoard(key) => {
+                // The board owns the console until the user quits; the scope stays global.
+                if let Err(e) = agmag::board::run(store, cfg, &hc, Some(key), refresh, &mut scan) {
+                    note = Some((NoteKind::Err, format!("error: {e:#}")));
                 }
+                // The alternate screen is gone: repaint the whole text frame.
+                last_frame = None;
+                after_input = true;
             }
-            Ok(TuiCmd::Cd(Some(q))) => {
-                if q == ".." || q == "/" {
-                    scope = None;
-                    note = Some((NoteKind::Ok, "back to all projects".into()));
-                } else {
-                    match lookup_project(store, snap.as_ref(), &q, &mut roots_cache) {
-                        Ok(key) => {
-                            // The board owns the console until the user quits; the scope stays global.
-                            if let Err(e) =
-                                agmag::board::run(store, cfg, &hc, Some(key), refresh, &mut scan)
-                            {
-                                note = Some((NoteKind::Err, format!("error: {e:#}")));
-                            }
-                            // The alternate screen is gone: repaint the whole text frame.
-                            last_frame = None;
-                            after_input = true;
-                        }
-                        Err((kind, text)) => note = Some((kind, text)),
-                    }
-                }
-            }
-            Ok(TuiCmd::CdText(q)) => {
-                if q == ".." || q == "/" {
-                    scope = None;
-                    note = Some((NoteKind::Ok, "back to all projects".into()));
-                } else {
-                    match lookup_project(store, snap.as_ref(), &q, &mut roots_cache) {
-                        // Entering keeps the scope even if the project has no members left.
-                        Ok(key) => {
-                            note = Some((NoteKind::Ok, format!("project: {}", key.name)));
-                            scope = Some(key);
-                        }
-                        Err((kind, text)) => note = Some((kind, text)),
-                    }
-                }
-            }
-            Ok(TuiCmd::Show(id)) => match store.inbox_item(id) {
-                Ok(Some(item)) => shown = Some(project_render::render_inbox_item(&item, w)),
-                Ok(None) => note = Some((NoteKind::Err, format!("no inbox item #{id}"))),
-                Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
-            },
-            Err(e) => note = Some((NoteKind::Err, e)),
+            Outcome::Quit => return Ok(()),
+            Outcome::None => {}
         }
         // This line is fully handled (the board, if it ran, has given the console back): let the
         // reader fetch exactly one more line.

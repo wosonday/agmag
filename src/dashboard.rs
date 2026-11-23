@@ -14,23 +14,23 @@ use crate::report::{QuotaRow, UsageBucket, UsageSummary, spark_bar, usage_summar
 use crate::store::{InboxRow, MessageRow, Store};
 use crate::sysmon::{CpuStats, SysStats, human_bytes, mount_label};
 
-const RESET: &str = "\x1b[0m";
-const DIM: &str = "\x1b[2m";
-const GRAY: &str = "\x1b[90m";
-const WHITE: &str = "\x1b[97m";
-const CYAN: &str = "\x1b[36m";
-const BRIGHT_CYAN: &str = "\x1b[96m";
-const BOLD_CYAN: &str = "\x1b[1;96m";
-const BRIGHT_GREEN: &str = "\x1b[92m";
-const BOLD_GREEN: &str = "\x1b[1;92m";
-const BRIGHT_YELLOW: &str = "\x1b[93m";
-const BOLD_YELLOW: &str = "\x1b[1;93m";
-const BRIGHT_RED: &str = "\x1b[91m";
-const BOLD_RED: &str = "\x1b[1;91m";
-const BRIGHT_MAGENTA: &str = "\x1b[95m";
-const MAGENTA: &str = "\x1b[35m";
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
+pub(crate) const RESET: &str = "\x1b[0m";
+pub(crate) const DIM: &str = "\x1b[2m";
+pub(crate) const GRAY: &str = "\x1b[90m";
+pub(crate) const WHITE: &str = "\x1b[97m";
+pub(crate) const CYAN: &str = "\x1b[36m";
+pub(crate) const BRIGHT_CYAN: &str = "\x1b[96m";
+pub(crate) const BOLD_CYAN: &str = "\x1b[1;96m";
+pub(crate) const BRIGHT_GREEN: &str = "\x1b[92m";
+pub(crate) const BOLD_GREEN: &str = "\x1b[1;92m";
+pub(crate) const BRIGHT_YELLOW: &str = "\x1b[93m";
+pub(crate) const BOLD_YELLOW: &str = "\x1b[1;93m";
+pub(crate) const BRIGHT_RED: &str = "\x1b[91m";
+pub(crate) const BOLD_RED: &str = "\x1b[1;91m";
+pub(crate) const BRIGHT_MAGENTA: &str = "\x1b[95m";
+pub(crate) const MAGENTA: &str = "\x1b[35m";
+pub(crate) const GREEN: &str = "\x1b[32m";
+pub(crate) const YELLOW: &str = "\x1b[33m";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TermView {
@@ -181,7 +181,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     })
 }
 
-fn paint(style: &str, text: &str) -> String {
+pub(crate) fn paint(style: &str, text: &str) -> String {
     format!("{style}{text}{RESET}")
 }
 
@@ -256,7 +256,7 @@ fn month_abbr(mo: &str) -> &str {
     }
 }
 
-fn section(icon: &str, title: &str, width: usize) -> String {
+pub(crate) fn section(icon: &str, title: &str, width: usize) -> String {
     let clean_title = one_line(title, width.saturating_sub(10));
     let prefix_len = 3 + icon.chars().count() + 1 + clean_title.chars().count() + 1;
     let line = "─".repeat(width.saturating_sub(1).saturating_sub(prefix_len));
@@ -292,7 +292,7 @@ fn app_cell(app: &str) -> Cell {
     }
 }
 
-fn status_color(status: &str) -> Color {
+pub(crate) fn status_color(status: &str) -> Color {
     if status.starts_with("BLOCKED") {
         Color::Red
     } else if status.contains("[HANDED OFF]") {
@@ -393,7 +393,7 @@ fn ctx_cell(ctx: Option<f64>) -> Cell {
     c.set_alignment(CellAlignment::Right)
 }
 
-fn inbox_source_badge(source: &str) -> String {
+pub(crate) fn inbox_source_badge(source: &str) -> String {
     let clean = sanitize_one_line(source);
     let tag = format!("[{clean}]");
     match clean.as_str() {
@@ -418,7 +418,7 @@ fn kind_style(english: &str) -> (&'static str, Color, bool) {
     }
 }
 
-fn msg_kind_badge(kind: &str) -> String {
+pub(crate) fn msg_kind_badge(kind: &str) -> String {
     let clean = sanitize_one_line(kind_to_english(kind));
     paint(kind_style(&clean).0, &format!("[{clean}]"))
 }
@@ -514,7 +514,7 @@ fn wrap_plain_words(
     out
 }
 
-fn render_header(s: &Snapshot, width: usize) -> String {
+pub(crate) fn render_header(s: &Snapshot, width: usize) -> String {
     let max_w = width.saturating_sub(1);
     let policy_plain = if s.policy_on {
         "● POLICY ON"
@@ -701,7 +701,7 @@ fn used_of(used: u64, total: u64) -> String {
 
 /// Column where meter bars start (`  ▣ CPU    `), so core rows line up under the CPU bar.
 const METER_INDENT: usize = 11;
-const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+pub(crate) const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
 /// `12 cores · busiest #3 97% · 4 idle (<10%)`: the CPU line's detail.
 fn cpu_detail(c: &CpuStats) -> String {
@@ -966,7 +966,7 @@ pub fn render_sys_report(sys: &SysStats, width: usize) -> String {
     out
 }
 
-fn render_footer(width: usize) -> String {
+pub(crate) fn render_footer(width: usize) -> String {
     let cmd = |k: &str, args: &str| {
         if args.is_empty() {
             paint(BOLD_CYAN, k)
@@ -1580,7 +1580,7 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
 }
 
 /// Strip ANSI CSI/OSC/escape sequences and replace newlines/control chars with spaces.
-fn sanitize_one_line(s: &str) -> String {
+pub(crate) fn sanitize_one_line(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

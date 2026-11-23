@@ -7,6 +7,7 @@ use crate::model::{
     ContextSnapshot, QuotaSnapshot, Role, SessionMeta, Source, TurnSummary, UsageRecord,
 };
 
+mod project;
 mod v2;
 pub use v2::{BudgetRow, InboxRow, MessageRow, TerminalRow};
 

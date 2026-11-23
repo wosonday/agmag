@@ -372,9 +372,7 @@ fn ascii_mode_no_box_drawing() {
     }
 }
 
-// The bridge is Task B's `ansi_to_text`; until it merges the stub panics, so this one is ignored.
 #[test]
-#[ignore = "needs Task B (ansi_to_text stub panics)"]
 fn bridged_sections_render_titles_and_body() {
     let d = data(&[Section::Usage, Section::Budgets, Section::System]);
     let state = GlobalState::new(ThemeName::CatppuccinMocha);

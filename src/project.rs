@@ -429,7 +429,8 @@ pub fn load_project_view(
             t.state == "live"
                 || open.iter().any(|item| {
                     item.terminal.as_deref().is_some_and(|term| {
-                        term == t.address.as_str() || t.name.as_deref() == Some(term)
+                        term == t.address.as_str()
+                            || t.name.as_deref().filter(|n| !n.is_empty()) == Some(term)
                     })
                 })
         })

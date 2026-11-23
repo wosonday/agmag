@@ -945,6 +945,44 @@ fn load_project_view_stage_falls_back_to_live_termview_cwd() -> anyhow::Result<(
 }
 
 #[test]
+fn load_project_view_kept_ignores_empty_names() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+
+    // Exited terminal named "" plus an orphan inbox item addressed to "" — an empty name is
+    // not a terminal key (same rule as list_projects/parties), so neither keeps it visible.
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some(String::new()),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.open_inbox(Some(""), "hook", None, "orphan", now)?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |_: &str| -> Option<String> { Some(root.clone()) };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    let key = ProjectKey {
+        root: norm_cwd(&root),
+        name: project_name(&norm_cwd(&root)),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    assert!(
+        pv.agents.iter().all(|a| a.address != "t1"),
+        "empty-named exited terminal kept: {:?}",
+        pv.agents
+    );
+    Ok(())
+}
+
+#[test]
 fn compute_roots_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let root = tmp.path().to_str().unwrap().to_string();

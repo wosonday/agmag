@@ -293,7 +293,19 @@ pub fn tree_order(members: &[&TerminalRow]) -> Vec<(usize, usize, bool)> {
     }
     for (i, m) in members.iter().enumerate() {
         if let Some(name) = m.name.as_deref().filter(|name| !name.is_empty()) {
-            by_key.entry(name).or_insert(i);
+            let dominated_by_address = by_key
+                .get(name)
+                .is_some_and(|&prev| members[prev].address.as_str() == name);
+            if dominated_by_address {
+                continue;
+            }
+            let better = by_key.get(name).is_none_or(|&prev| {
+                let p = members[prev];
+                (m.state == "live", m.created_ms) > (p.state == "live", p.created_ms)
+            });
+            if better {
+                by_key.insert(name, i);
+            }
         }
     }
     let mut parent: Vec<Option<usize>> = vec![None; n];

@@ -15,7 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
-use super::global::{Focus, GlobalData, GlobalState, Popup};
+use super::global::{Focus, GlobalData, GlobalState, Popup, visible_sections};
 use super::theme::Theme;
 use crate::actions::kind_to_english;
 use crate::dashboard::{
@@ -178,15 +178,9 @@ fn draw_sections(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let mut chosen: Vec<Section> = data
-        .view
-        .iter()
-        .copied()
-        .filter(|sec| *sec != Section::Messages)
-        .collect();
-    if chosen.is_empty() {
-        chosen = Section::DEFAULT.to_vec();
-    }
+    let mut chosen = visible_sections(&data.view);
+    // `Messages` is pinned and drawn separately below the section area.
+    chosen.pop();
     if chosen.len() == 1 {
         draw_section(frame, area, chosen[0], state, data, ctx);
         return;

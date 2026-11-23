@@ -270,6 +270,18 @@ impl GlobalState {
                 self.history_down();
                 GEffect::None
             }
+            KeyCode::PageUp => {
+                if data.output.is_some() {
+                    self.output_scroll = self.output_scroll.saturating_sub(5);
+                }
+                GEffect::None
+            }
+            KeyCode::PageDown => {
+                if data.output.is_some() {
+                    self.output_scroll = self.output_scroll.saturating_add(5);
+                }
+                GEffect::None
+            }
             KeyCode::Tab => {
                 let panels = visible_panels(data);
                 if let Some(first) = panels.first().copied() {
@@ -563,14 +575,23 @@ impl GlobalState {
 }
 
 fn visible_panels(data: &GlobalData) -> Vec<Section> {
-    let mut panels: Vec<Section> = data
-        .view
+    visible_sections(&data.view)
+}
+
+/// The panels the global screen shows: the chosen sections in `view` (dropping `Messages`, which
+/// is pinned and never counted) followed by `Messages`. An empty or messages-only view falls back
+/// to `Section::DEFAULT`, exactly as the drawing does, so `Tab` and the screen never disagree.
+pub(crate) fn visible_sections(view: &[Section]) -> Vec<Section> {
+    let mut sections: Vec<Section> = view
         .iter()
         .copied()
         .filter(|s| *s != Section::Messages)
         .collect();
-    panels.push(Section::Messages);
-    panels
+    if sections.is_empty() {
+        sections = Section::DEFAULT.to_vec();
+    }
+    sections.push(Section::Messages);
+    sections
 }
 
 fn char_to_byte(s: &str, char_idx: usize) -> usize {
@@ -723,6 +744,50 @@ mod tests {
         st.cmd.cursor = 3;
         let eff = st.on_key(key(KeyCode::Enter), &data);
         assert_eq!(eff, GEffect::None);
+    }
+
+    #[test]
+    fn pgdn_scrolls_output_from_cmdline() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        data.output = Some((0..40).map(|i| format!("line-{i:02}\n")).collect());
+        assert_eq!(st.focus, Focus::CmdLine);
+
+        st.on_key(key(KeyCode::PageDown), &data);
+        assert_eq!(st.output_scroll, 5, "PgDn must scroll the Output panel");
+        st.on_key(key(KeyCode::PageDown), &data);
+        assert_eq!(st.output_scroll, 10);
+        st.on_key(key(KeyCode::PageUp), &data);
+        assert_eq!(st.output_scroll, 5);
+
+        // No Output panel open: paging does nothing.
+        data.output = None;
+        st.on_key(key(KeyCode::PageDown), &data);
+        assert_eq!(st.output_scroll, 5);
+    }
+
+    #[test]
+    fn tab_matches_drawn_panels_for_empty_and_messages_only_view() {
+        for view in [Vec::new(), vec![Section::Messages]] {
+            let data = data_with(view.clone(), vec![], vec![]);
+            let expected = visible_sections(&view);
+            assert_eq!(expected.last(), Some(&Section::Messages));
+            assert!(
+                expected.len() > 1,
+                "an empty or messages-only view must fall back to the drawn defaults"
+            );
+
+            let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+            let mut seen = Vec::new();
+            loop {
+                st.on_key(key(KeyCode::Tab), &data);
+                match st.focus {
+                    Focus::Panel(sec) => seen.push(sec),
+                    Focus::CmdLine => break,
+                }
+            }
+            assert_eq!(seen, expected, "Tab must visit exactly the drawn panels");
+        }
     }
 
     #[test]

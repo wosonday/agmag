@@ -28,9 +28,50 @@ enum Screen {
     Board(Box<BoardScreen>),
 }
 
+impl Screen {
+    fn kind(&self) -> ScreenKind {
+        match self {
+            Screen::Global => ScreenKind::Global,
+            Screen::Board(_) => ScreenKind::Board,
+        }
+    }
+}
+
+/// The screen as a plain value, so the refresh decision stays testable without a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScreenKind {
+    Global,
+    Board,
+}
+
+/// Which data sources one tick of the loop refreshes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RefreshTargets {
+    pub global: bool,
+    pub board: bool,
+}
+
+/// The board screen reloads only itself; the global data is loaded while the global screen is
+/// shown (and therefore again on the first tick after the board returns to it), not every board
+/// tick.
+pub(crate) fn refresh_targets(screen: ScreenKind) -> RefreshTargets {
+    match screen {
+        ScreenKind::Global => RefreshTargets {
+            global: true,
+            board: false,
+        },
+        ScreenKind::Board => RefreshTargets {
+            global: false,
+            board: true,
+        },
+    }
+}
+
 /// What one key on the global screen asks the loop to do next.
 enum AppAction {
     Stay,
+    /// Refresh the global data (and with it the selections) before drawing again.
+    Refresh,
     OpenBoard(ProjectKey),
     Quit,
 }
@@ -76,8 +117,13 @@ pub fn run_app(
 
         loop {
             let _ = scan(store);
-            global.refresh(store, cfg, &mut state, &mut data, super::clock_ms());
-            if let Screen::Board(board) = &mut screen {
+            let targets = refresh_targets(screen.kind());
+            if targets.global {
+                global.refresh(store, cfg, &mut state, &mut data, super::clock_ms());
+            }
+            if targets.board
+                && let Screen::Board(board) = &mut screen
+            {
                 board.refresh(store, cfg, super::clock_ms());
             }
             draw(&mut terminal, &screen, &state, &data, ascii)?;
@@ -103,6 +149,19 @@ pub fn run_app(
                         } else {
                             match handle_global_key(key, store, &mut state, &mut data, dispatch) {
                                 AppAction::Stay => Next::Redraw,
+                                AppAction::Refresh => {
+                                    // Commands change what the snapshot holds (done, kill, reply):
+                                    // reload before the next key can act on a stale row, keeping
+                                    // the note / output / popup the command just produced.
+                                    global.refresh(
+                                        store,
+                                        cfg,
+                                        &mut state,
+                                        &mut data,
+                                        super::clock_ms(),
+                                    );
+                                    Next::Redraw
+                                }
                                 AppAction::Quit => Next::Quit,
                                 AppAction::OpenBoard(key) => Next::Board(key),
                             }
@@ -242,11 +301,14 @@ fn handle_global_key(
         GEffect::Run(line) => {
             let dispatched = dispatch(&line);
             let quit = dispatched.outcome == Outcome::Quit;
+            let refresh = effect_requests_refresh(&dispatched.outcome);
             let board = apply_dispatched(state, data, dispatched);
             if quit {
                 AppAction::Quit
             } else if let Some(key) = board {
                 AppAction::OpenBoard(key)
+            } else if refresh {
+                AppAction::Refresh
             } else {
                 AppAction::Stay
             }
@@ -271,6 +333,14 @@ fn handle_global_key(
         }
         GEffect::Quit => AppAction::Quit,
     }
+}
+
+/// Whether dispatching this outcome must refresh the global data before the next key.
+///
+/// Everything except leaving the screen (`Quit`) and switching to the board (`OpenBoard`) can
+/// change the snapshot, so the loop reloads it immediately instead of waiting for the next tick.
+pub(crate) fn effect_requests_refresh(outcome: &Outcome) -> bool {
+    !matches!(outcome, Outcome::Quit | Outcome::OpenBoard(_))
 }
 
 /// Applies one dispatch result to the global screen; returns the project whose board to open.
@@ -451,6 +521,46 @@ mod tests {
             None
         );
         assert_eq!(data.view, view);
+    }
+
+    #[test]
+    fn run_effect_requests_refresh() {
+        for outcome in [
+            Outcome::Note(NoteKind::Ok, "killed t1".into()),
+            Outcome::Shown("cleanup list".into()),
+            Outcome::NeedsConfirm("kill t1?".into()),
+            Outcome::None,
+        ] {
+            assert!(
+                effect_requests_refresh(&outcome),
+                "{outcome:?} should refresh right after dispatching"
+            );
+        }
+        for outcome in [Outcome::Quit, Outcome::OpenBoard(pk("shop"))] {
+            assert!(
+                !effect_requests_refresh(&outcome),
+                "{outcome:?} must not refresh the global data"
+            );
+        }
+    }
+
+    #[test]
+    fn board_tick_skips_the_global_refresh() {
+        assert_eq!(
+            refresh_targets(ScreenKind::Global),
+            RefreshTargets {
+                global: true,
+                board: false,
+            }
+        );
+        // Leaving the board switches the screen back to Global, whose tick refreshes there.
+        assert_eq!(
+            refresh_targets(ScreenKind::Board),
+            RefreshTargets {
+                global: false,
+                board: true,
+            }
+        );
     }
 
     #[test]

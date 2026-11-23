@@ -6,6 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Sparkline, Wrap};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::BoardData;
 use super::flows::{self, Edge};
@@ -58,8 +59,12 @@ struct Ctx<'a> {
 
 const LEFT_W: u16 = 20;
 const RIGHT_W: u16 = 34;
-const CARD_W: u16 = 18;
+const CARD_MIN_W: u16 = 16;
+const CARD_MAX_W: u16 = 32;
+const CARD_GAP: u16 = 1;
 const CARD_H: u16 = 4;
+/// Two connector rows sit between card rows: the bus and the drop/label line.
+const CONNECTOR_ROWS: u16 = 2;
 const INBOX_H: u16 = 5;
 const STEPS: [&str; 4] = ["wip", "ready", "merging", "merged"];
 const MAX_POPUP_H: u16 = 20;
@@ -291,6 +296,121 @@ fn draw_status(frame: &mut Frame, area: Rect, data: &BoardData, ctx: Ctx) {
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
+/// One card placed on the orchestration panel.
+struct CardSlot {
+    index: usize,
+    rect: Rect,
+}
+
+/// One visual row of cards: agents at the same depth that fit side by side.
+struct CardRow {
+    depth: usize,
+    cards: Vec<CardSlot>,
+}
+
+/// Width of one card in a row of `count` cards, filling the panel up to 32 columns.
+fn row_card_width(inner_width: u16, count: usize) -> u16 {
+    let count = (count.max(1)) as u16;
+    let gaps = count.saturating_sub(1).saturating_mul(CARD_GAP);
+    let span = inner_width.saturating_sub(gaps);
+    (span / count)
+        .min(CARD_MAX_W)
+        .max(CARD_MIN_W.min(inner_width))
+}
+
+/// Place cards row by row, wrapping only when a card would be narrower than the minimum.
+fn card_rows(inner: Rect, agents: &[AgentView]) -> Vec<CardRow> {
+    let max_depth = agents.iter().map(|a| a.depth).max().unwrap_or(0);
+    let per_row = usize::from((inner.width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).max(1);
+    let mut rows = Vec::new();
+    let mut y = inner.y;
+    let mut prev_depth: Option<usize> = None;
+    for depth in 0..=max_depth {
+        let indices: Vec<usize> = agents
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.depth == depth)
+            .map(|(i, _)| i)
+            .collect();
+        for chunk in indices.chunks(per_row) {
+            if prev_depth.is_some_and(|prev| depth > prev) {
+                y = y.saturating_add(CONNECTOR_ROWS);
+            }
+            if y >= inner.bottom() {
+                return rows;
+            }
+            let width = row_card_width(inner.width, chunk.len());
+            let mut cards = Vec::new();
+            for (col, &index) in chunk.iter().enumerate() {
+                let x = inner.x + (col as u16).saturating_mul(width + CARD_GAP);
+                if x >= inner.right() {
+                    break;
+                }
+                let rect = Rect {
+                    x,
+                    y,
+                    width: width.min(inner.right() - x),
+                    height: CARD_H.min(inner.bottom() - y),
+                };
+                if rect.width < 3 || rect.height < 2 {
+                    continue;
+                }
+                cards.push(CardSlot { index, rect });
+            }
+            if cards.is_empty() {
+                return rows;
+            }
+            rows.push(CardRow { depth, cards });
+            y = y.saturating_add(CARD_H);
+            prev_depth = Some(depth);
+        }
+    }
+    rows
+}
+
+/// Truncate to `max` display columns, marking the cut with `…`.
+fn fit_text(text: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    if text.width() <= max {
+        return text.to_string();
+    }
+    let target = max - 1;
+    let mut out = String::new();
+    let mut width = 0;
+    for ch in text.chars() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + w > target {
+            break;
+        }
+        out.push(ch);
+        width += w;
+    }
+    out.push('…');
+    out
+}
+
+fn card_centre(rect: Rect) -> u16 {
+    rect.x + rect.width / 2
+}
+
+fn put_cell(frame: &mut Frame, x: u16, y: u16, symbol: &'static str, color: Color) {
+    let area = frame.area();
+    if x < area.x || x >= area.right() || y < area.y || y >= area.bottom() {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Span::styled(symbol, Style::new().fg(color))),
+        Rect {
+            x,
+            y,
+            width: 1,
+            height: 1,
+        },
+    );
+}
+
 fn draw_orchestration(
     frame: &mut Frame,
     area: Rect,
@@ -328,62 +448,33 @@ fn draw_orchestration(
         return;
     }
 
-    let per_row = usize::from(((inner.width + 1) / (CARD_W + 1)).max(1));
-    let max_depth = view.agents.iter().map(|a| a.depth).max().unwrap_or(0);
-    let mut depth_rows: Vec<(usize, Vec<usize>)> = Vec::new();
-    for depth in 0..=max_depth {
-        let indices: Vec<usize> = view
-            .agents
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.depth == depth)
-            .map(|(i, _)| i)
-            .collect();
-        for chunk in indices.chunks(per_row) {
-            depth_rows.push((depth, chunk.to_vec()));
+    let rows = card_rows(inner, &view.agents);
+    for row in &rows {
+        for slot in &row.cards {
+            draw_card(
+                frame,
+                slot.rect,
+                &view.agents[slot.index],
+                state,
+                ctx,
+                data.now_ms,
+            );
         }
     }
-
-    let mut y = inner.y;
-    for (row, (depth, chunk)) in depth_rows.iter().enumerate() {
-        if y >= inner.bottom() {
-            break;
-        }
-        for (col, &index) in chunk.iter().enumerate() {
-            let x = inner.x + (col as u16) * (CARD_W + 1);
-            if x >= inner.right() {
-                break;
-            }
-            let card = Rect {
-                x,
-                y,
-                width: CARD_W.min(inner.right() - x),
-                height: CARD_H.min(inner.bottom() - y),
-            };
-            if card.width < 3 || card.height < 2 {
-                continue;
-            }
-            draw_card(frame, card, &view.agents[index], state, ctx, data.now_ms);
-        }
-        y = y.saturating_add(CARD_H);
-        if let Some((next_depth, next_chunk)) = depth_rows.get(row + 1)
-            && *next_depth > *depth
-            && y < inner.bottom()
-        {
+    let parents = flows::parents(&view.agents);
+    for pair in rows.windows(2) {
+        let (prev, next) = (&pair[0], &pair[1]);
+        if next.depth > prev.depth {
             draw_connectors(
                 frame,
-                Rect {
-                    x: inner.x,
-                    y,
-                    width: inner.width,
-                    height: 1,
-                },
-                next_chunk,
+                inner,
+                &prev.cards,
+                &next.cards,
+                &parents,
                 &data.edges,
                 data.now_ms,
                 ctx,
             );
-            y = y.saturating_add(1);
         }
     }
 }
@@ -418,6 +509,7 @@ fn draw_card(
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    let width = inner.width as usize;
 
     let kind = status_kind(agent);
     let symbol_color = if exited {
@@ -435,6 +527,7 @@ fn draw_card(
     } else {
         format!("{label} {app}/{model}")
     };
+    let ident = fit_text(&ident, width.saturating_sub(2));
     let base = Style::new().fg(if exited {
         ctx.theme.muted
     } else {
@@ -454,18 +547,32 @@ fn draw_card(
     ]);
 
     let line2 = if let Some(doing) = &agent.doing {
-        Line::from(vec![
-            Span::styled("doing: ", Style::new().fg(ctx.theme.muted)),
-            Span::styled(sanitize_one_line(&doing.summary), base),
-            Span::styled(
-                format!(" {}", age_since(now_ms, doing.ts_ms)),
+        let summary = sanitize_one_line(&doing.summary);
+        let age = age_since(now_ms, doing.ts_ms);
+        let prefix = "doing: ";
+        let summary_fits = prefix.width() + summary.width() <= width;
+        let with_age = summary_fits && prefix.width() + summary.width() + 1 + age.width() <= width;
+        let mut spans = vec![Span::styled(prefix, Style::new().fg(ctx.theme.muted))];
+        if with_age {
+            spans.push(Span::styled(summary, base));
+            spans.push(Span::styled(
+                format!(" {age}"),
                 Style::new().fg(ctx.theme.muted),
-            ),
-        ])
+            ));
+        } else {
+            let summary = fit_text(&summary, width.saturating_sub(prefix.width()));
+            spans.push(Span::styled(summary, base));
+        }
+        Line::from(spans)
     } else if let Some(stage) = &agent.stage {
+        let prefix = "stage: ";
+        let stage = fit_text(
+            &sanitize_one_line(stage),
+            width.saturating_sub(prefix.width()),
+        );
         Line::from(vec![
-            Span::styled("stage: ", Style::new().fg(ctx.theme.muted)),
-            Span::styled(sanitize_one_line(stage), base),
+            Span::styled(prefix, Style::new().fg(ctx.theme.muted)),
+            Span::styled(stage, base),
         ])
     } else {
         muted_line("-", ctx)
@@ -474,44 +581,157 @@ fn draw_card(
     frame.render_widget(Paragraph::new(vec![line1, line2]), inner);
 }
 
+/// Box-drawing glyphs for the tree connector, or their ASCII fallbacks.
+struct ConnGlyphs {
+    vertical: &'static str,
+    horizontal: &'static str,
+    /// `┬`: a horizontal line with a stub going down.
+    down: &'static str,
+    /// `┴`: a horizontal line with a stub going up.
+    up: &'static str,
+    corner_left: &'static str,
+    corner_right: &'static str,
+    /// `┼`: stem and drop share one column.
+    cross: &'static str,
+}
+
+impl ConnGlyphs {
+    fn new(ascii: bool) -> Self {
+        if ascii {
+            Self {
+                vertical: "|",
+                horizontal: "-",
+                down: "+",
+                up: "+",
+                corner_left: "+",
+                corner_right: "+",
+                cross: "+",
+            }
+        } else {
+            Self {
+                vertical: "│",
+                horizontal: "─",
+                down: "┬",
+                up: "┴",
+                corner_left: "┌",
+                corner_right: "┐",
+                cross: "┼",
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_connectors(
     frame: &mut Frame,
     area: Rect,
-    chunk: &[usize],
+    parents_row: &[CardSlot],
+    children_row: &[CardSlot],
+    parent_of: &[Option<usize>],
     edges: &[Edge],
     now_ms: i64,
     ctx: Ctx,
 ) {
-    let dash = if ctx.ascii { "-" } else { "─" };
-    for (col, &child) in chunk.iter().enumerate() {
-        let Some(edge) = edges.iter().find(|e| e.child == child) else {
-            continue;
-        };
-        let x = area.x + (col as u16) * (CARD_W + 1);
-        if x >= area.right() {
+    let glyphs = ConnGlyphs::new(ctx.ascii);
+    for parent in parents_row {
+        let kids: Vec<&CardSlot> = children_row
+            .iter()
+            .filter(|slot| parent_of.get(slot.index).copied().flatten() == Some(parent.index))
+            .collect();
+        if kids.is_empty() {
             continue;
         }
-        let width = CARD_W.min(area.right() - x);
-        let live = flows::is_live(edge, now_ms);
-        let color = if live {
-            ctx.theme.accent
-        } else {
-            ctx.theme.muted
-        };
-        let label = format!(
-            "{dash} {} {} {dash}",
-            sanitize_one_line(&edge.kind),
-            age_since(now_ms, edge.ts_ms)
+
+        let parent_cx = card_centre(parent.rect);
+        let parent_bottom = parent.rect.y + parent.rect.height - 1;
+        put_cell(
+            frame,
+            parent_cx,
+            parent_bottom,
+            glyphs.down,
+            ctx.theme.border,
         );
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(label, Style::new().fg(color)))),
-            Rect {
-                x,
-                y: area.y,
-                width,
-                height: 1,
-            },
-        );
+
+        let bus_y = parent_bottom + 1;
+        let drop_y = bus_y + 1;
+        let child_centres: Vec<u16> = kids.iter().map(|kid| card_centre(kid.rect)).collect();
+        let bus_start = child_centres
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or(parent_cx)
+            .min(parent_cx);
+        let bus_end = child_centres
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(parent_cx)
+            .max(parent_cx);
+
+        let mut x = bus_start;
+        loop {
+            let is_parent = x == parent_cx;
+            let is_child = child_centres.contains(&x);
+            let symbol = match (is_parent, is_child) {
+                (true, true) => glyphs.cross,
+                (true, false) => glyphs.up,
+                (false, true) if x == bus_start => glyphs.corner_left,
+                (false, true) if x == bus_end => glyphs.corner_right,
+                (false, true) => glyphs.down,
+                (false, false) if x == bus_start => glyphs.corner_left,
+                (false, false) if x == bus_end => glyphs.corner_right,
+                (false, false) => glyphs.horizontal,
+            };
+            put_cell(frame, x, bus_y, symbol, ctx.theme.border);
+            if x >= bus_end {
+                break;
+            }
+            x += 1;
+        }
+
+        for (i, kid) in kids.iter().enumerate() {
+            let cx = card_centre(kid.rect);
+            let edge = edges.iter().find(|edge| edge.child == kid.index);
+            let (color, label) = match edge {
+                Some(edge) => {
+                    let color = if flows::is_live(edge, now_ms) {
+                        ctx.theme.accent
+                    } else {
+                        ctx.theme.muted
+                    };
+                    let label = format!(
+                        "{} {}",
+                        sanitize_one_line(&edge.kind),
+                        age_since(now_ms, edge.ts_ms)
+                    );
+                    (color, Some(label))
+                }
+                None => (ctx.theme.muted, None),
+            };
+            put_cell(frame, cx, drop_y, glyphs.vertical, color);
+            put_cell(frame, cx, kid.rect.y, glyphs.up, color);
+            let Some(label) = label else { continue };
+            let next_x = kids
+                .get(i + 1)
+                .map(|next| card_centre(next.rect))
+                .unwrap_or(area.right());
+            let max_w = next_x
+                .saturating_sub(cx + 1)
+                .min(area.right().saturating_sub(cx + 1));
+            let label = fit_text(&label, max_w as usize);
+            if label.is_empty() {
+                continue;
+            }
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(label, Style::new().fg(color)))),
+                Rect {
+                    x: cx + 1,
+                    y: drop_y,
+                    width: max_w,
+                    height: 1,
+                },
+            );
+        }
     }
 }
 
@@ -733,6 +953,16 @@ fn age_since(now_ms: i64, ts_ms: i64) -> String {
     age_label(now_ms.saturating_sub(ts_ms) / 1000)
 }
 
+/// Terminal label for an address known to this project, else the address itself.
+fn agent_label(agents: &[AgentView], address: &str) -> String {
+    agents
+        .iter()
+        .find(|agent| agent.address == address)
+        .map(|agent| sanitize_one_line(&agent.label))
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| address.to_string())
+}
+
 fn draw_messages(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
     let title = match state.selected_agent(data) {
         Some(agent) => format!(" Messages · {} ", sanitize_one_line(&agent.label)),
@@ -749,17 +979,26 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &BoardState, data: &Board
         return;
     }
 
+    let agents = data
+        .view
+        .as_ref()
+        .map(|view| view.agents.as_slice())
+        .unwrap_or(&[]);
     let needle = state.filter.trim().to_lowercase();
     let arrow = if ctx.ascii { "->" } else { "→" };
     let mut lines: Vec<Line<'static>> = Vec::new();
     for message in &data.conversation {
-        let from = sanitize_one_line(&message.from);
-        let to = sanitize_one_line(&message.to);
+        let raw_from = sanitize_one_line(&message.from);
+        let raw_to = sanitize_one_line(&message.to);
+        let from = agent_label(agents, &raw_from);
+        let to = agent_label(agents, &raw_to);
         let body = sanitize_one_line(&message.text);
         if !needle.is_empty()
             && !body.to_lowercase().contains(&needle)
             && !from.to_lowercase().contains(&needle)
             && !to.to_lowercase().contains(&needle)
+            && !raw_from.to_lowercase().contains(&needle)
+            && !raw_to.to_lowercase().contains(&needle)
         {
             continue;
         }
@@ -820,7 +1059,7 @@ fn draw_inbox(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
         let kind = item
             .kind
             .as_deref()
-            .map(sanitize_one_line)
+            .map(|kind| sanitize_one_line(kind_to_english(kind)))
             .filter(|k| !k.is_empty())
             .unwrap_or_else(|| "-".to_string());
         let terminal = item
@@ -927,7 +1166,7 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
                     let kind = item
                         .kind
                         .as_deref()
-                        .map(sanitize_one_line)
+                        .map(|kind| sanitize_one_line(kind_to_english(kind)))
                         .unwrap_or_else(|| "-".to_string());
                     let terminal = item
                         .terminal

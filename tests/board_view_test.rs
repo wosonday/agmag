@@ -5,7 +5,7 @@ use agmag::board::flows::Edge;
 use agmag::board::state::{BoardState, Mode};
 use agmag::board::theme::{ThemeName, theme};
 use agmag::board::view::{LayoutMode, draw, layout_mode};
-use agmag::project::{AgentView, ProjectKey, ProjectSummary, ProjectView};
+use agmag::project::{AgentView, ProjectKey, ProjectSummary, ProjectView, TurnRow};
 use agmag::store::{InboxRow, MessageRow};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -415,6 +415,221 @@ fn stage_pipeline_mapping() {
 
     let buf = stage_buffer(None);
     assert!(has(&buf, "stage: -"), "{}", text(&buf));
+}
+
+/// (left border x, right border x, label row) of the card whose line 1 holds `needle`.
+fn card_centre(left: u16, right: u16) -> u16 {
+    left + (right - left).div_ceil(2)
+}
+
+fn card_bounds(buf: &Buffer, needle: &str) -> (u16, u16, u16) {
+    // Wide layout: the orchestration column is 20..106. Restricting the search skips
+    // the detail panel title, which can hold the same label.
+    let (x, y) = find_in(buf, needle, 20, 106);
+    let mut left = x;
+    while left > 0 {
+        let symbol = buf[(left - 1, y)].symbol();
+        if symbol == "│" || symbol == "|" {
+            break;
+        }
+        left -= 1;
+    }
+    let mut right = x;
+    while right + 1 < buf.area.width {
+        let symbol = buf[(right + 1, y)].symbol();
+        if symbol == "│" || symbol == "|" {
+            break;
+        }
+        right += 1;
+    }
+    (left - 1, right + 1, y)
+}
+
+#[test]
+fn cards_grow_to_fill_width() {
+    let mut parent = agent("t7p", "agm-ceo", 0);
+    parent.app = "claude".into();
+    parent.model = "opus".into();
+    let mut children = Vec::new();
+    for address in ["t9a", "t9b", "t9c", "t9d"] {
+        let mut child = agent(address, address, 1);
+        child.app = "opencode".into();
+        child.model = "m".into();
+        child.doing = Some(TurnRow {
+            ts_ms: NOW - 60_000,
+            role: "tool".into(),
+            summary: "cargo test".into(),
+        });
+        children.push(child);
+    }
+    let mut agents = vec![parent];
+    agents.extend(children);
+    let data = data(agents);
+    let state = selected_state("t7p");
+    let buf = render((140, 36), &state, &data, false);
+    assert!(
+        has(&buf, "agm-ceo claude"),
+        "card line 1 is truncated:\n{}",
+        text(&buf)
+    );
+    assert!(
+        has(&buf, "doing: cargo test"),
+        "card line 2 is truncated:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn connector_joins_parent_and_children() {
+    let mut data = data(vec![
+        agent("t7p", "agm-ceo", 0),
+        agent("t9a", "worker-a", 1),
+        agent("t9b", "worker-b", 1),
+    ]);
+    data.edges = vec![Edge {
+        parent: 0,
+        child: 1,
+        kind: "REPORT".into(),
+        ts_ms: NOW - 60_000,
+    }];
+    let state = selected_state("t7p");
+    let buf = render((140, 36), &state, &data, false);
+
+    let (pl, pr, py) = card_bounds(&buf, "agm-ceo");
+    let parent_cx = card_centre(pl, pr);
+    let parent_bottom = py + 2;
+    assert_eq!(
+        buf[(parent_cx, parent_bottom)].symbol(),
+        "┬",
+        "no connector stem under the parent card:\n{}",
+        text(&buf)
+    );
+
+    let bus_row = parent_bottom + 1;
+    assert!(
+        matches!(buf[(parent_cx, bus_row)].symbol(), "┴" | "┼"),
+        "stem does not meet the bus:\n{}",
+        text(&buf)
+    );
+    assert!(
+        row_text(&buf, bus_row).contains('─'),
+        "no horizontal bus:\n{}",
+        text(&buf)
+    );
+    assert!(
+        row_text(&buf, bus_row + 1).contains("REPORT"),
+        "edge label missing from the drop line:\n{}",
+        text(&buf)
+    );
+
+    for label in ["worker-a", "worker-b"] {
+        let (cl, cr, cy) = card_bounds(&buf, label);
+        let cx = card_centre(cl, cr);
+        assert_eq!(
+            buf[(cx, cy - 1)].symbol(),
+            "┴",
+            "no drop mark on {label}'s top border:\n{}",
+            text(&buf)
+        );
+        assert_eq!(
+            buf[(cx, cy - 2)].symbol(),
+            "│",
+            "no drop line above {label}:\n{}",
+            text(&buf)
+        );
+    }
+}
+
+#[test]
+fn connector_ascii_uses_plus_pipe_dash() {
+    let mut data = data(vec![
+        agent("t7p", "agm-ceo", 0),
+        agent("t9a", "worker-a", 1),
+        agent("t9b", "worker-b", 1),
+    ]);
+    data.edges = vec![Edge {
+        parent: 0,
+        child: 1,
+        kind: "REPORT".into(),
+        ts_ms: NOW - 60_000,
+    }];
+    let state = selected_state("t7p");
+    let buf = render((140, 36), &state, &data, true);
+
+    let (pl, pr, py) = card_bounds(&buf, "agm-ceo");
+    let parent_cx = card_centre(pl, pr);
+    let parent_bottom = py + 2;
+    assert_eq!(buf[(parent_cx, parent_bottom)].symbol(), "+");
+    let bus_row = parent_bottom + 1;
+    assert!(
+        row_text(&buf, bus_row).contains('-'),
+        "no ASCII bus:\n{}",
+        text(&buf)
+    );
+    for label in ["worker-a", "worker-b"] {
+        let (cl, cr, cy) = card_bounds(&buf, label);
+        let cx = card_centre(cl, cr);
+        assert_eq!(buf[(cx, cy - 1)].symbol(), "+");
+        assert_eq!(buf[(cx, cy - 2)].symbol(), "|");
+    }
+    assert!(!has(&buf, "─") && !has(&buf, "┬") && !has(&buf, "┴"));
+}
+
+#[test]
+fn inbox_kind_is_english() {
+    let mut data = data(vec![agent("t1", "alpha", 0)]);
+    data.view.as_mut().unwrap().inbox = vec![InboxRow {
+        id: 43,
+        ts_ms: NOW,
+        terminal: Some("t9".into()),
+        source: "blocked".into(),
+        kind: Some("HỎI".into()),
+        text: "needs a decision".into(),
+        resolved_ms: None,
+        reply: None,
+    }];
+    let state = selected_state("t1");
+    let buf = render((140, 40), &state, &data, false);
+    assert!(has(&buf, "QUESTION"), "{}", text(&buf));
+    assert!(!has(&buf, "HỎI"), "stored code leaked:\n{}", text(&buf));
+}
+
+#[test]
+fn messages_use_agent_labels() {
+    let mut data = data(vec![agent("t1", "alpha", 0), agent("t2", "beta", 0)]);
+    data.conversation = vec![
+        MessageRow {
+            id: 1,
+            ts_ms: NOW,
+            from: "t1".into(),
+            to: "t2".into(),
+            kind: "GIAO".into(),
+            text: "hello".into(),
+            ..MessageRow::default()
+        },
+        MessageRow {
+            id: 2,
+            ts_ms: NOW,
+            from: "zz".into(),
+            to: "t1".into(),
+            kind: "HỎI".into(),
+            text: "who?".into(),
+            ..MessageRow::default()
+        },
+    ];
+    let state = selected_state("t1");
+    let buf = render((140, 40), &state, &data, false);
+    assert!(has(&buf, "alpha → beta"), "{}", text(&buf));
+    assert!(
+        !has(&buf, "t1 → t2"),
+        "raw addresses shown:\n{}",
+        text(&buf)
+    );
+    assert!(
+        has(&buf, "zz → alpha"),
+        "unknown address changed:\n{}",
+        text(&buf)
+    );
 }
 
 #[test]

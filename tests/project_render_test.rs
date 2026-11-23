@@ -404,6 +404,35 @@ fn zero_width_does_not_panic() {
 }
 
 #[test]
+fn handed_off_status_keeps_symbol_and_full_words() {
+    let mut idle = agent("a1", 0, false);
+    idle.status = "idle [HANDED OFF]".into();
+    let mut working = agent("a2", 0, false);
+    working.status = "working [HANDED OFF]".into();
+    let mut blocked_lower = agent("a3", 0, false);
+    blocked_lower.status = "blocked".into();
+    let mut blocked_upper = agent("a4", 0, true);
+    blocked_upper.status = "BLOCKED: needs decision".into();
+    let out = render_project_body(
+        &view(vec![idle, working, blocked_lower, blocked_upper], vec![], vec![]),
+        110,
+        0,
+    );
+    let plain = strip_ansi(&out);
+    assert!(plain.contains("○ idle [HANDED OFF]"), "{plain}");
+    assert!(plain.contains("● working [HANDED OFF]"), "{plain}");
+    // Both lowercase 'blocked' and 'BLOCKED...' should render as blocked symbol+word
+    let blocked_lines: Vec<&str> = plain
+        .lines()
+        .filter(|l| l.contains("a3") || l.contains("a4"))
+        .collect();
+    assert_eq!(blocked_lines.len(), 2, "{plain}");
+    for line in blocked_lines {
+        assert!(line.contains("◐ blocked"), "{line}");
+    }
+}
+
+#[test]
 fn project_list_and_show() {
     let list = vec![
         ProjectSummary {

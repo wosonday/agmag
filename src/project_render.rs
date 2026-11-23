@@ -159,17 +159,20 @@ fn kind_ansi(english: &str) -> &'static str {
 }
 
 fn status_parts(status: &str) -> (&'static str, String) {
-    if status.starts_with("BLOCKED") {
+    let handed_off = status.strip_suffix(" [HANDED OFF]");
+    let base = handed_off.unwrap_or(status);
+    let base_lower = base.to_ascii_lowercase();
+    if base_lower.starts_with("blocked") {
         ("◐", "blocked".into())
-    } else if status == "working" || status == "running" {
+    } else if base == "working" || base == "running" {
         ("●", status.into())
-    } else if status == "idle" {
-        ("○", "idle".into())
-    } else if status == "done" {
-        ("✓", "done".into())
-    } else if status == "exited" {
-        ("×", "exited".into())
-    } else if status.is_empty() || status == "-" {
+    } else if base == "idle" {
+        ("○", status.into())
+    } else if base == "done" {
+        ("✓", status.into())
+    } else if base == "exited" {
+        ("×", status.into())
+    } else if base.is_empty() || base == "-" {
         ("?", "-".into())
     } else {
         ("?", status.into())

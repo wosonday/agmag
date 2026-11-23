@@ -138,13 +138,21 @@ fn sparkline_scales_to_max_and_zero_is_flat() {
     let mut peak = agent("peak", 0, true);
     peak.tokens = Some(0);
     peak.spark = Some(vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]);
-    let plain = strip_ansi(&render_project_body(&view(vec![peak], vec![], vec![]), 110, 0));
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![peak], vec![], vec![]),
+        110,
+        0,
+    ));
     assert!(plain.contains("▁▁▁▁▁▁▁▁▁▁▁█"), "{plain}");
 
     let mut flat = agent("flat", 0, true);
     flat.tokens = Some(0);
     flat.spark = Some(vec![0; 12]);
-    let plain = strip_ansi(&render_project_body(&view(vec![flat], vec![], vec![]), 110, 0));
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![flat], vec![], vec![]),
+        110,
+        0,
+    ));
     assert!(plain.contains("▁▁▁▁▁▁▁▁▁▁▁▁"), "{plain}");
 }
 
@@ -168,7 +176,11 @@ fn inbox_wraps_to_four_lines_messages_to_three() {
         text: "y".repeat(1000),
         ..Default::default()
     }];
-    let plain = strip_ansi(&render_project_body(&view(vec![], inbox, messages), 110, now));
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![], inbox, messages),
+        110,
+        now,
+    ));
 
     let inbox_block = section_lines(&plain, "INBOX ·", Some("MESSAGES ·"));
     assert_eq!(inbox_block.len(), 4, "{inbox_block:#?}");
@@ -253,7 +265,7 @@ fn no_line_exceeds_width_at_40_60_110() {
         for line in plain.lines() {
             let line_width = UnicodeWidthStr::width(line);
             assert!(
-                line_width <= width - 1,
+                line_width < width,
                 "width {width}: {line:?} is {line_width} cells"
             );
         }
@@ -264,7 +276,10 @@ fn no_line_exceeds_width_at_40_60_110() {
             );
         }
         if width == 110 {
-            assert!(plain.contains('▂'), "at 110 the sparkline is shown: {plain}");
+            assert!(
+                plain.contains('▂'),
+                "at 110 the sparkline is shown: {plain}"
+            );
         }
     }
 }

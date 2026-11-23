@@ -144,13 +144,8 @@ pub fn load_data(
                 data.conversation = store.messages_involving(&flows::agent_keys(agent), 30)?;
             }
         }
-        None => {
-            // Without a project there are no agent/inbox selections: clamps in `state.sync` are only
-            // needed for the project list here.
-            if !data.projects.is_empty() {
-                state.sel_project = state.sel_project.min(data.projects.len() - 1);
-            }
-        }
+        // Without a project, `sync` clamps the project list and clears agent/inbox selections.
+        None => state.sync(&data),
     }
 
     Ok(data)

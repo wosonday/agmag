@@ -20,7 +20,7 @@ context % (session not linked), so this is a phase-boundary handoff, target ≤ 
   with live flow edges | agent detail + its messages), inbox bottom, themes Catppuccin/Tokyo Night/Nord; no % progress.
 - User then asked: if possible move the whole `agm tui` to ratatui too → recorded as Phase 2 in the spec.
 - Spec: docs/superpowers/specs/2026-11-23-tui-board-design.md (DRAFT, not yet approved by the user).
-- Builder check was running on opencode/iceman-free; its result was not yet folded in. Re-run it if lost.
+- Builder check done (iceman-free); 3 answers folded into the spec as my calls (pair/agent message queries, single-item done, stage mapping).
 - Next action: fold builder-check answers, get user approval of the spec, then superpowers:writing-plans with
   parallel tracks (OpenCode workers in worktrees; reviewer agy gemini-4-argon-high; helper agent t7v (agy Gemini 4
   Hydrogen) reachable via `hc send t7v '...'` for read-only reviews).

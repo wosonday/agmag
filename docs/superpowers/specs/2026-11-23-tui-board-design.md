@@ -1,6 +1,6 @@
 # TUI board: full-screen project view (ratatui) — design
 
-Status: draft for approval (2026-11-23)
+Status: draft for approval (2026-11-23); builder check done (opencode/iceman-free), answers folded in
 
 ## Intent
 

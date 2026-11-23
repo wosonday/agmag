@@ -1,5 +1,6 @@
 //! Flow edges between a parent agent and its children, from the latest message per pair.
 
+use crate::actions::kind_to_english;
 use crate::project::AgentView;
 use crate::store::MessageRow;
 
@@ -51,8 +52,35 @@ pub fn agent_keys(agent: &AgentView) -> Vec<String> {
 
 /// One edge per (parent, child) pair that exchanged at least one message; newest message wins.
 pub fn edges(agents: &[AgentView], pair_latest: &[MessageRow]) -> Vec<Edge> {
-    let _ = (agents, pair_latest);
-    todo!("Task 1")
+    let parents = parents(agents);
+    let mut out = Vec::new();
+    for (child, parent) in parents.iter().enumerate() {
+        let Some(parent) = parent else {
+            continue;
+        };
+        let parent_keys = agent_keys(&agents[*parent]);
+        let child_keys = agent_keys(&agents[child]);
+        let newest = pair_latest
+            .iter()
+            .filter(|row| {
+                // One end must name the parent, the other the child, in either direction.
+                let ends = |a: &str, b: &str| {
+                    parent_keys.iter().any(|k| k.as_str() == a)
+                        && child_keys.iter().any(|k| k.as_str() == b)
+                };
+                ends(&row.from, &row.to) || ends(&row.to, &row.from)
+            })
+            .max_by(|a, b| (a.ts_ms, a.id).cmp(&(b.ts_ms, b.id)));
+        if let Some(row) = newest {
+            out.push(Edge {
+                parent: *parent,
+                child,
+                kind: kind_to_english(&row.kind).to_owned(),
+                ts_ms: row.ts_ms,
+            });
+        }
+    }
+    out
 }
 
 /// Message under `LIVE_MS` old; a timestamp in the future (clock skew) counts as live.

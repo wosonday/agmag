@@ -1387,7 +1387,8 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
                         } else {
                             " "
                         },
-                        sanitize_one_line(&project.key.name)
+                        // One row per project: the scroll offset counts items, so never wrap.
+                        fit_text(&sanitize_one_line(&project.key.name), 45)
                     ),
                     style,
                 )));
@@ -1427,12 +1428,13 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
         Mode::PickProject { idx } => scroll_offset(*idx, inner.height, data.projects.len()),
         _ => 0,
     };
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
-            .scroll((scroll, 0)),
-        inner,
-    );
+    let paragraph = Paragraph::new(lines).scroll((scroll, 0));
+    let paragraph = if matches!(state.mode, Mode::PickProject { .. }) {
+        paragraph
+    } else {
+        paragraph.wrap(Wrap { trim: true })
+    };
+    frame.render_widget(paragraph, inner);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

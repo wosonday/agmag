@@ -318,6 +318,30 @@ fn pick_project_scrolls_to_selected() {
 }
 
 #[test]
+fn pick_project_long_names_do_not_wrap() {
+    let mut data = data(vec![agent("t1", "alpha", 0)]);
+    data.projects = (0..30)
+        .map(|i| ProjectSummary {
+            key: ProjectKey {
+                root: format!("D:/p/p{i}"),
+                name: format!("p{i}-{}", "x".repeat(80)),
+            },
+            live_agents: 0,
+            open_inbox: 0,
+        })
+        .collect();
+    let mut state = selected_state("t1");
+    state.mode = Mode::PickProject { idx: 29 };
+    let buf = render((140, 40), &state, &data, false);
+    assert!(
+        has(&buf, "▸ p29-xxx"),
+        "selected long project name is off screen:
+{}",
+        text(&buf)
+    );
+}
+
+#[test]
 fn selected_card_uses_selected_color() {
     let th = theme(ThemeName::CatppuccinMocha);
     let data = data(vec![agent("t1", "alpha", 0), agent("t2", "beta", 0)]);

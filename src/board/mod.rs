@@ -398,6 +398,19 @@ fn run_loop(
     }
 }
 
+/// Without a project the board opens on the project picker, which every layout can show (the
+/// Projects column is hidden below 120 columns).
+pub(crate) fn initial_state(
+    project: Option<ProjectKey>,
+    theme_name: theme::ThemeName,
+) -> state::BoardState {
+    let mut state = state::BoardState::new(project, theme_name);
+    if state.project.is_none() {
+        state.mode = state::Mode::PickProject { idx: 0 };
+    }
+    state
+}
+
 /// Runs the board until the user quits. Caller must have passed `require_human`.
 pub fn run(
     store: &Store,
@@ -411,7 +424,7 @@ pub fn run(
         .setting(theme::SETTING_KEY)?
         .and_then(|s| theme::ThemeName::parse(&s))
         .unwrap_or_default();
-    let mut state = state::BoardState::new(project, theme_name);
+    let mut state = initial_state(project, theme_name);
     let mut cache = RootCache::new();
     let mut data = BoardData::default();
 
@@ -468,6 +481,18 @@ mod tests {
             self.calls.borrow_mut().push("leave");
             Ok(())
         }
+    }
+
+    #[test]
+    fn initial_state_opens_picker_without_project() {
+        let st = initial_state(None, theme::ThemeName::default());
+        assert_eq!(st.mode, state::Mode::PickProject { idx: 0 });
+        let key = ProjectKey {
+            root: "d:/p/agmag".into(),
+            name: "agmag".into(),
+        };
+        let st = initial_state(Some(key), theme::ThemeName::default());
+        assert_eq!(st.mode, state::Mode::Normal);
     }
 
     #[test]

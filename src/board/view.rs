@@ -312,7 +312,6 @@ struct CardSlot {
 
 /// One visual row of cards: agents at the same depth that fit side by side.
 struct CardRow {
-    depth: usize,
     cards: Vec<CardSlot>,
 }
 
@@ -445,7 +444,7 @@ fn card_rows(inner: Rect, agents: &[AgentView]) -> Vec<CardRow> {
     let per_row = usize::from((inner.width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).max(1);
     let mut rows = Vec::new();
     let mut y = inner.y;
-    let mut prev_depth: Option<usize> = None;
+    let mut first = true;
     for depth in 0..=max_depth {
         let indices: Vec<usize> = agents
             .iter()
@@ -454,7 +453,9 @@ fn card_rows(inner: Rect, agents: &[AgentView]) -> Vec<CardRow> {
             .map(|(i, _)| i)
             .collect();
         for chunk in indices.chunks(per_row) {
-            if prev_depth.is_some_and(|prev| depth > prev) {
+            // Every row after the first gets its own two connector rows, so a wrapped
+            // continuation row also has room for its bus, drops and edge labels.
+            if !first {
                 y = y.saturating_add(CONNECTOR_ROWS);
             }
             if y >= inner.bottom() {
@@ -481,9 +482,9 @@ fn card_rows(inner: Rect, agents: &[AgentView]) -> Vec<CardRow> {
             if cards.is_empty() {
                 return rows;
             }
-            rows.push(CardRow { depth, cards });
+            rows.push(CardRow { cards });
             y = y.saturating_add(CARD_H);
-            prev_depth = Some(depth);
+            first = false;
         }
     }
     rows
@@ -583,21 +584,58 @@ fn draw_orchestration(
         }
     }
     let parents = flows::parents(&view.agents);
-    for pair in rows.windows(2) {
-        let (prev, next) = (&pair[0], &pair[1]);
-        if next.depth > prev.depth {
+    for (row_index, row) in rows.iter().enumerate() {
+        if row_index == 0 {
+            continue;
+        }
+        let Some(top) = row.cards.iter().map(|slot| slot.rect.y).min() else {
+            continue;
+        };
+        let bus_y = top.saturating_sub(CONNECTOR_ROWS);
+        let drop_y = top.saturating_sub(1);
+
+        // Group this row's cards by the parent that holds them, wherever that parent row is.
+        let mut groups: Vec<(usize, Vec<&CardSlot>)> = Vec::new();
+        for slot in &row.cards {
+            let Some(parent) = parents.get(slot.index).copied().flatten() else {
+                continue;
+            };
+            match groups.iter_mut().find(|(known, _)| *known == parent) {
+                Some((_, kids)) => kids.push(slot),
+                None => groups.push((parent, vec![slot])),
+            }
+        }
+        for (parent, kids) in groups {
+            let Some((parent_row, parent_slot)) = slot_in_rows(&rows, parent) else {
+                continue;
+            };
+            if parent_row >= row_index {
+                continue;
+            }
             draw_connectors(
                 frame,
                 inner,
-                &prev.cards,
-                &next.cards,
-                &parents,
+                parent_slot,
+                &kids,
+                parent_row + 1 == row_index,
+                bus_y,
+                drop_y,
                 &data.edges,
                 data.now_ms,
                 ctx,
             );
         }
     }
+}
+
+/// Row index and slot holding agent `index`, when its card fits on screen.
+fn slot_in_rows(rows: &[CardRow], index: usize) -> Option<(usize, &CardSlot)> {
+    rows.iter().enumerate().find_map(|(row_index, row)| {
+        row.cards
+            .iter()
+            .find(|slot| slot.index == index)
+            .map(|slot| (row_index, slot))
+    })
 }
 
 fn draw_card(
@@ -746,24 +784,19 @@ impl ConnGlyphs {
 fn draw_connectors(
     frame: &mut Frame,
     area: Rect,
-    parents_row: &[CardSlot],
-    children_row: &[CardSlot],
-    parent_of: &[Option<usize>],
+    parent: &CardSlot,
+    kids: &[&CardSlot],
+    adjacent: bool,
+    bus_y: u16,
+    drop_y: u16,
     edges: &[Edge],
     now_ms: i64,
     ctx: Ctx,
 ) {
     let glyphs = ConnGlyphs::new(ctx.ascii);
-    for parent in parents_row {
-        let kids: Vec<&CardSlot> = children_row
-            .iter()
-            .filter(|slot| parent_of.get(slot.index).copied().flatten() == Some(parent.index))
-            .collect();
-        if kids.is_empty() {
-            continue;
-        }
-
-        let parent_cx = card_centre(parent.rect);
+    let parent_cx = card_centre(parent.rect);
+    let child_centres: Vec<u16> = kids.iter().map(|kid| card_centre(kid.rect)).collect();
+    let (bus_start, bus_end) = if adjacent {
         let parent_bottom = parent.rect.y + parent.rect.height - 1;
         put_cell(
             frame,
@@ -772,87 +805,95 @@ fn draw_connectors(
             glyphs.down,
             ctx.theme.border,
         );
-
-        let bus_y = parent_bottom + 1;
-        let drop_y = bus_y + 1;
-        let child_centres: Vec<u16> = kids.iter().map(|kid| card_centre(kid.rect)).collect();
-        let bus_start = child_centres
+        let start = child_centres
             .iter()
             .copied()
             .min()
             .unwrap_or(parent_cx)
             .min(parent_cx);
-        let bus_end = child_centres
+        let end = child_centres
             .iter()
             .copied()
             .max()
             .unwrap_or(parent_cx)
             .max(parent_cx);
+        (start, end)
+    } else {
+        // A wrapped continuation row only has the two rows above it: mark the stem at the
+        // left margin of its gap and feed the bus from there.
+        put_cell(frame, area.x, bus_y, glyphs.vertical, ctx.theme.border);
+        let end = child_centres
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(parent_cx)
+            .max(parent_cx);
+        (area.x.saturating_add(1), end)
+    };
 
-        let mut x = bus_start;
-        loop {
-            let is_parent = x == parent_cx;
-            let is_child = child_centres.contains(&x);
-            let symbol = match (is_parent, is_child) {
-                (true, true) => glyphs.cross,
-                (true, false) => glyphs.up,
-                (false, true) if x == bus_start => glyphs.corner_left,
-                (false, true) if x == bus_end => glyphs.corner_right,
-                (false, true) => glyphs.down,
-                (false, false) if x == bus_start => glyphs.corner_left,
-                (false, false) if x == bus_end => glyphs.corner_right,
-                (false, false) => glyphs.horizontal,
-            };
-            put_cell(frame, x, bus_y, symbol, ctx.theme.border);
-            if x >= bus_end {
-                break;
-            }
-            x += 1;
+    let mut x = bus_start;
+    loop {
+        let is_parent = adjacent && x == parent_cx;
+        let is_child = child_centres.contains(&x);
+        let symbol = match (is_parent, is_child) {
+            (true, true) => glyphs.cross,
+            (true, false) => glyphs.up,
+            (false, true) if x == bus_start => glyphs.corner_left,
+            (false, true) if x == bus_end => glyphs.corner_right,
+            (false, true) => glyphs.down,
+            (false, false) if x == bus_start => glyphs.corner_left,
+            (false, false) if x == bus_end => glyphs.corner_right,
+            (false, false) => glyphs.horizontal,
+        };
+        put_cell(frame, x, bus_y, symbol, ctx.theme.border);
+        if x >= bus_end {
+            break;
         }
+        x += 1;
+    }
 
-        for (i, kid) in kids.iter().enumerate() {
-            let cx = card_centre(kid.rect);
-            let edge = edges.iter().find(|edge| edge.child == kid.index);
-            let (color, label) = match edge {
-                Some(edge) => {
-                    let color = if flows::is_live(edge, now_ms) {
-                        ctx.theme.accent
-                    } else {
-                        ctx.theme.muted
-                    };
-                    let label = format!(
-                        "{} {}",
-                        sanitize_one_line(&edge.kind),
-                        age_since(now_ms, edge.ts_ms)
-                    );
-                    (color, Some(label))
-                }
-                None => (ctx.theme.muted, None),
-            };
-            put_cell(frame, cx, drop_y, glyphs.vertical, color);
-            put_cell(frame, cx, kid.rect.y, glyphs.up, color);
-            let Some(label) = label else { continue };
-            let next_x = kids
-                .get(i + 1)
-                .map(|next| card_centre(next.rect))
-                .unwrap_or(area.right());
-            let max_w = next_x
-                .saturating_sub(cx + 1)
-                .min(area.right().saturating_sub(cx + 1));
-            let label = fit_text(&label, max_w as usize);
-            if label.is_empty() {
-                continue;
+    for (i, kid) in kids.iter().enumerate() {
+        let cx = card_centre(kid.rect);
+        let edge = edges.iter().find(|edge| edge.child == kid.index);
+        let (color, label) = match edge {
+            Some(edge) => {
+                let color = if flows::is_live(edge, now_ms) {
+                    ctx.theme.accent
+                } else {
+                    ctx.theme.muted
+                };
+                let label = format!(
+                    "{} {}",
+                    sanitize_one_line(&edge.kind),
+                    age_since(now_ms, edge.ts_ms)
+                );
+                (color, Some(label))
             }
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(label, Style::new().fg(color)))),
-                Rect {
-                    x: cx + 1,
-                    y: drop_y,
-                    width: max_w,
-                    height: 1,
-                },
-            );
+            None => (ctx.theme.muted, None),
+        };
+        put_cell(frame, cx, drop_y, glyphs.vertical, color);
+        put_cell(frame, cx, kid.rect.y, glyphs.up, color);
+        let Some(label) = label else { continue };
+        let next_x = kids
+            .get(i + 1)
+            .map(|next| card_centre(next.rect))
+            .unwrap_or(area.right());
+        let max_w = next_x
+            .saturating_sub(cx + 1)
+            .min(area.right().saturating_sub(cx + 1));
+        let label = fit_text(&label, max_w as usize);
+        if label.is_empty() {
+            continue;
         }
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(label, Style::new().fg(color)))),
+            Rect {
+                x: cx + 1,
+                y: drop_y,
+                width: max_w,
+                height: 1,
+            },
+        );
     }
 }
 

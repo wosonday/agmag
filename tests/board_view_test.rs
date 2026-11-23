@@ -621,6 +621,32 @@ fn cards_grow_to_fill_width() {
 }
 
 #[test]
+fn wrapped_children_keep_edge_labels() {
+    let mut agents = vec![agent("t7p", "agm-ceo", 0)];
+    let mut edges = Vec::new();
+    for i in 1..=6 {
+        agents.push(agent(&format!("t9{i}"), &format!("worker-{i}"), 1));
+        edges.push(Edge {
+            parent: 0,
+            child: i,
+            kind: format!("KIND-{i}"),
+            ts_ms: NOW - 60_000,
+        });
+    }
+    let mut data = data(agents);
+    data.edges = edges;
+    let state = selected_state("t7p");
+    let buf = render((100, 30), &state, &data, false);
+    for i in 1..=6 {
+        assert!(
+            has(&buf, &format!("KIND-{i}")),
+            "edge label KIND-{i} lost on a wrapped child row:\n{}",
+            text(&buf)
+        );
+    }
+}
+
+#[test]
 fn connector_joins_parent_and_children() {
     let mut data = data(vec![
         agent("t7p", "agm-ceo", 0),

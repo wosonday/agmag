@@ -14,7 +14,7 @@
 
 It also lets you intervene in a controlled way: assign work with worker-count and budget limits, answer agents, stop agents (Codex/Claude only when **you** say so), automatically **rotate** OpenCode workers when their context fills up, and **hand off to a fresh session** for Claude Code/Codex without ever killing the old one automatically.
 
-> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.4.0** — see [CHANGELOG.md](CHANGELOG.md).
+> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.4.1** — see [CHANGELOG.md](CHANGELOG.md).
 >
 > Tables and command output are in **English**. Message types stored by `agm send` are still the Vietnamese codes listed below; `agm tui` also accepts their English names.
 
@@ -46,7 +46,7 @@ Requires [Rust](https://rustup.rs) (with `cargo`).
 git clone <this repo URL> agmag
 cd agmag
 cargo install --path .          # copies agm.exe into ~/.cargo/bin (already on PATH)
-agm --version                   # agm 0.4.0
+agm --version                   # agm 0.4.1
 ```
 
 > `cargo build --release` **only** produces `target\release\agm.exe` — typing `agm` will say "not recognized". Use `cargo install --path .`.
@@ -233,7 +233,7 @@ The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknow
 
 ### BRANCHES.md
 
-`agm branch get <ENTRY> [--file PATH]` prints one entry; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` updates it. `--file` defaults to `BRANCHES.md`, which must already exist (agm never creates it; create it with a title line first); the MCP tools need an absolute path. Entries are `### <lane>/<slug>` blocks of `- key: value` lines. Writes take the lock directory `<dir of BRANCHES.md>/.agents/.runtime/locks/branches` (agm holds it for milliseconds, waits up to 30 s and reclaims a lock older than 60 s, so do not take it by hand with `mkdir`: a manual hold over 60 s can be reclaimed and lose an update) and write via temp file + rename. Valid statuses: `wip blocked ready merging merged deployed needs-rebase failed`. Valid keys: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` requires a 12–40 hex `head`, `--worktree`, a clean worktree and a matching HEAD; terminals with role `worker` are refused.
+`agm branch get <ENTRY> [--file PATH]` prints one entry; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` updates it. `--file` defaults to `BRANCHES.md`, which must already exist (agm never creates it; create it with a title line first); the MCP tools need an absolute path. Entries are `### <lane>/<slug>` blocks of `- key: value` lines. Writes take the lock directory `<dir of BRANCHES.md>/.agents/.runtime/locks/branches` (agm holds it for milliseconds, waits up to 30 s and reclaims a lock older than 60 s, so do not take it by hand with `mkdir`: a manual hold over 60 s can be reclaimed and lose an update) and write via temp file + rename. Valid statuses: `wip blocked ready merging merged deployed needs-rebase failed`. Valid keys: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` requires a 12–40 hex `head`, `--worktree`, a clean worktree, a matching HEAD and review evidence `review=.agents/reviews/<file>.md@<sha>` (first token; free text may follow): the review file must be committed at HEAD, mention the first 7 characters of `<sha>`, and nothing outside `.agents/` may change between `<sha>` and HEAD. The guard does not read the verdict. Changing `head` or `review` of a `ready` entry re-runs the guard. Terminals with role `worker` are refused.
 
 ## 7. All commands
 

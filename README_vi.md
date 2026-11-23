@@ -14,7 +14,7 @@
 
 Và cho bạn can thiệp có kiểm soát: giao việc có giới hạn số thợ và ngân sách, trả lời agent, dừng agent (Codex/Claude chỉ khi **bạn** ra lệnh), tự **xoay vòng** thợ OpenCode khi ngữ cảnh đầy, và **bàn giao sang phiên mới** cho Claude Code/Codex mà không bao giờ tự kill phiên cũ.
 
-> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime. Phiên bản hiện tại: **0.4.0** — xem [CHANGELOG.md](CHANGELOG.md).
+> Nền tảng chính: Windows 11 (cũng chạy trên Linux/macOS). Viết bằng Rust, một tệp `agm.exe`, không cần runtime. Phiên bản hiện tại: **0.4.1** — xem [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -44,7 +44,7 @@ Cần [Rust](https://rustup.rs) (có `cargo`).
 git clone <địa chỉ repo này> agmag
 cd agmag
 cargo install --path .          # chép agm.exe vào ~/.cargo/bin (đã có trong PATH)
-agm --version                   # agm 0.4.0
+agm --version                   # agm 0.4.1
 ```
 
 > `cargo build --release` **chỉ** tạo `target\release\agm.exe` — gõ `agm` sẽ báo "not recognized". Hãy dùng `cargo install --path .`.
@@ -229,7 +229,7 @@ Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không 
 
 ### BRANCHES.md
 
-`agm branch get <ENTRY> [--file PATH]` in một mục; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` cập nhật mục đó. `--file` mặc định `BRANCHES.md`, tệp này phải có sẵn (agm không tự tạo; hãy tạo trước với một dòng tiêu đề); tool MCP cần đường dẫn tuyệt đối. Mục là khối `### <lane>/<slug>` gồm các dòng `- key: value`. Khi ghi, agm giữ thư mục khóa `<thư mục chứa BRANCHES.md>/.agents/.runtime/locks/branches` (agm chỉ giữ vài mili-giây, chờ tối đa 30 s và thu hồi khóa cũ hơn 60 s, nên không được tự `mkdir` khóa bằng tay: giữ tay quá 60 s có thể bị thu hồi và mất cập nhật) và ghi bằng tệp tạm + đổi tên. Trạng thái hợp lệ: `wip blocked ready merging merged deployed needs-rebase failed`. Khóa hợp lệ: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` cần `head` hex 12–40 ký tự, `--worktree`, worktree sạch và HEAD khớp; terminal có vai trò `worker` bị từ chối.
+`agm branch get <ENTRY> [--file PATH]` in một mục; `agm branch set <ENTRY> <KEY=VALUE>... [--file PATH] [--worktree PATH]` cập nhật mục đó. `--file` mặc định `BRANCHES.md`, tệp này phải có sẵn (agm không tự tạo; hãy tạo trước với một dòng tiêu đề); tool MCP cần đường dẫn tuyệt đối. Mục là khối `### <lane>/<slug>` gồm các dòng `- key: value`. Khi ghi, agm giữ thư mục khóa `<thư mục chứa BRANCHES.md>/.agents/.runtime/locks/branches` (agm chỉ giữ vài mili-giây, chờ tối đa 30 s và thu hồi khóa cũ hơn 60 s, nên không được tự `mkdir` khóa bằng tay: giữ tay quá 60 s có thể bị thu hồi và mất cập nhật) và ghi bằng tệp tạm + đổi tên. Trạng thái hợp lệ: `wip blocked ready merging merged deployed needs-rebase failed`. Khóa hợp lệ: `status lane tier head base depends_on migration touches_hotspot summary verify review docs registered git`. `status: ready` cần `head` hex 12–40 ký tự, `--worktree`, worktree sạch, HEAD khớp và bằng chứng `review=.agents/reviews/<ID>-<n>.md@<sha>` (token đầu; phía sau được ghi chú tự do): tệp review phải đã commit ở HEAD, nhắc 7 ký tự đầu của `<sha>`, và từ `<sha>` tới HEAD không đổi tệp nào ngoài `.agents/`. Guard không đọc verdict. Đổi `head` hoặc `review` của mục đã `ready` cũng chạy lại guard. Terminal có vai trò `worker` bị từ chối.
 
 ## 7. Tất cả lệnh
 

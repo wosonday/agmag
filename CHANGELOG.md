@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-11-23
+
+### Thay đổi
+
+- `agm branch set ... status=ready` (và `agm_branch_update`) đòi bằng chứng review: `review=.agents/reviews/<tệp>.md@<sha>` ở token đầu (phía sau được ghi chú tự do). Tệp review phải đã commit ở HEAD của `--worktree`, nhắc 7 ký tự đầu của `<sha>`, và từ `<sha>` tới HEAD không đổi tệp nào ngoài `.agents/`. Đổi `review` của mục đã `ready` cũng chạy lại guard. Guard không đọc verdict và không kiểm Audit. **Không tương thích ngược:** lệnh `status=ready` thiếu bằng chứng giờ bị từ chối.
 
 ### Sửa lỗi
 

@@ -354,6 +354,76 @@ fn cmdline_draw_hostile_text_inert() {
 }
 
 #[test]
+fn output_keeps_sgr_colour() {
+    let mut d = data(&[Section::Quota]);
+    d.output = Some("\x1b[1;32mok\x1b[0m plain".into());
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    assert!(has(&buf, "ok"), "output text missing:\n{}", text(&buf));
+    assert_eq!(
+        fg_of(&buf, "ok"),
+        Color::Green,
+        "the ANSI bridge's colour was dropped:\n{}",
+        text(&buf)
+    );
+    assert_eq!(
+        fg_of(&buf, "plain"),
+        Color::Reset,
+        "text after the reset must be default-coloured"
+    );
+}
+
+#[test]
+fn terminals_columns_fit_app_and_model() {
+    let mut d = data(&[Section::Terminals]);
+    let snap = d.snap.as_mut().unwrap();
+    snap.terminals.push(TermView {
+        app: "antigravity".into(),
+        model: "claude-opus-5-5".into(),
+        effort: String::new(),
+        ..terminal("t1", "worker-1")
+    });
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.sel_terminal = Some("t1".into());
+    let buf = render((150, 40), &state, &d, false);
+    assert!(
+        has(&buf, "antigravity"),
+        "app column cut the app name:\n{}",
+        text(&buf)
+    );
+    assert!(
+        has(&buf, "claude-opus-5-5"),
+        "model column cut the model name:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn messages_one_line_when_wide() {
+    let mut d = data(&[Section::Inbox]);
+    let snap = d.snap.as_mut().unwrap();
+    snap.messages.push(MessageRow {
+        id: 1,
+        ts_ms: NOW - 60_000,
+        from: "t1".into(),
+        to: "t2".into(),
+        kind: "BÁO CÁO".into(),
+        text: "distinct-message-text".into(),
+        ..MessageRow::default()
+    });
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    let (_, header_y) = find(&buf, "REPORT");
+    let (_, text_y) = find(&buf, "distinct-message-text");
+    assert_eq!(
+        header_y,
+        text_y,
+        "wide Messages must show one line per message:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
 fn narrow_and_tiny_no_panic() {
     let mut d = data(&Section::DEFAULT);
     let snap = d.snap.as_mut().unwrap();

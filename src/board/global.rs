@@ -749,8 +749,10 @@ mod tests {
     #[test]
     fn pgdn_scrolls_output_from_cmdline() {
         let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
-        let mut data = GlobalData::default();
-        data.output = Some((0..40).map(|i| format!("line-{i:02}\n")).collect());
+        let mut data = GlobalData {
+            output: Some((0..40).map(|i| format!("line-{i:02}\n")).collect()),
+            ..GlobalData::default()
+        };
         assert_eq!(st.focus, Focus::CmdLine);
 
         st.on_key(key(KeyCode::PageDown), &data);

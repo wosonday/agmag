@@ -11,6 +11,8 @@ Every item was written test-first (failing test → fix → green).
 | `dfea59e` fix(tui): refresh after commands, keep selection neighbours, skip board-tick global refresh | 3, 5, 8 |
 | `3d39ed2` fix(tui): scroll Output from the command bar; share the visible panel list | 4, 7 |
 | `a54d02f` fix(tui): output colours, content-sized terminal columns, one-line messages | 6, 9, 10 |
+| `f823b3d` fix(tui): keep terminal column headers readable | 9 |
+| `9a74e94` fix(tui): six message rows in the Messages panel | 10 |
 
 ## Bắt buộc sửa
 
@@ -72,9 +74,11 @@ Every item was written test-first (failing test → fix → green).
      place 14; optional columns are added only while the flexible task column keeps ≥ 6 cells,
      which takes the rest. GREEN.
 10. **Messages one line when wide** — `src/board/global_view.rs` (`draw_messages`).
-    - `messages_one_line_when_wide` (`tests/global_view_test.rs`, 140 cols): RED: the text was
-      always on the next line. Fix: at `inner.width >= 100` emit `from → to KIND age  text` as a
-      single clipped line; below 100 keep the two-line wrapped form. GREEN.
+    - `messages_one_line_when_wide` (`tests/global_view_test.rs`, 140 cols, six messages): RED: the
+      text was always on the next line. Fix: at `inner.width >= 100` emit
+      `from → to KIND age  text` as a single clipped line; below 100 keep the two-line wrapped
+      form. `MESSAGES_H` is 8 (six content rows + the two borders), so six rows show six
+      messages on wide screens. GREEN.
 
 ## Gates
 

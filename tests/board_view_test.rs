@@ -177,6 +177,58 @@ fn narrow_stacks() {
 }
 
 #[test]
+fn narrow_lists_every_agent() {
+    let mut agents = vec![agent("t0", "ceo", 0)];
+    for i in 1..=5 {
+        let label = format!("worker-{i}");
+        agents.push(agent(&format!("t{i}"), &label, 1));
+    }
+    let data = data(agents);
+    let state = selected_state("t0");
+    let buf = render((70, 20), &state, &data, false);
+    for label in ["ceo", "worker-1", "worker-2", "worker-3", "worker-4", "worker-5"] {
+        assert!(
+            has(&buf, label),
+            "narrow list dropped {label:?}:\n{}",
+            text(&buf)
+        );
+    }
+}
+
+#[test]
+fn narrow_scrolls_to_selected() {
+    let mut agents = vec![agent("t0", "ceo", 0)];
+    for i in 1..15 {
+        let label = format!("worker-{i}");
+        agents.push(agent(&format!("t{i}"), &label, 1));
+    }
+    let data = data(agents);
+    let state = selected_state("t14");
+    let buf = render((70, 20), &state, &data, false);
+    assert!(
+        has(&buf, "worker-14 claude-code/opus"),
+        "selected agent is not scrolled into view as a list row:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn narrow_nothing_lost_at_70x24() {
+    let mut agents = vec![agent("t0", "ceo", 0)];
+    for i in 1..=3 {
+        let label = format!("worker-{i}");
+        agents.push(agent(&format!("t{i}"), &label, 1));
+    }
+    let data = data(agents);
+    let state = selected_state("t0");
+    let buf = render((70, 24), &state, &data, false);
+    for label in ["ceo", "worker-1", "worker-2", "worker-3"] {
+        assert!(has(&buf, label), "missing {label:?}:\n{}", text(&buf));
+    }
+}
+
+
+#[test]
 fn selected_card_uses_selected_color() {
     let th = theme(ThemeName::CatppuccinMocha);
     let data = data(vec![agent("t1", "alpha", 0), agent("t2", "beta", 0)]);

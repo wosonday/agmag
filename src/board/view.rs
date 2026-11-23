@@ -169,17 +169,24 @@ fn draw_medium(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDa
 
 fn draw_narrow(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
     let (main, footer) = split_frame(area);
-    let rows = Layout::vertical([
-        Constraint::Percentage(45),
-        Constraint::Percentage(30),
-        Constraint::Percentage(25),
-    ])
-    .split(main);
-    draw_orchestration(frame, rows[0], state, data, ctx);
+    let (rest, inbox) = split_inbox(main);
+    let rows = Layout::vertical([Constraint::Min(0), Constraint::Percentage(40)]).split(rest);
+    draw_narrow_orchestration(frame, rows[0], state, data, ctx);
     draw_detail(frame, rows[1], state, data, ctx);
-    draw_inbox(frame, rows[2], state, data, ctx);
+    draw_inbox(frame, inbox, state, data, ctx);
     draw_footer(frame, footer, state, ctx);
     draw_popup(frame, area, state, data, ctx);
+}
+
+/// Keeps `selected` inside `height` visible rows, scrolling just enough to show it.
+fn scroll_offset(selected: usize, height: u16, len: usize) -> u16 {
+    let height = height as usize;
+    if height == 0 || len <= height {
+        return 0;
+    }
+    let selected = selected.min(len - 1);
+    let max = len - height;
+    selected.saturating_sub(height - 1).min(max) as u16
 }
 
 fn render_line(frame: &mut Frame, area: Rect, y: &mut u16, line: Line<'static>) {
@@ -306,6 +313,119 @@ struct CardSlot {
 struct CardRow {
     depth: usize,
     cards: Vec<CardSlot>,
+}
+
+/// Narrow layout: one line per agent, indented by depth, scrolled to the selection.
+fn draw_narrow_orchestration(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+) {
+    let name = data
+        .view
+        .as_ref()
+        .map(|v| sanitize_one_line(&v.key.name))
+        .unwrap_or_default();
+    let title = if name.is_empty() {
+        " orchestration ".to_string()
+    } else {
+        format!(" {name} · orchestration ")
+    };
+    let block = panel(title, ctx.theme.border, ctx);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let Some(view) = &data.view else {
+        render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
+        return;
+    };
+    if view.agents.is_empty() {
+        render_text(
+            frame,
+            inner,
+            "(no agents)",
+            Style::new().fg(ctx.theme.muted),
+        );
+        return;
+    }
+
+    let parents = flows::parents(&view.agents);
+    let selected = state
+        .sel_agent
+        .as_deref()
+        .and_then(|address| view.agents.iter().position(|a| a.address == address));
+    let offset = scroll_offset(selected.unwrap_or(0), inner.height, view.agents.len());
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (index, agent) in view.agents.iter().enumerate() {
+        let is_selected = selected == Some(index);
+        let exited = agent.state == "exited";
+        let kind = status_kind(agent);
+        let base = if is_selected {
+            Style::new()
+                .fg(ctx.theme.selected)
+                .add_modifier(Modifier::BOLD)
+        } else if exited {
+            Style::new().fg(ctx.theme.muted)
+        } else {
+            Style::new()
+        };
+        let symbol_style = if is_selected {
+            base
+        } else {
+            Style::new().fg(status_color(kind, ctx.theme))
+        };
+        let mut spans = vec![
+            Span::styled(
+                format!(
+                    "{}{} ",
+                    "  ".repeat(agent.depth),
+                    status_symbol(kind, ctx.ascii)
+                ),
+                symbol_style,
+            ),
+            Span::styled(sanitize_one_line(&agent.label), base),
+        ];
+        if let Some(edge) = data
+            .edges
+            .iter()
+            .find(|e| e.child == index && parents.get(index).copied().flatten() == Some(e.parent))
+        {
+            let color = if flows::is_live(edge, data.now_ms) {
+                ctx.theme.accent
+            } else {
+                ctx.theme.muted
+            };
+            let mut style = Style::new().fg(color);
+            if is_selected {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(
+                format!(
+                    " {} {}",
+                    sanitize_one_line(&edge.kind),
+                    age_since(data.now_ms, edge.ts_ms)
+                ),
+                style,
+            ));
+        }
+        let app = sanitize_one_line(&agent.app);
+        let model = sanitize_one_line(&agent.model);
+        let ident = match (app.is_empty(), model.is_empty()) {
+            (true, true) => String::new(),
+            (true, false) => model,
+            (false, true) => app,
+            (false, false) => format!("{app}/{model}"),
+        };
+        if !ident.is_empty() {
+            spans.push(Span::styled(format!(" {ident}"), base));
+        }
+        lines.push(Line::from(spans));
+    }
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
 
 /// Width of one card in a row of `count` cards, filling the panel up to 32 columns.

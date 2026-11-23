@@ -111,6 +111,22 @@ fn view_parties(view: &ProjectView) -> Vec<String> {
     out
 }
 
+/// Reloads `data.conversation` for the currently selected agent.
+///
+/// The old conversation is dropped first, so a query error never leaves another agent's messages
+/// under the new agent's title.
+pub(crate) fn reload_conversation(
+    store: &Store,
+    state: &state::BoardState,
+    data: &mut BoardData,
+) -> Result<()> {
+    data.conversation.clear();
+    if let Some(agent) = state.selected_agent(data) {
+        data.conversation = store.messages_involving(&flows::agent_keys(agent), 30)?;
+    }
+    Ok(())
+}
+
 /// Loads one frame of data and calls `state.sync` before loading the selected agent's conversation.
 pub fn load_data(
     store: &Store,
@@ -140,9 +156,7 @@ pub fn load_data(
             data.edges = flows::edges(&view.agents, &pair_latest);
             data.view = Some(view);
             state.sync(&data);
-            if let Some(agent) = state.selected_agent(&data) {
-                data.conversation = store.messages_involving(&flows::agent_keys(agent), 30)?;
-            }
+            reload_conversation(store, state, &mut data)?;
         }
         // Without a project, `sync` clamps the project list and clears agent/inbox selections.
         None => state.sync(&data),
@@ -327,12 +341,23 @@ fn run_loop(
             }
             match event::read()? {
                 Event::Key(key) => {
+                    let prev_agent = state.sel_agent.clone();
                     let effect = state.on_key(key, data);
                     if let Effect::SwitchProject(key) = &effect {
                         state.project = Some(key.clone());
                     }
                     match effect {
                         Effect::None => {
+                            // The conversation belongs to the selected agent, so moving the
+                            // selection must reload it before the next frame is drawn.
+                            if state.sel_agent != prev_agent
+                                && let Err(e) = reload_conversation(store, state, data)
+                            {
+                                state.note = Some(Note {
+                                    ok: false,
+                                    text: format!("error: {e:#}"),
+                                });
+                            }
                             terminal
                                 .draw(|frame| view::draw(frame, state, data, &palette, ascii))?;
                         }
@@ -464,5 +489,72 @@ mod tests {
         guard.leave().unwrap();
         drop(guard);
         assert_eq!(*calls.borrow(), vec!["enter", "leave"]);
+    }
+
+    fn board_agent(address: &str) -> crate::project::AgentView {
+        crate::project::AgentView {
+            address: address.into(),
+            label: address.into(),
+            app: "claude".into(),
+            model: "opus".into(),
+            effort: String::new(),
+            status: "-".into(),
+            state: "live".into(),
+            depth: 0,
+            last_sibling: false,
+            doing: None,
+            last_msg: None,
+            context_pct: None,
+            tokens: None,
+            spark: None,
+            stage: None,
+        }
+    }
+
+    #[test]
+    fn conversation_follows_selected_agent() -> Result<()> {
+        let store = Store::open_in_memory()?;
+        store.add_message(&MessageRow {
+            ts_ms: 1,
+            from: "a".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for a".into(),
+            ..MessageRow::default()
+        })?;
+        store.add_message(&MessageRow {
+            ts_ms: 2,
+            from: "b".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for b".into(),
+            ..MessageRow::default()
+        })?;
+
+        let mut data = BoardData {
+            view: Some(ProjectView {
+                key: ProjectKey {
+                    root: "/repo/agmag".into(),
+                    name: "agmag".into(),
+                },
+                agents: vec![board_agent("a"), board_agent("b")],
+                inbox: Vec::new(),
+                messages: Vec::new(),
+            }),
+            ..BoardData::default()
+        };
+        let mut state = state::BoardState::new(None, theme::ThemeName::default());
+        state.sel_agent = Some("a".into());
+
+        reload_conversation(&store, &state, &mut data)?;
+        assert_eq!(data.conversation.len(), 1);
+        assert_eq!(data.conversation[0].text, "for a");
+
+        // Moving the selection must replace the conversation, never keep the old agent's.
+        state.sel_agent = Some("b".into());
+        reload_conversation(&store, &state, &mut data)?;
+        assert_eq!(data.conversation.len(), 1);
+        assert_eq!(data.conversation[0].text, "for b");
+        Ok(())
     }
 }

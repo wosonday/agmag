@@ -720,6 +720,133 @@ fn load_project_view_joins_snapshot_and_store() -> anyhow::Result<()> {
 }
 
 #[test]
+fn load_project_view_status_uses_snapshot_format() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+
+    // Live blocked agent with a kind: the snapshot renders "BLOCKED (HỎI)".
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some("t9".into()),
+        cwd: Some(root.clone()),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.set_terminal_status("t1", Some("blocked"), Some("HỎI"), None, 1, now)?;
+    // Live blocked agent handed off: the snapshot appends " [HANDED OFF]".
+    store.upsert_terminal(&TerminalRow {
+        address: "t2".into(),
+        cwd: Some(root.clone()),
+        state: "live".into(),
+        created_ms: 2,
+        ..Default::default()
+    })?;
+    store.set_terminal_status("t2", Some("blocked"), None, None, 1, now)?;
+    store.set_terminal_handoff_state("t2", "handed_off")?;
+    // Exited agent kept by an open inbox item: stored status is preserved as-is.
+    store.upsert_terminal(&TerminalRow {
+        address: "t3".into(),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 3,
+        ..Default::default()
+    })?;
+    store.set_terminal_status("t3", Some("done"), None, None, 1, now)?;
+    store.open_inbox(Some("t3"), "hook", None, "still open", now)?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |_: &str| -> Option<String> { Some(root.clone()) };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    let key = ProjectKey {
+        root: norm_cwd(&root),
+        name: project_name(&norm_cwd(&root)),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    assert_eq!(pv.agents.len(), 3);
+    let a1 = pv.agents.iter().find(|a| a.address == "t1").unwrap();
+    let a2 = pv.agents.iter().find(|a| a.address == "t2").unwrap();
+    let a3 = pv.agents.iter().find(|a| a.address == "t3").unwrap();
+
+    // Live agents show exactly the global view's status text, so `project_render`
+    // recognizes BLOCKED (red ◐) and the handed-off flag.
+    let tv1 = snap.terminals.iter().find(|v| v.address == "t1").unwrap();
+    assert_eq!(tv1.status, "BLOCKED (HỎI)");
+    assert!(
+        a1.status.starts_with("BLOCKED"),
+        "live blocked status: {}",
+        a1.status
+    );
+    assert_eq!(a1.status, tv1.status);
+    assert_eq!(a2.status, "BLOCKED [HANDED OFF]");
+    // Exited agents keep the stored status (None → "-" is covered elsewhere).
+    assert_eq!(a3.status, "done");
+    Ok(())
+}
+
+#[test]
+fn load_project_view_messages_include_exited_member_without_inbox() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+
+    // One live agent, plus an exited member that sent a report and has no open inbox item.
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some("ceo".into()),
+        cwd: Some(root.clone()),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t2".into(),
+        name: Some("t7".into()),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 2,
+        ..Default::default()
+    })?;
+    store.add_message(&MessageRow {
+        ts_ms: now - 500,
+        from: "t7".into(),
+        to: "user".into(),
+        kind: "BÁO CÁO".into(),
+        text: "finished".into(),
+        status: "sent".into(),
+        ..Default::default()
+    })?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |_: &str| -> Option<String> { Some(root.clone()) };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    let key = ProjectKey {
+        root: norm_cwd(&root),
+        name: project_name(&norm_cwd(&root)),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    // MESSAGES covers all project members, exited ones included (spec: MESSAGES).
+    assert!(
+        pv.messages.iter().any(|m| m.text == "finished"),
+        "exited member's message missing: {:?}",
+        pv.messages
+    );
+    // AGENTS still shows only live agents and exited ones with an open inbox item.
+    assert_eq!(pv.agents.len(), 1);
+    assert!(pv.agents.iter().all(|a| a.address != "t2"));
+    Ok(())
+}
+
+#[test]
 fn compute_roots_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let root = tmp.path().to_str().unwrap().to_string();

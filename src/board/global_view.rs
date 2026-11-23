@@ -24,7 +24,8 @@ use crate::dashboard::{
 use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
-const MESSAGES_H: u16 = 6;
+/// Six message rows plus the panel's top and bottom borders, so wide screens show six messages.
+const MESSAGES_H: u16 = 8;
 const PROMPT: &str = "agm> ";
 const HELP: &str =
     " tab panels · ↑↓ select · ⏎ open · r reply · d done · s send · t theme · ? help · q quit";

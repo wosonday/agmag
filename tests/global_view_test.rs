@@ -402,25 +402,34 @@ fn terminals_columns_fit_app_and_model() {
 fn messages_one_line_when_wide() {
     let mut d = data(&[Section::Inbox]);
     let snap = d.snap.as_mut().unwrap();
-    snap.messages.push(MessageRow {
-        id: 1,
-        ts_ms: NOW - 60_000,
-        from: "t1".into(),
-        to: "t2".into(),
-        kind: "BÁO CÁO".into(),
-        text: "distinct-message-text".into(),
-        ..MessageRow::default()
-    });
+    for i in 0..6 {
+        snap.messages.push(MessageRow {
+            id: i + 1,
+            ts_ms: NOW - 60_000,
+            from: "t1".into(),
+            to: "t2".into(),
+            kind: "BÁO CÁO".into(),
+            text: format!("distinct-message-text-{i}"),
+            ..MessageRow::default()
+        });
+    }
     let state = GlobalState::new(ThemeName::CatppuccinMocha);
     let buf = render((140, 40), &state, &d, false);
     let (_, header_y) = find(&buf, "REPORT");
-    let (_, text_y) = find(&buf, "distinct-message-text");
+    let (_, text_y) = find(&buf, "distinct-message-text-0");
     assert_eq!(
         header_y,
         text_y,
         "wide Messages must show one line per message:\n{}",
         text(&buf)
     );
+    for i in 0..6 {
+        assert!(
+            has(&buf, &format!("distinct-message-text-{i}")),
+            "six message rows must show six messages:\n{}",
+            text(&buf)
+        );
+    }
 }
 
 #[test]

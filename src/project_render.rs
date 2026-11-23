@@ -17,6 +17,8 @@ use crate::store::{InboxRow, MessageRow};
 const NARROW_NO_SPARK: usize = 70;
 /// Widths below this also drop the context bar.
 const NARROW_NO_CTX: usize = 50;
+/// Max display cells for agent label and model/effort text, like the global TERMINALS name column.
+const NAME_CELLS: usize = 12;
 
 /// AGENTS + INBOX + MESSAGES sections for one project (no header/footer).
 pub fn render_project_body(pv: &ProjectView, width: usize, now_ms: i64) -> String {
@@ -283,7 +285,7 @@ fn agent_lines(agents: &[AgentView], width: usize, now_ms: i64) -> Vec<String> {
 }
 
 fn agent_identity_line(agent: &AgentView, prefix: &str, width: usize) -> String {
-    let label = sanitize_one_line(&agent.label);
+    let label = one_line(&agent.label, NAME_CELLS);
     let mut segments = vec![format!("{prefix}{}", paint(WHITE, &label))];
 
     let app = sanitize_one_line(&agent.app);
@@ -296,6 +298,7 @@ fn agent_identity_line(agent: &AgentView, prefix: &str, width: usize) -> String 
     } else {
         format!("{model}/{effort}")
     };
+    let model_effort = one_line(&model_effort, NAME_CELLS);
     segments.push(match (app.is_empty(), model_effort.is_empty()) {
         (true, true) => paint(GRAY, "-"),
         (false, true) => paint(BRIGHT_MAGENTA, &app),
@@ -370,7 +373,7 @@ fn agent_doing_line(agent: &AgentView, cont: &str, width: usize, now_ms: i64) ->
 fn inbox_lines(item: &InboxRow, width: usize, max_lines: usize) -> Vec<String> {
     let max_w = width.saturating_sub(1);
     let terminal = one_line(item.terminal.as_deref().unwrap_or("-"), (max_w / 5).max(3));
-    let source = sanitize_one_line(&item.source);
+    let source = one_line(&item.source, (max_w / 5).max(3));
     let id = format!("#{}", item.id);
     let first_prefix = format!(
         "  {} {} {} {} ",
@@ -396,7 +399,7 @@ fn message_lines(message: &MessageRow, width: usize, now_ms: i64, max_lines: usi
     let cap = (max_w / 6).max(3);
     let from = one_line(&message.from, cap);
     let to = one_line(&message.to, cap);
-    let kind = sanitize_one_line(kind_to_english(&message.kind));
+    let kind = one_line(kind_to_english(&message.kind), (max_w / 5).max(3));
     let status = sanitize_one_line(&message.status);
     let age_color = match status.as_str() {
         "delivered" | "sent" => BRIGHT_GREEN,
@@ -410,7 +413,7 @@ fn message_lines(message: &MessageRow, width: usize, now_ms: i64, max_lines: usi
         paint(CYAN, &from),
         paint(GRAY, "→"),
         paint(WHITE, &to),
-        msg_kind_badge(&message.kind),
+        msg_kind_badge(&kind),
     );
     let first_plain =
         2 + age.width() + 1 + from.width() + 1 + 1 + 1 + to.width() + 2 + (kind.width() + 2) + 2;

@@ -297,6 +297,93 @@ fn untrusted_text_is_inert() {
 }
 
 #[test]
+fn long_label_and_model_do_not_push_status_offscreen() {
+    let now = 1_700_000_000_000i64;
+    let mut a = agent("a1", 0, true);
+    a.label = "L".repeat(100);
+    a.app = "claude-code".into();
+    a.model = "M".repeat(100);
+    a.effort = "high".into();
+    a.status = "working".into();
+    a.context_pct = Some(42.0);
+    a.tokens = Some(12_345);
+    a.spark = Some(vec![1; 12]);
+    a.stage = Some("wip".into());
+
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![a], vec![], vec![]),
+        110,
+        now,
+    ));
+    assert!(plain.contains("working"), "{plain}");
+    assert!(plain.contains("42%"), "{plain}");
+    assert!(plain.contains("12k"), "{plain}");
+    assert!(plain.contains("stage:"), "{plain}");
+    assert!(plain.contains("wip"), "{plain}");
+    for line in plain.lines() {
+        assert!(
+            UnicodeWidthStr::width(line) < 110,
+            "{line:?} is {}",
+            UnicodeWidthStr::width(line)
+        );
+    }
+
+    let plain60 = strip_ansi(&render_project_body(
+        &view(
+            vec![{
+                let mut b = agent("b1", 0, true);
+                b.label = "L".repeat(100);
+                b.model = "M".repeat(100);
+                b.status = "working".into();
+                b.context_pct = Some(42.0);
+                b.tokens = Some(12_345);
+                b
+            }],
+            vec![],
+            vec![],
+        ),
+        60,
+        now,
+    ));
+    assert!(plain60.contains("working"), "{plain60}");
+    assert!(plain60.contains("42%"), "{plain60}");
+}
+
+#[test]
+fn long_inbox_source_and_message_kind_are_capped() {
+    let now = 1_700_000_000_000i64;
+    let inbox = vec![InboxRow {
+        id: 1,
+        terminal: Some("t1".into()),
+        source: "S".repeat(100),
+        text: "hello".into(),
+        ..Default::default()
+    }];
+    let messages = vec![MessageRow {
+        from: "a".into(),
+        to: "b".into(),
+        kind: "K".repeat(100),
+        text: "msg".into(),
+        ts_ms: now,
+        ..Default::default()
+    }];
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![], inbox, messages),
+        60,
+        now,
+    ));
+    assert!(plain.contains("hello"), "{plain}");
+    assert!(plain.contains("msg"), "{plain}");
+    for line in plain.lines() {
+        assert!(
+            UnicodeWidthStr::width(line) < 60,
+            "{line:?} is {}",
+            UnicodeWidthStr::width(line)
+        );
+    }
+}
+
+#[test]
 fn no_line_exceeds_width_at_40_60_110() {
     let now = 1_700_000_000_000i64;
 
@@ -414,7 +501,11 @@ fn handed_off_status_keeps_symbol_and_full_words() {
     let mut blocked_upper = agent("a4", 0, true);
     blocked_upper.status = "BLOCKED: needs decision".into();
     let out = render_project_body(
-        &view(vec![idle, working, blocked_lower, blocked_upper], vec![], vec![]),
+        &view(
+            vec![idle, working, blocked_lower, blocked_upper],
+            vec![],
+            vec![],
+        ),
         110,
         0,
     );

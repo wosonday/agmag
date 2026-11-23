@@ -83,16 +83,13 @@ fn is_interactive_shell(name: &str) -> bool {
     SHELL_NAMES.contains(&base)
 }
 
-/// `hc get` cho thấy tiến trình nền là shell tương tác và không có agent nào đang sống
-/// (không có `status.app`). Các cờ `reported`/app trong CSDL có thể còn sót lại từ agent đã thoát.
+/// `hc get` cho thấy tiến trình nền là shell tương tác và không còn trạng thái nào đang sống
+/// (`status` null/vắng). Các cờ `reported`/app trong CSDL có thể còn sót lại từ agent đã thoát.
 fn idle_shell_foreground(v: &serde_json::Value) -> bool {
     let Some(name) = v["foreground"]["name"].as_str() else {
         return false;
     };
-    is_interactive_shell(name)
-        && v["status"]["app"]
-            .as_str()
-            .is_none_or(|a| a.trim().is_empty())
+    is_interactive_shell(name) && v["status"].is_null()
 }
 
 /// App hiện tại của terminal: ưu tiên `hc get` (mới nhất), rồi CSDL. None nếu không biết.

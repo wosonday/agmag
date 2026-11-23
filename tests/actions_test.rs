@@ -464,6 +464,26 @@ fn live_agent_status_with_shell_foreground_stays_agent() -> Result<()> {
 }
 
 #[test]
+fn non_null_status_without_app_with_shell_foreground_stays_agent() -> Result<()> {
+    // Một trạng thái còn sống (kể cả thiếu app) nghĩa là có thứ gì đó đang báo cáo: không coi là shell rảnh.
+    let store = Store::open_in_memory()?;
+    let hc = hc_get(
+        "t7y",
+        serde_json::json!({
+            "address": "t7y",
+            "reported": true,
+            "status": {"state": "working"},
+            "foreground": {"name": "pwsh.exe"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t7y"), true, true),
+        Caller::Agent(_)
+    ));
+    Ok(())
+}
+
+#[test]
 fn non_shell_foreground_keeps_current_rules() -> Result<()> {
     let store = Store::open_in_memory()?;
     // reported true + foreground node.exe → vẫn là agent.

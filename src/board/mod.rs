@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
+use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::{Hide, Show};
@@ -265,13 +266,13 @@ pub fn apply_effect(
 }
 
 /// Brings the console in and out of raw mode + the alternate screen; faked in tests.
-trait TermControl {
+pub(crate) trait TermControl {
     fn enter(&mut self) -> io::Result<()>;
     fn leave(&mut self) -> io::Result<()>;
 }
 
 /// Restores the terminal once: on the normal path, on an error return, and on unwind.
-struct TermGuard<T: TermControl> {
+pub(crate) struct TermGuard<T: TermControl> {
     term: Option<T>,
 }
 
@@ -328,11 +329,94 @@ impl TermControl for ConsoleTerm {
     }
 }
 
-/// Mutable board state carried through the loop (one parameter instead of three).
-struct Session<'a> {
-    state: &'a mut state::BoardState,
-    cache: &'a mut RootCache,
-    data: &'a mut BoardData,
+/// The board as one screen of the app: state, the data of the last good refresh, and the cache
+/// that remembers resolved project roots.
+pub(crate) struct BoardScreen {
+    pub(crate) state: state::BoardState,
+    pub(crate) data: BoardData,
+    pub(crate) cache: RootCache,
+    /// Text of the error note the last failed refresh left (cleared by the next good refresh).
+    refresh_note: Option<String>,
+    /// The last key ran an action, so the caller refreshes before drawing again.
+    needs_refresh: bool,
+}
+
+/// What a key on the board screen did: stay on it, or leave it (`q` / `esc` / `ctrl+c`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BoardKeyResult {
+    Stay,
+    Leave,
+}
+
+impl BoardScreen {
+    pub(crate) fn new(project: Option<ProjectKey>, theme: theme::ThemeName) -> Self {
+        Self {
+            state: initial_state(project, theme),
+            data: BoardData::default(),
+            cache: RootCache::new(),
+            refresh_note: None,
+            needs_refresh: false,
+        }
+    }
+
+    pub(crate) fn theme(&self) -> theme::ThemeName {
+        self.state.theme
+    }
+
+    /// Loads one frame; a failed refresh keeps the last good data and shows the error.
+    pub(crate) fn refresh(&mut self, store: &Store, cfg: &Config, now_ms: i64) {
+        let fresh = load_data(store, cfg, &mut self.cache, &mut self.state, now_ms);
+        apply_refresh(
+            &mut self.data,
+            &mut self.state,
+            fresh,
+            &mut self.refresh_note,
+        );
+    }
+
+    /// Whether the last key ran an action, so the caller should refresh before drawing again.
+    pub(crate) fn needs_refresh(&self) -> bool {
+        self.needs_refresh
+    }
+
+    pub(crate) fn draw(&self, frame: &mut Frame, palette: &theme::Theme, ascii: bool) {
+        view::draw(frame, &self.state, &self.data, palette, ascii);
+    }
+
+    pub(crate) fn on_key(
+        &mut self,
+        key: event::KeyEvent,
+        store: &Store,
+        hc: &dyn Hc,
+        now_ms: i64,
+    ) -> BoardKeyResult {
+        self.needs_refresh = false;
+        let prev_agent = self.state.sel_agent.clone();
+        let effect = self.state.on_key(key, &self.data);
+        if let Effect::SwitchProject(key) = &effect {
+            self.state.project = Some(key.clone());
+        }
+        match effect {
+            Effect::None => {
+                // The conversation belongs to the selected agent, so moving the selection must
+                // reload it before the next frame is drawn.
+                if self.state.sel_agent != prev_agent
+                    && let Err(e) = reload_conversation(store, &self.state, &mut self.data)
+                {
+                    self.state.note = Some(Note {
+                        ok: false,
+                        text: format!("error: {e:#}"),
+                    });
+                }
+            }
+            Effect::Quit => return BoardKeyResult::Leave,
+            other => {
+                apply_effect(store, hc, other, &mut self.state, now_ms);
+                self.needs_refresh = true;
+            }
+        }
+        BoardKeyResult::Stay
+    }
 }
 
 /// One refresh + input round trip. Separated from `run` so the guard and panic hook wrap it.
@@ -342,22 +426,17 @@ fn run_loop(
     hc: &dyn Hc,
     refresh_s: u64,
     scan: &mut dyn FnMut(&Store) -> Result<()>,
-    session: &mut Session<'_>,
+    screen: &mut BoardScreen,
 ) -> Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     let refresh = Duration::from_secs(refresh_s.max(1));
     let ascii = std::env::var("AGM_ASCII").as_deref() == Ok("1");
-    let mut refresh_note: Option<String> = None;
 
     loop {
         let _ = scan(store);
-        let Session { state, cache, data } = &mut *session;
-        // A failed refresh keeps the last good data and shows the error in the footer.
-        let fresh = load_data(store, cfg, cache, state, clock_ms());
-        apply_refresh(data, state, fresh, &mut refresh_note);
-        let palette = theme::theme(state.theme);
-        terminal.draw(|frame| view::draw(frame, state, data, &palette, ascii))?;
+        screen.refresh(store, cfg, clock_ms());
+        draw_board(&mut terminal, screen, ascii)?;
 
         let until = Instant::now() + refresh;
         loop {
@@ -366,41 +445,32 @@ fn run_loop(
                 break;
             }
             match event::read()? {
-                Event::Key(key) => {
-                    let prev_agent = state.sel_agent.clone();
-                    let effect = state.on_key(key, data);
-                    if let Effect::SwitchProject(key) = &effect {
-                        state.project = Some(key.clone());
-                    }
-                    match effect {
-                        Effect::None => {
-                            // The conversation belongs to the selected agent, so moving the
-                            // selection must reload it before the next frame is drawn.
-                            if state.sel_agent != prev_agent
-                                && let Err(e) = reload_conversation(store, state, data)
-                            {
-                                state.note = Some(Note {
-                                    ok: false,
-                                    text: format!("error: {e:#}"),
-                                });
-                            }
-                            terminal
-                                .draw(|frame| view::draw(frame, state, data, &palette, ascii))?;
-                        }
-                        Effect::Quit => return Ok(()),
-                        other => {
-                            apply_effect(store, hc, other, state, clock_ms());
+                Event::Key(key) => match screen.on_key(key, store, hc, clock_ms()) {
+                    BoardKeyResult::Leave => return Ok(()),
+                    BoardKeyResult::Stay => {
+                        // An action changed project data: refresh through the outer loop, exactly
+                        // as the board did before it became a screen of the app.
+                        if screen.needs_refresh() {
                             break;
                         }
+                        draw_board(&mut terminal, screen, ascii)?;
                     }
-                }
-                Event::Resize(_, _) => {
-                    terminal.draw(|frame| view::draw(frame, state, data, &palette, ascii))?;
-                }
+                },
+                Event::Resize(_, _) => draw_board(&mut terminal, screen, ascii)?,
                 _ => {}
             }
         }
     }
+}
+
+fn draw_board(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    screen: &BoardScreen,
+    ascii: bool,
+) -> Result<()> {
+    let palette = theme::theme(screen.theme());
+    terminal.draw(|frame| screen.draw(frame, &palette, ascii))?;
+    Ok(())
 }
 
 /// Without a project the board opens on the project picker, which every layout can show (the
@@ -429,10 +499,16 @@ pub fn run(
         .setting(theme::SETTING_KEY)?
         .and_then(|s| theme::ThemeName::parse(&s))
         .unwrap_or_default();
-    let mut state = initial_state(project, theme_name);
-    let mut cache = RootCache::new();
-    let mut data = BoardData::default();
+    let mut screen = BoardScreen::new(project, theme_name);
+    with_console(|| run_loop(store, cfg, hc, refresh_s, scan, &mut screen))
+}
 
+/// Runs `body` on the alternate screen in raw mode and puts the console (and the panic hook) back
+/// afterwards — on the normal path, on an error return, and on unwind.
+pub(crate) fn with_console<F>(body: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
     let mut guard = TermGuard::new(ConsoleTerm);
     guard.enter()?;
     // A panic must not leave the console in raw mode on the alternate screen: leave it before the
@@ -443,18 +519,7 @@ pub fn run(
         let _ = leave_console();
         chained(info);
     }));
-    let outcome = run_loop(
-        store,
-        cfg,
-        hc,
-        refresh_s,
-        scan,
-        &mut Session {
-            state: &mut state,
-            cache: &mut cache,
-            data: &mut data,
-        },
-    );
+    let outcome = body();
     let _ = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         previous(info);
@@ -652,5 +717,75 @@ mod tests {
             state.note.is_some(),
             "a successful refresh hid an action result"
         );
+    }
+
+    /// Minimal `Hc` for keys that never call the host controller.
+    struct NoHc;
+
+    impl crate::hc::Hc for NoHc {
+        fn ls(&self, _all: bool) -> Result<Vec<serde_json::Value>> {
+            unreachable!("board key handling must not call hc")
+        }
+
+        fn get(&self, _terminal: &str) -> Result<serde_json::Value> {
+            unreachable!("board key handling must not call hc")
+        }
+
+        fn send(
+            &self,
+            _terminal: &str,
+            _text: &str,
+            _if_idle: bool,
+            _force: bool,
+        ) -> Result<serde_json::Value> {
+            unreachable!("board key handling must not call hc")
+        }
+
+        fn run(&self, _spec: &crate::hc::RunSpec) -> Result<serde_json::Value> {
+            unreachable!("board key handling must not call hc")
+        }
+
+        fn kill(&self, _terminal: &str) -> Result<()> {
+            unreachable!("board key handling must not call hc")
+        }
+
+        fn interrupt(&self, _terminal: &str) -> Result<()> {
+            unreachable!("board key handling must not call hc")
+        }
+    }
+
+    #[test]
+    fn board_screen_leave_on_q() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+            KeyEvent::new(code, modifiers)
+        }
+
+        let store = Store::open_in_memory().unwrap();
+        let hc = NoHc;
+        let project = ProjectKey {
+            root: "/repo/agmag".into(),
+            name: "agmag".into(),
+        };
+        let mut screen = BoardScreen::new(Some(project), theme::ThemeName::default());
+
+        // Navigation stays on the screen and needs no reload.
+        let down = key(KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(
+            screen.on_key(down, &store, &hc, 1_000),
+            BoardKeyResult::Stay
+        );
+        assert!(!screen.needs_refresh());
+
+        // `q` leaves the board screen (the app keeps running on the global screen).
+        let q = key(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(screen.on_key(q, &store, &hc, 1_000), BoardKeyResult::Leave);
+
+        // `esc` does the same, as on the standalone board.
+        let esc = key(KeyCode::Esc, KeyModifiers::NONE);
+        let mut screen = BoardScreen::new(None, theme::ThemeName::default());
+        // Without a project the board opens on the picker; `esc` there cancels the picker only.
+        assert_eq!(screen.on_key(esc, &store, &hc, 1_000), BoardKeyResult::Stay);
     }
 }

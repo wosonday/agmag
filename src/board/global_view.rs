@@ -881,13 +881,19 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     }
     let prompt_w = PROMPT.width();
     let available = (area.width as usize).saturating_sub(prompt_w);
-    let cursor_cells = cells_before(&state.cmd.text, state.cmd.cursor);
-    let scroll = if cursor_cells >= available {
-        cursor_cells - available + 1
-    } else {
-        0
-    };
-    let visible = visible_slice(&state.cmd.text, scroll, available);
+    // No room for even one cell of input: draw nothing there instead of computing a negative
+    // cursor column (`cursor_cells - scroll` used to underflow at 5 columns and fewer).
+    if available == 0 {
+        return None;
+    }
+    let text = sanitize_one_line(&state.cmd.text);
+    let cursor_chars = state.cmd.cursor.min(text.chars().count());
+    let cursor_cells = cells_before(&text, cursor_chars);
+    let scroll = cursor_cells
+        .saturating_sub(available)
+        .saturating_add(1)
+        .min(cursor_cells);
+    let visible = visible_slice(&text, scroll, available);
     let line = Line::from(vec![
         Span::styled(
             PROMPT,
@@ -904,7 +910,7 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     let x = area
         .x
         .saturating_add(prompt_w as u16)
-        .saturating_add((cursor_cells - scroll) as u16)
+        .saturating_add((cursor_cells.saturating_sub(scroll)).min(u16::MAX as usize) as u16)
         .min(area.right().saturating_sub(1));
     Some(Position::new(x, area.y))
 }

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use agmag::board::global::{GlobalData, GlobalState, Popup};
+use agmag::board::global::{Focus, GlobalData, GlobalState, Popup};
 use agmag::board::global_view::draw_global;
 use agmag::board::theme::{ThemeName, theme};
 use agmag::config::Config;
@@ -324,6 +324,33 @@ fn cmdline_long_input_scrolls_cursor_visible() {
         cmd_row.contains("agm>"),
         "prompt missing from the command bar: {cmd_row:?}"
     );
+}
+
+#[test]
+fn cmdline_tiny_widths_no_panic() {
+    let d = data(&Section::DEFAULT);
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.focus = Focus::CmdLine;
+    state.cmd.text = "abcdefghij".into();
+    state.cmd.cursor = state.cmd.text.chars().count();
+    for width in 1..=8 {
+        for height in 2..=4 {
+            let _ = render((width, height), &state, &d, false);
+        }
+    }
+}
+
+#[test]
+fn cmdline_draw_hostile_text_inert() {
+    let d = data(&Section::DEFAULT);
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.cmd.text = "a\x1b[31mEVIL\x1b]0;pwn\x07b\nc".into();
+    state.cmd.cursor = state.cmd.text.chars().count();
+    let buf = render((80, 20), &state, &d, false);
+    let all = text(&buf);
+    assert!(!all.contains('\x1b'), "escape sequence reached the screen");
+    assert!(!all.contains('\x07'), "bell reached the screen");
+    assert!(!all.contains("pwn"), "OSC payload reached the screen");
 }
 
 #[test]

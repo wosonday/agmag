@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::cmd::NoteKind;
 use super::theme::ThemeName;
-use crate::dashboard::{Section, Snapshot};
+use crate::dashboard::{Section, Snapshot, sanitize_one_line};
 use crate::project::ProjectKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,7 +175,8 @@ impl GlobalState {
                 GEffect::None
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     input.push(c);
@@ -271,7 +272,8 @@ impl GlobalState {
                 GEffect::None
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     let idx = char_to_byte(&self.cmd.text, self.cmd.cursor);
@@ -362,12 +364,18 @@ impl GlobalState {
                         .and_then(|s| s.terminals.iter().find(|t| t.address == addr))
                         .map(|t| {
                             if t.name.is_empty() {
-                                t.address.clone()
+                                sanitize_one_line(&t.address)
                             } else {
-                                t.name.clone()
+                                sanitize_one_line(&t.name)
                             }
                         })
-                        .unwrap_or(addr);
+                        .unwrap_or_else(|| sanitize_one_line(&addr));
+                    // A name made only of control/escape text falls back to the address.
+                    let name = if name.is_empty() {
+                        sanitize_one_line(&addr)
+                    } else {
+                        name
+                    };
                     self.focus_cmdline_with(format!("send {name} "));
                 }
                 GEffect::None
@@ -386,7 +394,8 @@ impl GlobalState {
                 GEffect::None
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     self.focus = Focus::CmdLine;
@@ -826,6 +835,64 @@ mod tests {
         assert_eq!(eff, GEffect::None);
         assert_eq!(st.focus, Focus::CmdLine);
         assert_eq!(st.cmd.text, "send worker-a ");
+    }
+
+    #[test]
+    fn control_chars_not_inserted() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let data = GlobalData::default();
+        for c in ['\x1b', '\x07', '\n', '\r', '\u{7f}'] {
+            st.on_key(char_key(c), &data);
+        }
+        assert_eq!(
+            st.cmd.text, "",
+            "control chars must not reach the command line"
+        );
+
+        st.popup = Some(Popup::Confirm {
+            prompt: "kill t1?".into(),
+            input: String::new(),
+        });
+        for c in ['\x1b', '\x07', '\n', '\r', '\u{7f}'] {
+            st.on_key(char_key(c), &data);
+        }
+        assert_eq!(
+            st.popup,
+            Some(Popup::Confirm {
+                prompt: "kill t1?".into(),
+                input: String::new(),
+            }),
+            "control chars must not reach the confirmation input"
+        );
+    }
+
+    #[test]
+    fn send_prefill_sanitized() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let data = data_with(
+            vec![Section::Terminals],
+            vec![
+                term("addr\x1b[31m1", "evil\x1b]0;pwn\x07name"),
+                term("addr\x1b[31m2", ""),
+            ],
+            vec![],
+        );
+        st.focus = Focus::Panel(Section::Terminals);
+
+        st.sel_terminal = Some("addr\x1b[31m1".into());
+        st.on_key(char_key('s'), &data);
+        assert_eq!(st.cmd.text, "send evilname ");
+        assert!(
+            !st.cmd.text.contains('\x1b'),
+            "escape reached the command line"
+        );
+
+        // An empty name falls back to the (sanitized) address.
+        st.focus = Focus::Panel(Section::Terminals);
+        st.sel_terminal = Some("addr\x1b[31m2".into());
+        st.on_key(char_key('s'), &data);
+        assert_eq!(st.cmd.text, "send addr2 ");
+        assert!(!st.cmd.text.contains('\x1b'));
     }
 
     #[test]

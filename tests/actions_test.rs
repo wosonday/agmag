@@ -722,6 +722,74 @@ fn cleanup_batch_requires_confirmation_handles_live_and_exited_and_keeps_history
 }
 
 #[test]
+fn cleanup_after_daemon_resync_fixes_legacy_created_ms() -> Result<()> {
+    const OLD_CREATED: i64 = 1_795_450_000_000;
+    const NEW_CREATED: i64 = 1_795_450_665_482;
+    let store = Store::open_in_memory()?;
+    // Bản ghi cũ: `created_ms` của phiên kế nhiệm là giờ tick agm, lệch 154 ms so với herdr.
+    for (addr, created) in [("t7p", OLD_CREATED), ("t8c", NEW_CREATED - 154)] {
+        store.upsert_terminal(&TerminalRow {
+            address: addr.into(),
+            app: Some("claude-code".into()),
+            cwd: Some(r"D:\w".into()),
+            state: "live".into(),
+            created_ms: created,
+            ..Default::default()
+        })?;
+    }
+    store.set_terminal_handoff_state("t7p", "handed_off")?;
+    store.set_terminal_launch("t8c", true, None)?;
+    let sid = store.session_id_for_path(agmag::model::Source::Claude, "claude://rot")?;
+    store.link_terminal("t8c", sid, "hook")?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal, new_terminal, app, state, updated_ms)
+         VALUES ('t7p', 't8c', 'claude-code', 'done', 10)",
+        [],
+    )?;
+    let hc = FakeHc {
+        get_responses: [
+            (
+                "t7p".to_string(),
+                serde_json::json!({"address":"t7p","state":"live","cwd":r"D:\w",
+                    "created_ms":OLD_CREATED,"status":{"app":"claude-code","state":"idle"}}),
+            ),
+            (
+                "t8c".to_string(),
+                serde_json::json!({"address":"t8c","state":"live","cwd":r"D:\w",
+                    "created_ms":NEW_CREATED,"status":{"app":"claude-code","state":"idle"}}),
+            ),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    // Một ảnh chụp daemon mang `created_ms` thật của herdr → hàng cũ phải được sửa lại.
+    agmag::daemon::apply_event(
+        &store,
+        &serde_json::json!({"channel": null, "seq": 1, "terminals": [
+            {"address": "t7p", "argv": ["claude"], "cwd": r"D:\w", "created_ms": OLD_CREATED,
+             "state": "live", "status": {"app": "claude-code", "state": "idle"}},
+            {"address": "t8c", "argv": ["claude"], "cwd": r"D:\w", "created_ms": NEW_CREATED,
+             "state": "live", "status": {"app": "claude-code", "state": "idle"}}
+        ]}),
+        2_000,
+    )?;
+    assert_eq!(store.terminal("t8c")?.unwrap().created_ms, NEW_CREATED);
+
+    let items = actions::eligible_cleanups(&store)?;
+    let rep = actions::execute_cleanup_batch(
+        &store,
+        &hc,
+        &Caller::User { confirmed: true },
+        &items,
+        2_001,
+    )?;
+    assert!(rep.skipped.is_empty(), "{:?}", rep.skipped);
+    assert_eq!(rep.done, 1);
+    assert!(hc.calls.borrow().iter().any(|c| c == "kill t7p"));
+    Ok(())
+}
+
+#[test]
 fn set_managed_launch_blocks_agents_and_unconfirmed_users() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let cwd = tmp.path().to_string_lossy().to_string();

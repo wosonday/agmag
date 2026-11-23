@@ -41,3 +41,15 @@ Sửa `created_ms` sai khiến `agm cleanup` bỏ qua mọi cặp bàn giao. Tas
   `upsert_terminal` giữ nguyên hành vi.
 - Xanh: daemon_test 22/22.
 - Commit: `fix(identity): resync wrong created_ms from herdr snapshots`.
+
+### Step 3: test đầu-cuối cleanup (RED → GREEN)
+- tests/actions_test.rs: thêm `cleanup_after_daemon_resync_fixes_legacy_created_ms`.
+  Dựng rotation `t7p → t8c` (`done`, `handed_off`, t8c linked + managed); `created_ms` của t8c trong
+  DB là `1795450665328`, herdr báo `1795450665482` (lệch 154 ms). Áp một ảnh chụp daemon → DB phải
+  sửa thành giờ herdr; `eligible_cleanups` + `execute_cleanup_batch` phải `done=1`, `skipped` rỗng
+  và `kill t7p`.
+- Viết test này TRƯỚC khi code bước 2: đỏ ở assert `t8c` giữ 1795450665328 (đúng triệu chứng thật).
+  Sau bước 2 xanh.
+- Không nới điều kiện so khớp `created_ms` trong `fresh_cleanup_terminal` (actions.rs ~1031) hay
+  điều kiện phiên kế nhiệm (~1118).
+- Commit: `test(identity): cleanup works after daemon resyncs created_ms`.

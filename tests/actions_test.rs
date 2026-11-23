@@ -227,6 +227,48 @@ fn spawn_program_preserves_each_argument() -> Result<()> {
 }
 
 #[test]
+fn spawn_stamps_herdr_created_ms_not_tick_time() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    // `hc run` không trả `created_ms`; `hc get` biết giờ herdr thật, khác giờ tick agm lấy trước đó.
+    let hc = FakeHc {
+        get_responses: [(
+            "t99".into(),
+            serde_json::json!({"address":"t99", "state":"live", "created_ms": 10_500,
+                               "status":{"app":"opencode","state":"idle"}}),
+        )]
+        .into(),
+        ..Default::default()
+    };
+    let req = SpawnReq {
+        template: "worker-mid".into(),
+        task: "a".into(),
+        role: "worker".into(),
+        ..Default::default()
+    };
+    actions::spawn(&store, &hc, &Config::builtin(), &req, 20_000)?;
+    assert_eq!(store.terminal("t99")?.unwrap().created_ms, 10_500);
+    Ok(())
+}
+
+#[test]
+fn spawn_created_ms_falls_back_to_tick_time_when_get_fails() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = FakeHc {
+        fail_get: true,
+        ..Default::default()
+    };
+    let req = SpawnReq {
+        template: "worker-mid".into(),
+        task: "a".into(),
+        role: "worker".into(),
+        ..Default::default()
+    };
+    actions::spawn(&store, &hc, &Config::builtin(), &req, 20_000)?;
+    assert_eq!(store.terminal("t99")?.unwrap().created_ms, 20_000);
+    Ok(())
+}
+
+#[test]
 fn agent_cannot_kill_codex_or_claude() -> Result<()> {
     let store = Store::open_in_memory()?;
     let hc = FakeHc::default();

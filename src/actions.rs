@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use crate::config::Config;
 use crate::hc::{Hc, RunSpec, terminal_row_from};
 use crate::launch::LaunchSpec;
-use crate::store::{MessageRow, Store};
+use crate::store::{MessageRow, Store, TerminalRow};
 
 pub const KINDS: [&str; 7] = ["GIAO", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "CHƯA ĐẠT"];
 
@@ -620,6 +620,31 @@ pub fn spawn_successor_precheck(
     bail!("không tạo được tên terminal kế nhiệm duy nhất")
 }
 
+/// `created_ms` thật của herdr (> 0) cho terminal, đọc qua `hc get`.
+fn herdr_created_ms(hc: &dyn Hc, address: &str) -> Option<i64> {
+    hc.get(address)
+        .ok()
+        .map(|v| terminal_row_from(&v).created_ms)
+        .filter(|ms| *ms > 0)
+}
+
+/// `hc run` không trả `created_ms`: lấy giờ herdr tạo terminal thay vì giờ tick agm (lấy trước khi gọi hc).
+/// Chỉ khi `hc get` lỗi hoặc không có giá trị mới dùng `now`.
+pub fn stamp_created_ms(hc: &dyn Hc, row: &mut TerminalRow, now: i64) {
+    if row.created_ms == 0 {
+        row.created_ms = herdr_created_ms(hc, &row.address).unwrap_or(now);
+    }
+}
+
+/// Nhánh phục hồi sau crash: hàng có thể đến từ store với `created_ms` sai, nên ưu tiên herdr.
+pub fn refresh_created_ms(hc: &dyn Hc, row: &mut TerminalRow, now: i64) {
+    row.created_ms = herdr_created_ms(hc, &row.address).unwrap_or(if row.created_ms > 0 {
+        row.created_ms
+    } else {
+        now
+    });
+}
+
 /// Sinh agent qua `hc run --bg --outlive-parent` sau khi kiểm hạn mức. Trả địa chỉ terminal mới.
 pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64) -> Result<String> {
     let role = normalize_role(&req.role)?;
@@ -685,9 +710,7 @@ pub fn spawn(store: &Store, hc: &dyn Hc, cfg: &Config, req: &SpawnReq, now: i64)
     row.template = Some(req.template.clone());
     row.task.get_or_insert(req.task.clone());
     row.role.get_or_insert(req.role.clone());
-    if row.created_ms == 0 {
-        row.created_ms = now;
-    }
+    stamp_created_ms(hc, &mut row, now);
     store.upsert_terminal(&row)?;
     if let Some((brief, app)) = brief {
         send_spawn_brief(store, hc, &row.address, &brief, app.as_deref(), now)?;

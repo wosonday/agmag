@@ -164,3 +164,18 @@ fn usage_buckets_boundaries() -> anyhow::Result<()> {
     assert!(store.usage_buckets(&[], 0, 300_000, 12)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn usage_buckets_extreme_bounds_do_not_overflow() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let s1 = store.session_id_for_path(Source::Codex, "p1")?;
+    store.upsert_usage(s1, &usage(i64::MAX, "k"))?;
+
+    // `since_ms + bucket_ms * n` overflows i64; the window end must saturate.
+    let map = store.usage_buckets(&[s1], i64::MAX - 10, i64::MAX, 12)?;
+    assert_eq!(map[&s1], vec![0u64; 12]);
+
+    let map = store.usage_buckets(&[s1], 0, i64::MAX, 12)?;
+    assert_eq!(map[&s1], vec![0u64; 12]);
+    Ok(())
+}

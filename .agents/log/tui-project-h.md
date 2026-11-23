@@ -24,3 +24,9 @@
 - Nhỏ 2: `ambiguous_entries` detects shared names case-insensitively, matching
   `match_project`.
 - Gates green; committed.
+
+### Store (`src/store/project.rs`, `tests/project_store_test.rs`)
+
+- Nhỏ 1: `usage_buckets` saturates `since_ms + bucket_ms * n` (extreme-bounds test with
+  `i64::MAX` inputs returns the requested sessions with zero buckets instead of panicking).
+- Gates green; committed.

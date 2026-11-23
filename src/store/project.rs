@@ -102,7 +102,7 @@ impl Store {
         let since_idx = k + 1;
         let bucket_idx = k + 2;
         let end_idx = k + 3;
-        let end = since_ms + bucket_ms * n as i64;
+        let end = since_ms.saturating_add(bucket_ms.saturating_mul(n as i64));
         let sql = format!(
             "SELECT session, (ts_ms - ?{since_idx}) / ?{bucket_idx} AS b, \
                     SUM(input_uncached + cache_write + output + reasoning) AS total \

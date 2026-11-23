@@ -79,6 +79,17 @@ pub struct Snapshot {
     pub system: Option<SysStats>,
 }
 
+/// Stored `(status, kind)` → the dashboard's status text: `blocked` with a kind becomes
+/// `BLOCKED (kind)`, otherwise the stored status, `-` when unknown.
+pub fn format_status(status: Option<&str>, kind: Option<&str>) -> String {
+    match (status, kind) {
+        (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
+        (Some("blocked"), None) => "BLOCKED".into(),
+        (Some(s), _) => s.to_string(),
+        (None, _) => "-".into(),
+    }
+}
+
 pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     let mut terminals = Vec::new();
     for t in store.terminals(true)? {
@@ -121,12 +132,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
                 },
             )
             .ok();
-        let mut status = match (t.status.as_deref(), t.kind.as_deref()) {
-            (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
-            (Some("blocked"), None) => "BLOCKED".into(),
-            (Some(s), _) => s.to_string(),
-            (None, _) => "-".into(),
-        };
+        let mut status = format_status(t.status.as_deref(), t.kind.as_deref());
         if t.handoff_state == "handed_off" {
             status.push_str(" [HANDED OFF]");
         }

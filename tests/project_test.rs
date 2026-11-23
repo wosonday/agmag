@@ -847,6 +847,54 @@ fn load_project_view_messages_include_exited_member_without_inbox() -> anyhow::R
 }
 
 #[test]
+fn load_project_view_exited_status_uses_dashboard_format() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+
+    // Exited member kept by an open inbox item; the stored status is raw ("blocked"), so
+    // AgentView.status must be formatted like the global view's "BLOCKED (HỎI)".
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        name: Some("t9".into()),
+        cwd: Some(root.clone()),
+        state: "exited".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.set_terminal_status("t1", Some("blocked"), Some("HỎI"), None, 1, now)?;
+    store.open_inbox(
+        Some("t9"),
+        "hook",
+        Some("question"),
+        "needs a decision",
+        now,
+    )?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |_: &str| -> Option<String> { Some(root.clone()) };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    let key = ProjectKey {
+        root: norm_cwd(&root),
+        name: project_name(&norm_cwd(&root)),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    let a1 = pv.agents.iter().find(|a| a.address == "t1").unwrap();
+    assert_eq!(a1.state, "exited");
+    assert!(
+        a1.status.starts_with("BLOCKED"),
+        "exited blocked status: {}",
+        a1.status
+    );
+    assert_eq!(a1.status, "BLOCKED (HỎI)");
+    Ok(())
+}
+
+#[test]
 fn compute_roots_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let root = tmp.path().to_str().unwrap().to_string();

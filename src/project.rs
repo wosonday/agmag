@@ -474,10 +474,10 @@ pub fn load_project_view(
             model: view.map(|v| v.model.clone()).unwrap_or_default(),
             effort: view.map(|v| v.effort.clone()).unwrap_or_default(),
             // Live agents use the snapshot's formatted status ("BLOCKED (kind)",
-            // "[HANDED OFF]"); exited ones keep the stored status, "-" when unknown.
-            status: view
-                .map(|v| v.status.clone())
-                .unwrap_or_else(|| t.status.clone().unwrap_or_else(|| "-".into())),
+            // "[HANDED OFF]"); exited ones format the stored (status, kind) pair the same way.
+            status: view.map(|v| v.status.clone()).unwrap_or_else(|| {
+                crate::dashboard::format_status(t.status.as_deref(), t.kind.as_deref())
+            }),
             state: t.state.clone(),
             depth,
             last_sibling,

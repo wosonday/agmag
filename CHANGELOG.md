@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Sửa lỗi
+
+- `agm tui` không còn chặn người dùng trong pane shell của herdr khi cờ reported hoặc app agent trong agm.db còn sót lại từ một agent đã thoát.
+
 ## [0.4.1] - 2026-11-23
 
 ### Thay đổi

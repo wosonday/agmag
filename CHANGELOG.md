@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Thêm mới
+
+- TUI: thêm chế độ xem theo dự án (`cd`/`cd <tên>`/`cd ..`, `show <#>`), hiển thị cây agent (trạng thái, hoạt động gần nhất, thanh ngữ cảnh, sparkline token 60 phút, giai đoạn nhánh), hộp thư và tin nhắn lọc theo dự án; `reply`/`done`/`send` vẫn dùng `#ID` toàn cục.
+
 ## [0.4.1] - 2026-11-23
 
 ### Thay đổi

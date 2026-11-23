@@ -140,7 +140,7 @@ agm tui
   (no messages)
 ──────────────────────────────────────────────────────────────────
 cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
-     interrupt <terminal> · kill <terminal> · policy on|off · view <up to 3 sections> · quit
+     interrupt <terminal> · kill <terminal> · cd [project|..] · show <#> · policy on|off · view <up to 3 sections> · quit
      TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
 
@@ -155,6 +155,8 @@ Lệnh trong TUI (gõ rồi Enter):
 | `interrupt t5` · `kill t5` | Ngắt / dừng (cả hai đều phải gõ thêm `y` xác nhận) |
 | `policy off` | Tắt mọi hành động tự động |
 | `view` · `view terminals inbox` · `view default` | Xem bố cục hiện tại / chọn tối đa 3 bảng (`quota`, `usage`, `terminals`, `budgets`, `inbox`, `system`); được nhớ cho lần mở sau. RECENT MESSAGES luôn hiện và không tính vào 3 bảng |
+| `cd` · `cd agmag` · `cd ..` | Liệt kê dự án / vào một dự án / quay lại chế độ xem toàn cục |
+| `show 1` | In đầy đủ mục hộp thư 1 |
 | `quit` | Thoát |
 
 Mỗi lệnh vẫn nhận chữ cái đầu làm phím tắt (`r`, `d`, `s`, `c`, `i`, `k`, `p`, `q`). Loại tin cho `send`: `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` (không phân biệt hoa/thường). Mã tiếng Việt cũ (`GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`) vẫn dùng được trong TUI; tin vẫn được lưu và chuyển đi với mã tiếng Việt, `agm send --type` không đổi.
@@ -162,6 +164,25 @@ Mỗi lệnh vẫn nhận chữ cái đầu làm phím tắt (`r`, `d`, `s`, `c`
 Cột TERMINALS: chấm `●` tô màu theo trạng thái (xanh lá working, xanh ngọc idle/done, đỏ blocked, vàng đã bàn giao, xám đã thoát), sau đó là tên terminal, rút gọn còn 12 ký tự (không có tên thì hiện địa chỉ; lệnh nhận cả hai). `agent` là CLI, `model`/`effort` lấy từ log phiên đã ghép (Codex `effort`, Claude Code `effort`, variant của OpenCode, hậu tố tên model agy như `-high`), `where` là vị trí trong herdr giống `hc ls` (`MATHY-AI / 1`, `agmag / agm-ceo`); không có thì hiện tên thư mục làm việc. `last msg` là tin gần nhất liên quan tới terminal, ghi bằng tiếng Anh: `→ REPORT` là terminal đã gửi báo cáo, `← ASSIGN` là terminal vừa nhận việc. Màu giống RECENT MESSAGES (xanh ngọc ASSIGN, xanh lá REPORT/PASS, vàng QUESTION, đỏ ERROR/FAIL, đỏ đậm BLOCKED).
 
 Bảng điều khiển in đầy đủ mọi dòng (không cắt theo chiều cao pane); lướt chuột lên để xem phần trên. Mỗi lần vẽ lại sẽ xoá màn hình và lịch sử cuộn trước, nên không có khung cũ bị in lặp; và chỉ vẽ lại khi dữ liệu thay đổi hoặc sau khi bạn gõ lệnh, để lúc đang lướt lên đọc không bị kéo xuống mỗi lần làm mới. Chỉ hiện tối đa 3 bảng tự chọn (mặc định `quota terminals inbox`) cùng RECENT MESSAGES luôn ghim ngay trên thanh lệnh. Bề rộng pane được tự nhận; `COLUMNS` dùng để ghi đè (giới hạn 60–200). Tên, đường dẫn và tin nhắn dài được rút gọn theo bề rộng đó. Unicode được đo theo số cột terminal, không cắt giữa một cụm ký tự; chuỗi điều khiển terminal trong dữ liệu được loại bỏ. Việc rút gọn chỉ ảnh hưởng hiển thị, không đổi tin nhắn đã lưu hay đích thao tác.
+
+### Xem theo dự án (`cd`)
+
+Gõ `cd` để liệt kê dự án: mỗi dòng hiện tên dự án, số agent đang sống, số mục
+hộp thư đang mở, và một dòng `(no project)` đếm các mục hộp thư có terminal bị
+thiếu hoặc không khớp. `cd <tên>` vào một dự án (không phân biệt hoa/thường,
+khớp tiền tố duy nhất; worktree được gộp về repo chính); `cd ..` hoặc `cd /`
+quay lại chế độ xem toàn cục. Dấu nhắc hiện phạm vi, ví dụ `agm[agmag]>`.
+
+Chế độ xem dự án chỉ hiện cho dự án đó:
+
+- **Agents** — cây với ký hiệu + chữ trạng thái, `doing:` hoạt động mới nhất từ
+  log phiên kèm tuổi, thanh `ctx`, sparkline token 60 phút, và giai đoạn nhánh
+  từ `BRANCHES.md`.
+- **Inbox** — mỗi mục gói tối đa 4 dòng.
+- **Messages** — 20 tin mới nhất, mỗi tin gói tối đa 3 dòng, kèm tuổi.
+
+`show <#>` in đầy đủ một mục hộp thư. `reply`, `done`, và `send` vẫn dùng `#ID`
+toàn cục, nên dùng được cả trong lẫn ngoài dự án. Giá trị chưa biết hiện `-`.
 
 TUI hiển thị bằng tiếng Anh có màu sắc ANSI, cảnh báo **đỏ** khi phiên đã bàn giao và phiên kế nhiệm cùng chạy trên một thư mục, và tự backfill các tháng còn thiếu cho thống kê. TUI chỉ mở được bởi **bạn** ở terminal (agent không dùng được).
 

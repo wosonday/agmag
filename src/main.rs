@@ -261,6 +261,9 @@ enum Cmd {
         /// Refresh interval in seconds
         #[arg(long, default_value_t = 2)]
         refresh: u64,
+        /// Line-based UI (no full screen): for non-ANSI terminals, piping and scripts
+        #[arg(long)]
+        plain: bool,
     },
     /// Full-screen project board
     Board {
@@ -721,14 +724,16 @@ fn run(cli: Cli) -> Result<()> {
             let text = agmag::ask::record(&store, &out, &q, model.as_deref(), now)?;
             emit(json, &out, || println!("{text}"))
         }
-        Cmd::Tui { refresh } => tui::run(
-            &store,
-            &db_path,
-            &cfg()?,
-            refresh,
-            |s| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ()),
-            |s, since| scan(s, since).map(|_| ()),
-        ),
+        Cmd::Tui { refresh, plain } => {
+            let cfg = cfg()?;
+            let recent = |s: &Store| scan(s, now_ms() - SCAN_DAYS * DAY_MS).map(|_| ());
+            let backfill = |s: &Store, since: i64| scan(s, since).map(|_| ());
+            if plain {
+                tui::run(&store, &db_path, &cfg, refresh, recent, backfill)
+            } else {
+                tui::run_app(&store, &db_path, &cfg, refresh, recent, backfill)
+            }
+        }
         Cmd::Board { project, refresh } => {
             let hc = agmag::hc::HcCli::default();
             agmag::board::require_human(&store, &hc)?;

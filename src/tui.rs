@@ -171,6 +171,81 @@ fn scoped_text(
     }
 }
 
+/// Identifies the caller once, fail-closed: agents and piped stdin/stdout cannot use the TUI.
+fn require_human(store: &Store, hc: &HcCli) -> Result<Caller> {
+    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let who = actions::detect_caller(store, hc, crate::ops::hc_terminal().as_deref(), tty, false);
+    if !matches!(who, Caller::User { .. }) {
+        anyhow::bail!(
+            "agm tui is only available to a human at an interactive terminal (TTY); agents should use standard agm commands"
+        );
+    }
+    Ok(who)
+}
+
+/// Backfills the configured recent calendar months on a background thread (separate Store since
+/// Connection is !Sync).
+fn start_backfill(
+    store: &Store,
+    db_path: &Path,
+    cfg: &Config,
+    backfill: impl FnOnce(&Store, i64) -> Result<()> + Send + 'static,
+) {
+    let now0 = crate::now_ms();
+    let bounds0 = {
+        let mut off = sqlite_offset_at(store.conn());
+        compute_local_bounds(now0, cfg.policy.stats_months, &mut off)
+    };
+    if matches!(
+        coverage_status(store, bounds0.four_months_start_ms),
+        Ok((_, true))
+    ) {
+        let path_owned = db_path.to_path_buf();
+        let since = bounds0.four_months_start_ms;
+        std::thread::spawn(move || {
+            if let Ok(bg_store) = Store::open(&path_owned) {
+                let _ = backfill(&bg_store, since);
+            }
+        });
+    }
+}
+
+/// Full-screen `agm tui` (ratatui): the global screen and the project board, commands through the
+/// same dispatcher as `--plain`.
+pub fn run_app(
+    store: &Store,
+    db_path: &Path,
+    cfg: &Config,
+    refresh: u64,
+    mut scan: impl FnMut(&Store) -> Result<()>,
+    backfill: impl FnOnce(&Store, i64) -> Result<()> + Send + 'static,
+) -> Result<()> {
+    let hc = HcCli::default();
+    let who = require_human(store, &hc)?;
+    start_backfill(store, db_path, cfg, backfill);
+    let mut st = CmdState::new(store);
+    let initial_view = st.view().to_vec();
+    let mut dispatch = |line: &str| {
+        let ctx = Ctx {
+            store,
+            cfg,
+            hc: &hc,
+            who: who.clone(),
+            now_ms: crate::now_ms(),
+        };
+        tui_cmd::dispatch(line, &mut st, &ctx, Front::App)
+    };
+    agmag::board::app::run_app(
+        store,
+        cfg,
+        &hc,
+        refresh,
+        &mut scan,
+        initial_view,
+        &mut dispatch,
+    )
+}
+
 pub fn run(
     store: &Store,
     db_path: &Path,
@@ -193,33 +268,8 @@ pub fn run(
         }
     });
     let hc = HcCli::default();
-    // Identify caller once, fail-closed. Agents (or piped stdin/stdout) cannot kill/interrupt via the TUI.
-    let tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let who = actions::detect_caller(store, &hc, crate::ops::hc_terminal().as_deref(), tty, false);
-    if !matches!(who, Caller::User { .. }) {
-        anyhow::bail!(
-            "agm tui is only available to a human at an interactive terminal (TTY); agents should use standard agm commands"
-        );
-    }
-
-    // Backfill the configured recent calendar months on a background thread (separate Store since Connection is !Sync).
-    let now0 = crate::now_ms();
-    let bounds0 = {
-        let mut off = sqlite_offset_at(store.conn());
-        compute_local_bounds(now0, cfg.policy.stats_months, &mut off)
-    };
-    if matches!(
-        coverage_status(store, bounds0.four_months_start_ms),
-        Ok((_, true))
-    ) {
-        let path_owned = db_path.to_path_buf();
-        let since = bounds0.four_months_start_ms;
-        std::thread::spawn(move || {
-            if let Ok(bg_store) = Store::open(&path_owned) {
-                let _ = backfill(&bg_store, since);
-            }
-        });
-    }
+    let who = require_human(store, &hc)?;
+    start_backfill(store, db_path, cfg, backfill);
 
     let mut note: Option<(NoteKind, String)> = None;
     // `view`, `scope`, the pending confirmations and the printed candidate list all live in the

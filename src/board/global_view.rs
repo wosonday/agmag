@@ -428,13 +428,13 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     // a cap so one hostile value cannot eat the row.
     let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 6, 20);
     let app_w = content_width(terms.iter().map(|t| dash_value(&t.app).width()), 3, 12);
-    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 3, 22);
+    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 22);
     let status_w = content_width(
         terms.iter().map(|t| status_label(&t.status, ctx).0.width()),
-        3,
+        6,
         14,
     );
-    let tokens_w = content_width(terms.iter().map(|t| tokens_label(t.tokens).width()), 4, 6);
+    let tokens_w = content_width(terms.iter().map(|t| tokens_label(t.tokens).width()), 6, 6);
     let last_w = content_width(terms.iter().map(|t| last_msg_label(t, ctx).width()), 5, 10);
     let place_w = content_width(
         terms

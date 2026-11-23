@@ -257,8 +257,16 @@ fn timeout_child() -> Result<()> {
         ..Default::default()
     };
     let start = std::time::Instant::now();
-    actions::spawn(&store, &hc, &Config::builtin(), &req, 1)?;
+    // Brief không tới thợ → spawn KHÔNG được báo thành công, nhưng phải nói rõ terminal vẫn sống.
+    let err = actions::spawn(&store, &hc, &Config::builtin(), &req, 1).unwrap_err();
     assert!(start.elapsed().as_secs() < 25);
+    let undelivered = err
+        .downcast_ref::<actions::BriefUndelivered>()
+        .unwrap_or_else(|| panic!("cần BriefUndelivered, nhận {err:#}"));
+    assert_eq!(undelivered.address, "t99");
+    assert!(err.to_string().contains("t99"), "{err}");
+    assert_eq!(actions::exit_code(&err), actions::EXIT_BRIEF_UNDELIVERED);
+    assert!(store.terminal("t99")?.is_some());
     assert!(
         !hc.inner
             .calls

@@ -14,6 +14,8 @@ pub struct FakeHc {
     pub apps: Vec<(String, String)>,
     pub fail_get: bool,
     pub get_responses: std::collections::BTreeMap<String, Value>,
+    /// `run` với template tên này trả lỗi `cannot start "sh"` (ép đường dự phòng Windows).
+    pub missing_sh_for: Option<String>,
 }
 
 impl Hc for FakeHc {
@@ -51,6 +53,15 @@ impl Hc for FakeHc {
             "run {:?} {:?} {:?} {:?}",
             spec.argv, spec.name, spec.cwd, spec.labels
         ));
+        if self.missing_sh_for.is_some()
+            && self.missing_sh_for.as_deref() == spec.argv.first().map(String::as_str)
+        {
+            return Err(agmag::hc::HcFailure {
+                kind: "spawn_failed".into(),
+                message: "cannot start \"sh\": sh: not found on PATH".into(),
+            }
+            .into());
+        }
         Ok(
             json!({"address": "t99", "name": spec.name, "argv": spec.argv, "cwd": spec.cwd, "labels": spec.labels, "state": "live"}),
         )

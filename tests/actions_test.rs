@@ -799,3 +799,21 @@ fn reply_to_mcp_agent_without_terminal_is_explained() -> Result<()> {
     assert!(hc.calls.borrow().is_empty());
     Ok(())
 }
+
+#[test]
+fn exit_code_distinguishes_spawned_without_brief_from_other_errors() {
+    let plain = anyhow::anyhow!("hc run lỗi");
+    assert_eq!(actions::exit_code(&plain), 1);
+    // Vẫn nhận ra khi lỗi đã bị bọc thêm context.
+    let undelivered = anyhow::Error::new(actions::BriefUndelivered {
+        address: "t7".into(),
+        detail: "agent chưa sẵn sàng".into(),
+    })
+    .context("agm_spawn");
+    assert_eq!(
+        actions::exit_code(&undelivered),
+        actions::EXIT_BRIEF_UNDELIVERED
+    );
+    assert_ne!(actions::EXIT_BRIEF_UNDELIVERED, 1);
+    assert_ne!(actions::EXIT_BRIEF_UNDELIVERED, 2); // clap dùng 2 cho lỗi cú pháp
+}

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Sửa lỗi
+
+- `agm spawn` (đường dự phòng `cannot start "sh"` trên Windows): khi terminal đã mở mà không gửi được brief template, không còn báo thành công. CLI vẫn in địa chỉ nhưng thoát mã **3** (brief nằm trong hộp thư `brief_failed`); `agm_spawn` qua MCP trả lỗi; xoay vòng chuyển `needs_attention`, ghi `new_terminal` và không còn bảo `agm spawn` lại (tránh sinh trùng thợ).
+
 ## [0.4.0] - 2026-11-22
 
 ### Thêm mới

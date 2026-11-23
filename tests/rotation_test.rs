@@ -1112,3 +1112,77 @@ fn requested_continues_when_handoff_file_ready_even_if_old_exited() -> Result<()
     assert_eq!(store.terminal("t99")?.unwrap().state, "live");
     Ok(())
 }
+
+#[cfg(windows)]
+#[test]
+fn rotation_successor_without_brief_needs_attention_not_respawn() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(
+        dir.path().join("worker-mid.md"),
+        "---\ncommand: opencode --agent worker\n---\nBạn là thợ.\n",
+    )?;
+    let out = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "rotation_successor_without_brief_child",
+            "--nocapture",
+        ])
+        .env("AGM_HC_TEMPLATES", dir.path())
+        .env("AGM_ROT_NO_BRIEF_CHILD", "1")
+        .output()?;
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn rotation_successor_without_brief_child() -> Result<()> {
+    if std::env::var_os("AGM_ROT_NO_BRIEF_CHILD").is_none() {
+        return Ok(());
+    }
+    let store = setup("opencode", "idle")?;
+    // `hc run worker-mid` lỗi thiếu sh → chạy thẳng command:, nhưng phiên mới kết thúc trước khi nhận brief.
+    let hc = FakeHc {
+        missing_sh_for: Some("worker-mid".into()),
+        get_responses: [(
+            "t99".into(),
+            serde_json::json!({"address":"t99", "state":"finished"}),
+        )]
+        .into(),
+        ..Default::default()
+    };
+    let git = FakeGit {
+        touched: Some("abc123".into()),
+        clean: true,
+        ..Default::default()
+    };
+    rotation::tick(&store, &Config::builtin(), &hc, &git, 0)?;
+    go_idle(&store, 6);
+    rotation::tick(&store, &Config::builtin(), &hc, &git, MIN)?;
+    assert_eq!(state(&store), "needs_attention");
+    let new: Option<String> =
+        store
+            .conn()
+            .query_row("SELECT new_terminal FROM rotations", [], |r| r.get(0))?;
+    assert_eq!(new.as_deref(), Some("t99"));
+    let inbox = store.inbox(true)?;
+    assert!(
+        inbox
+            .iter()
+            .any(|i| i.source == "spawn" && i.text.contains("Bạn là thợ.")),
+        "{inbox:?}"
+    );
+    // Phiên mới đã mở: không được bảo người dùng `agm spawn` lại (sẽ sinh trùng thợ).
+    let rot = inbox
+        .iter()
+        .find(|i| i.source == "rotation")
+        .expect("cần mục hộp thư rotation");
+    assert!(rot.text.contains("t99"), "{}", rot.text);
+    assert!(!rot.text.contains("agm spawn"), "{}", rot.text);
+    Ok(())
+}

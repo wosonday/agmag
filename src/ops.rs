@@ -272,9 +272,19 @@ pub fn reply(store: &Store, id: i64, text: &str, now: i64) -> Result<()> {
 // ---------- sinh / dừng agent ----------
 
 pub fn spawn(store: &Store, cfg: &Config, req: &SpawnReq, now: i64) -> Result<()> {
-    let addr = actions::spawn(store, &HcCli::default(), cfg, req, now)?;
-    println!("{addr}");
-    Ok(())
+    match actions::spawn(store, &HcCli::default(), cfg, req, now) {
+        Ok(addr) => {
+            println!("{addr}");
+            Ok(())
+        }
+        Err(e) => {
+            // Terminal đã mở: vẫn in địa chỉ ra stdout để script biết thợ nào đang chạy (mã thoát 3).
+            if let Some(u) = e.downcast_ref::<actions::BriefUndelivered>() {
+                println!("{}", u.address);
+            }
+            Err(e)
+        }
+    }
 }
 
 pub fn stop(store: &Store, target: &str, verb: &str, yes: bool, now: i64) -> Result<()> {

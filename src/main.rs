@@ -387,7 +387,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("agm: error: {e:#}");
-            ExitCode::from(1)
+            ExitCode::from(agmag::actions::exit_code(&e))
         }
     }
 }

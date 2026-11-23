@@ -125,7 +125,7 @@ Thêm vào `.gitignore` của dự án:
 
 ### 1.4. Template cho agent (dùng `agm` để giao tiếp và báo cáo)
 
-Template là **một tệp `.md`** trong thư mục template của hc: trên Windows `%APPDATA%\herdr-core\templates\`, nơi khác `~/.config/herdr-core/templates/` (ghi đè bằng biến `AGM_HC_TEMPLATES`). Kiểm lại bằng `hc templates`. Phần thân là chỉ dẫn mở đầu cho agent; `agm spawn` truyền nhiệm vụ vào cuối thân qua `hc run`. Trên Windows, `hc run <template>` có thể lỗi `cannot start "sh"` (hc chạy `command:` qua `sh -c`); `agm` tự dự phòng bằng cách đọc template và chạy thẳng `command:` (xem `.agents/decisions/hc-template-sh-windows.md`).
+Template là **một tệp `.md`** trong thư mục template của hc: trên Windows `%APPDATA%\herdr-core\templates\`, nơi khác `~/.config/herdr-core/templates/` (ghi đè bằng biến `AGM_HC_TEMPLATES`). Kiểm lại bằng `hc templates`. Phần thân là chỉ dẫn mở đầu cho agent; `agm spawn` truyền nhiệm vụ vào cuối thân qua `hc run`. Trên Windows, `hc run <template>` có thể lỗi `cannot start "sh"` (hc chạy `command:` qua `sh -c`); `agm` tự dự phòng bằng cách đọc template và chạy thẳng `command:` (xem `.agents/decisions/hc-template-sh-windows.md`). Nếu terminal đã mở mà brief không tới được, `agm spawn` thoát mã **3** (brief nằm trong hộp thư `brief_failed`); script không được coi đó là thành công, cũng không được dọn worktree.
 
 > **Quy tắc chung đưa vào `AGENTS.md` và `CLAUDE.md` của mọi dự án:**
 > - Liên lạc giữa agent: `agm send <tên-terminal> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<nội dung ngắn>"`
@@ -333,8 +333,14 @@ if [ ! -d "$WT" ]; then
 fi
 
 # Giao qua agm spawn: tự kiểm max_workers, ngân sách task:<ID>, gắn nhãn agm.task & agm.role
-if ! agm spawn "$TPL" --task "$ID" --role "$ROLE" --cwd "$PROJECT_DIR/$WT" -- \
-  "Việc: $ID. Skill: ${skills:-không}. Khi xong hoặc bị chặn, chạy: agm send $MANAGER --type BÁO CÁO --task $ID \"xong, xem .agents/log/$ID.md\""; then
+rc=0
+agm spawn "$TPL" --task "$ID" --role "$ROLE" --cwd "$PROJECT_DIR/$WT" -- \
+  "Việc: $ID. Skill: ${skills:-không}. Khi xong hoặc bị chặn, chạy: agm send $MANAGER --type BÁO CÁO --task $ID \"xong, xem .agents/log/$ID.md\"" || rc=$?
+if [ "$rc" -eq 3 ]; then
+  # Terminal đã mở nhưng chưa nhận brief: KHÔNG dọn worktree (thợ đang ở trong đó), không spawn lại.
+  echo "spawn $ID: terminal đã mở nhưng chưa nhận brief — xem agm inbox (brief_failed)" >&2
+  exit 3
+elif [ "$rc" -ne 0 ]; then
   if [ "$CREATED_WT" -eq 1 ]; then
     [ "$GITNEXUS_SYNC" = worktree ] && ( cd "$WT" && gitnexus clean ) || true
     git worktree remove --force "$WT" || true
@@ -367,8 +373,13 @@ while true; do
     (
       id=$(basename "$f" .md)
       cp "$f" ".agents/tasks/$id.md"
-      if .agents/bot/dispatch.sh "$id"; then
+      rc=0; .agents/bot/dispatch.sh "$id" || rc=$?
+      if [ "$rc" -eq 0 ]; then
         rm -f "$f"
+      elif [ "$rc" -eq 3 ]; then
+        # Thợ đã chạy nhưng chưa có brief: bỏ khỏi inbox để không dispatch trùng; brief chờ trong agm inbox.
+        rm -f "$f"
+        echo "$(date -Is) dispatch $id: thợ đã mở nhưng chưa nhận brief (xem agm inbox)" >> "$RUNTIME_DIR/bot.log"
       else
         echo "$(date -Is) dispatch $id lỗi/xếp hàng (giữ lại trong inbox)" >> "$RUNTIME_DIR/bot.log"
       fi

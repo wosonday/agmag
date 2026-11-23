@@ -456,15 +456,33 @@ fn verify_and_respawn(
             )?;
             Ok(())
         }
-        Err(e) => fail_with(
-            store,
-            r,
-            &format!("mở phiên mới lỗi: {e:#}"),
-            &format!(
-                "Phiên cũ ĐÃ bị dừng; bàn giao nằm ở commit {commit} — hãy `agm spawn` lại cho đầu việc {task}."
+        Err(e) => match e.downcast::<actions::BriefUndelivered>() {
+            // Phiên mới đã mở (chỉ thiếu brief): ghi lại để không ai spawn trùng.
+            Ok(u) => {
+                store.conn().execute(
+                    "UPDATE rotations SET new_terminal = ?2 WHERE id = ?1",
+                    params![r.id, u.address],
+                )?;
+                needs_attention(
+                    store,
+                    r,
+                    &format!(
+                        "{} → {}: bàn giao ở commit {commit}; {u}",
+                        t.address, u.address
+                    ),
+                    now,
+                )
+            }
+            Err(e) => fail_with(
+                store,
+                r,
+                &format!("mở phiên mới lỗi: {e:#}"),
+                &format!(
+                    "Phiên cũ ĐÃ bị dừng; bàn giao nằm ở commit {commit} — hãy `agm spawn` lại cho đầu việc {task}."
+                ),
+                now,
             ),
-            now,
-        ),
+        },
     }
 }
 

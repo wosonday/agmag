@@ -693,6 +693,38 @@ pub fn prepare_rotation_spawn(hc: &dyn Hc, req: &mut SpawnReq) -> Result<()> {
     )
 }
 
+/// Mã thoát CLI khi terminal đã mở nhưng brief chưa tới: script giao việc không được
+/// dọn worktree (thợ đang chạy trong đó) và cũng không được spawn lại (sẽ sinh trùng thợ).
+pub const EXIT_BRIEF_UNDELIVERED: u8 = 3;
+
+/// `agm spawn` đã mở terminal nhưng không gửi được brief template; brief nằm trong hộp thư.
+#[derive(Debug)]
+pub struct BriefUndelivered {
+    pub address: String,
+    pub detail: String,
+}
+
+impl std::fmt::Display for BriefUndelivered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "đã mở terminal {} nhưng chưa gửi được brief ({}); terminal vẫn chạy — gửi brief trong mục hộp thư brief_failed, không mở thêm phiên",
+            self.address, self.detail
+        )
+    }
+}
+
+impl std::error::Error for BriefUndelivered {}
+
+/// Mã thoát cho lỗi CLI: `EXIT_BRIEF_UNDELIVERED` nếu là `BriefUndelivered` (kể cả đã bọc context), còn lại 1.
+pub fn exit_code(err: &anyhow::Error) -> u8 {
+    if err.downcast_ref::<BriefUndelivered>().is_some() {
+        EXIT_BRIEF_UNDELIVERED
+    } else {
+        1
+    }
+}
+
 fn send_spawn_brief(
     store: &Store,
     hc: &dyn Hc,
@@ -750,7 +782,11 @@ fn send_spawn_brief(
         now,
     )?;
     store.log_action("agm", "spawn_brief", address, &detail, false, now)?;
-    Ok(())
+    Err(BriefUndelivered {
+        address: address.to_string(),
+        detail,
+    }
+    .into())
 }
 
 /// Kiểm quyền kill/ngắt theo quy tắc của người dùng; từ chối thì ghi nhật ký và chuyển đề nghị vào hộp thư.

@@ -262,7 +262,8 @@ fn draw_projects(frame: &mut Frame, area: Rect, state: &BoardState, data: &Board
             ),
         ]));
     }
-    frame.render_widget(Paragraph::new(lines), inner);
+    let offset = scroll_offset(state.sel_project, inner.height, data.projects.len());
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, data: &BoardData, ctx: Ctx) {
@@ -1195,7 +1196,12 @@ fn draw_inbox(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
             Span::styled(sanitize_one_line(&item.text), style),
         ]));
     }
-    frame.render_widget(Paragraph::new(lines), inner);
+    let selected = items
+        .iter()
+        .position(|item| Some(item.id) == state.sel_inbox)
+        .unwrap_or(0);
+    let offset = scroll_offset(selected, inner.height, items.len());
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, state: &BoardState, ctx: Ctx) {
@@ -1376,7 +1382,16 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+    let scroll = match &state.mode {
+        Mode::PickProject { idx } => scroll_offset(*idx, inner.height, data.projects.len()),
+        _ => 0,
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .scroll((scroll, 0)),
+        inner,
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

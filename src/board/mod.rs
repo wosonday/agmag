@@ -111,6 +111,22 @@ fn view_parties(view: &ProjectView) -> Vec<String> {
     out
 }
 
+/// Reloads `data.conversation` for the currently selected agent.
+///
+/// The old conversation is dropped first, so a query error never leaves another agent's messages
+/// under the new agent's title.
+pub(crate) fn reload_conversation(
+    store: &Store,
+    state: &state::BoardState,
+    data: &mut BoardData,
+) -> Result<()> {
+    data.conversation.clear();
+    if let Some(agent) = state.selected_agent(data) {
+        data.conversation = store.messages_involving(&flows::agent_keys(agent), 30)?;
+    }
+    Ok(())
+}
+
 /// Loads one frame of data and calls `state.sync` before loading the selected agent's conversation.
 pub fn load_data(
     store: &Store,
@@ -140,15 +156,40 @@ pub fn load_data(
             data.edges = flows::edges(&view.agents, &pair_latest);
             data.view = Some(view);
             state.sync(&data);
-            if let Some(agent) = state.selected_agent(&data) {
-                data.conversation = store.messages_involving(&flows::agent_keys(agent), 30)?;
-            }
+            reload_conversation(store, state, &mut data)?;
         }
         // Without a project, `sync` clamps the project list and clears agent/inbox selections.
         None => state.sync(&data),
     }
 
     Ok(data)
+}
+
+/// One refresh result: a success replaces the data and clears the error note the previous failed
+/// refresh left behind; a failure keeps the last good data and shows the error.
+fn apply_refresh(
+    data: &mut BoardData,
+    state: &mut state::BoardState,
+    fresh: Result<BoardData>,
+    refresh_note: &mut Option<String>,
+) {
+    match fresh {
+        Ok(fresh) => {
+            *data = fresh;
+            if state.note.as_ref().map(|note| note.text.clone()) == *refresh_note {
+                state.note = None;
+            }
+            *refresh_note = None;
+        }
+        Err(e) => {
+            let text = format!("error: {e:#}");
+            state.note = Some(Note {
+                ok: false,
+                text: text.clone(),
+            });
+            *refresh_note = Some(text);
+        }
+    }
 }
 
 /// Runs an effect; the outcome (or error) becomes `state.note`. Never panics.
@@ -302,20 +343,14 @@ fn run_loop(
     terminal.clear()?;
     let refresh = Duration::from_secs(refresh_s.max(1));
     let ascii = std::env::var("AGM_ASCII").as_deref() == Ok("1");
+    let mut refresh_note: Option<String> = None;
 
     loop {
         let _ = scan(store);
         let Session { state, cache, data } = &mut *session;
-        match load_data(store, cfg, cache, state, clock_ms()) {
-            // A failed refresh keeps the last good data and shows the error in the footer.
-            Ok(fresh) => **data = fresh,
-            Err(e) => {
-                state.note = Some(Note {
-                    ok: false,
-                    text: format!("error: {e:#}"),
-                })
-            }
-        }
+        // A failed refresh keeps the last good data and shows the error in the footer.
+        let fresh = load_data(store, cfg, cache, state, clock_ms());
+        apply_refresh(data, state, fresh, &mut refresh_note);
         let palette = theme::theme(state.theme);
         terminal.draw(|frame| view::draw(frame, state, data, &palette, ascii))?;
 
@@ -327,12 +362,23 @@ fn run_loop(
             }
             match event::read()? {
                 Event::Key(key) => {
+                    let prev_agent = state.sel_agent.clone();
                     let effect = state.on_key(key, data);
                     if let Effect::SwitchProject(key) = &effect {
                         state.project = Some(key.clone());
                     }
                     match effect {
                         Effect::None => {
+                            // The conversation belongs to the selected agent, so moving the
+                            // selection must reload it before the next frame is drawn.
+                            if state.sel_agent != prev_agent
+                                && let Err(e) = reload_conversation(store, state, data)
+                            {
+                                state.note = Some(Note {
+                                    ok: false,
+                                    text: format!("error: {e:#}"),
+                                });
+                            }
                             terminal
                                 .draw(|frame| view::draw(frame, state, data, &palette, ascii))?;
                         }
@@ -464,5 +510,117 @@ mod tests {
         guard.leave().unwrap();
         drop(guard);
         assert_eq!(*calls.borrow(), vec!["enter", "leave"]);
+    }
+
+    fn board_agent(address: &str) -> crate::project::AgentView {
+        crate::project::AgentView {
+            address: address.into(),
+            label: address.into(),
+            app: "claude".into(),
+            model: "opus".into(),
+            effort: String::new(),
+            status: "-".into(),
+            state: "live".into(),
+            depth: 0,
+            last_sibling: false,
+            doing: None,
+            last_msg: None,
+            context_pct: None,
+            tokens: None,
+            spark: None,
+            stage: None,
+        }
+    }
+
+    #[test]
+    fn conversation_follows_selected_agent() -> Result<()> {
+        let store = Store::open_in_memory()?;
+        store.add_message(&MessageRow {
+            ts_ms: 1,
+            from: "a".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for a".into(),
+            ..MessageRow::default()
+        })?;
+        store.add_message(&MessageRow {
+            ts_ms: 2,
+            from: "b".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for b".into(),
+            ..MessageRow::default()
+        })?;
+
+        let mut data = BoardData {
+            view: Some(ProjectView {
+                key: ProjectKey {
+                    root: "/repo/agmag".into(),
+                    name: "agmag".into(),
+                },
+                agents: vec![board_agent("a"), board_agent("b")],
+                inbox: Vec::new(),
+                messages: Vec::new(),
+            }),
+            ..BoardData::default()
+        };
+        let mut state = state::BoardState::new(None, theme::ThemeName::default());
+        state.sel_agent = Some("a".into());
+
+        reload_conversation(&store, &state, &mut data)?;
+        assert_eq!(data.conversation.len(), 1);
+        assert_eq!(data.conversation[0].text, "for a");
+
+        // Moving the selection must replace the conversation, never keep the old agent's.
+        state.sel_agent = Some("b".into());
+        reload_conversation(&store, &state, &mut data)?;
+        assert_eq!(data.conversation.len(), 1);
+        assert_eq!(data.conversation[0].text, "for b");
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_error_note_clears_on_success() {
+        let mut data = BoardData::default();
+        let mut state = state::BoardState::new(None, theme::ThemeName::default());
+        let mut refresh_note = None;
+
+        apply_refresh(
+            &mut data,
+            &mut state,
+            Err(anyhow::anyhow!("boom")),
+            &mut refresh_note,
+        );
+        assert_eq!(
+            state.note.as_ref().map(|note| note.text.as_str()),
+            Some("error: boom")
+        );
+
+        apply_refresh(
+            &mut data,
+            &mut state,
+            Ok(BoardData::default()),
+            &mut refresh_note,
+        );
+        assert_eq!(
+            state.note, None,
+            "a refresh error outlived the next successful refresh"
+        );
+
+        // Action results are not refresh errors: a good refresh must not hide them.
+        state.note = Some(Note {
+            ok: true,
+            text: "replied to #1".into(),
+        });
+        apply_refresh(
+            &mut data,
+            &mut state,
+            Ok(BoardData::default()),
+            &mut refresh_note,
+        );
+        assert!(
+            state.note.is_some(),
+            "a successful refresh hid an action result"
+        );
     }
 }

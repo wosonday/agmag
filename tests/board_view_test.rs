@@ -177,6 +177,147 @@ fn narrow_stacks() {
 }
 
 #[test]
+fn narrow_lists_every_agent() {
+    let mut agents = vec![agent("t0", "ceo", 0)];
+    for i in 1..=5 {
+        let label = format!("worker-{i}");
+        agents.push(agent(&format!("t{i}"), &label, 1));
+    }
+    let data = data(agents);
+    let state = selected_state("t0");
+    let buf = render((70, 20), &state, &data, false);
+    for label in [
+        "ceo", "worker-1", "worker-2", "worker-3", "worker-4", "worker-5",
+    ] {
+        assert!(
+            has(&buf, label),
+            "narrow list dropped {label:?}:\n{}",
+            text(&buf)
+        );
+    }
+}
+
+#[test]
+fn narrow_scrolls_to_selected() {
+    let mut agents = vec![agent("t0", "ceo", 0)];
+    for i in 1..15 {
+        let label = format!("worker-{i}");
+        agents.push(agent(&format!("t{i}"), &label, 1));
+    }
+    let data = data(agents);
+    let state = selected_state("t14");
+    let buf = render((70, 20), &state, &data, false);
+    assert!(
+        has(&buf, "worker-14 claude-code/opus"),
+        "selected agent is not scrolled into view as a list row:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn narrow_nothing_lost_at_70x24() {
+    let mut agents = vec![agent("t0", "ceo", 0)];
+    for i in 1..=3 {
+        let label = format!("worker-{i}");
+        agents.push(agent(&format!("t{i}"), &label, 1));
+    }
+    let data = data(agents);
+    let state = selected_state("t0");
+    let buf = render((70, 24), &state, &data, false);
+    for label in ["ceo", "worker-1", "worker-2", "worker-3"] {
+        assert!(has(&buf, label), "missing {label:?}:\n{}", text(&buf));
+    }
+}
+
+#[test]
+fn inbox_scrolls_to_selected_item() {
+    let mut data = data(vec![agent("t1", "alpha", 0)]);
+    data.view.as_mut().unwrap().inbox = (1..=8)
+        .map(|id| InboxRow {
+            id,
+            ts_ms: NOW,
+            terminal: Some("t9".into()),
+            source: "blocked".into(),
+            kind: Some("question".into()),
+            text: format!("item {id}"),
+            resolved_ms: None,
+            reply: None,
+        })
+        .collect();
+    let mut state = selected_state("t1");
+    state.panel = agmag::board::state::Panel::Inbox;
+    state.sel_inbox = Some(8);
+    let buf = render((140, 36), &state, &data, false);
+    assert!(
+        has(&buf, "#8"),
+        "selected item is off screen:\n{}",
+        text(&buf)
+    );
+    assert!(
+        has(&buf, "▸ #8"),
+        "selected marker is not on the visible row:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn projects_scroll_to_selected() {
+    let mut data = data(vec![agent("t1", "alpha", 0)]);
+    data.projects = (0..12)
+        .map(|i| ProjectSummary {
+            key: ProjectKey {
+                root: format!("D:/p/p{i}"),
+                name: format!("p{i}"),
+            },
+            live_agents: 0,
+            open_inbox: 0,
+        })
+        .collect();
+    let mut state = selected_state("t1");
+    state.panel = agmag::board::state::Panel::Projects;
+    state.sel_project = 11;
+    let buf = render((140, 36), &state, &data, false);
+    assert!(
+        has(&buf, "p11"),
+        "selected project is off screen:\n{}",
+        text(&buf)
+    );
+    assert!(
+        has(&buf, "▸ p11"),
+        "selected marker is not on the visible row:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn pick_project_scrolls_to_selected() {
+    let mut data = data(vec![agent("t1", "alpha", 0)]);
+    data.projects = (0..30)
+        .map(|i| ProjectSummary {
+            key: ProjectKey {
+                root: format!("D:/p/p{i}"),
+                name: format!("p{i}"),
+            },
+            live_agents: 0,
+            open_inbox: 0,
+        })
+        .collect();
+    let mut state = selected_state("t1");
+    state.mode = Mode::PickProject { idx: 29 };
+    let buf = render((140, 40), &state, &data, false);
+    assert!(
+        has(&buf, "p29"),
+        "selected project is off screen:\n{}",
+        text(&buf)
+    );
+    assert!(
+        has(&buf, "▸ p29"),
+        "selected marker is not on the visible row:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
 fn selected_card_uses_selected_color() {
     let th = theme(ThemeName::CatppuccinMocha);
     let data = data(vec![agent("t1", "alpha", 0), agent("t2", "beta", 0)]);
@@ -477,6 +618,32 @@ fn cards_grow_to_fill_width() {
         "card line 2 is truncated:\n{}",
         text(&buf)
     );
+}
+
+#[test]
+fn wrapped_children_keep_edge_labels() {
+    let mut agents = vec![agent("t7p", "agm-ceo", 0)];
+    let mut edges = Vec::new();
+    for i in 1..=6 {
+        agents.push(agent(&format!("t9{i}"), &format!("worker-{i}"), 1));
+        edges.push(Edge {
+            parent: 0,
+            child: i,
+            kind: format!("KIND-{i}"),
+            ts_ms: NOW - 60_000,
+        });
+    }
+    let mut data = data(agents);
+    data.edges = edges;
+    let state = selected_state("t7p");
+    let buf = render((100, 30), &state, &data, false);
+    for i in 1..=6 {
+        assert!(
+            has(&buf, &format!("KIND-{i}")),
+            "edge label KIND-{i} lost on a wrapped child row:\n{}",
+            text(&buf)
+        );
+    }
 }
 
 #[test]

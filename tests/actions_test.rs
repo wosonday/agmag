@@ -362,6 +362,195 @@ fn detect_caller_fails_closed() -> Result<()> {
     Ok(())
 }
 
+fn hc_get(addr: &str, value: serde_json::Value) -> FakeHc {
+    let mut hc = FakeHc::default();
+    hc.get_responses.insert(addr.into(), value);
+    hc
+}
+
+#[test]
+fn stale_reported_flag_with_shell_foreground_is_user() -> Result<()> {
+    // t7y thật: Claude Code đã thoát nhưng `reported` còn true; status null, foreground là pwsh.
+    let store = Store::open_in_memory()?;
+    let hc = hc_get(
+        "t7y",
+        serde_json::json!({
+            "address": "t7y",
+            "reported": true,
+            "status": null,
+            "turn": 5,
+            "foreground": {"name": "pwsh.exe", "cwd": "D:\\Project"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t7y"), true, false),
+        Caller::User { confirmed: false }
+    ));
+    // Dạng viết hoa/đuôi .EXE của cùng shell cũng phải nhận ra.
+    for shell in [
+        "PowerShell.EXE",
+        "cmd.exe",
+        "pwsh",
+        "bash",
+        "zsh",
+        "fish",
+        "nu",
+        "sh",
+    ] {
+        let hc = hc_get(
+            "t7y",
+            serde_json::json!({
+                "address": "t7y",
+                "reported": true,
+                "status": null,
+                "foreground": {"name": shell}
+            }),
+        );
+        assert!(
+            matches!(
+                actions::detect_caller(&store, &hc, Some("t7y"), true, false),
+                Caller::User { .. }
+            ),
+            "{shell} phải được coi là shell của người dùng"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn stale_db_agent_app_with_shell_foreground_is_user() -> Result<()> {
+    // t7q thật: hc đã hết agent (reported false, status null), CSDL còn app claude-code.
+    let store = Store::open_in_memory()?;
+    term(&store, "t7q", "claude-code", None);
+    for shell in ["pwsh.exe", "PowerShell.EXE", "cmd.exe"] {
+        let hc = hc_get(
+            "t7q",
+            serde_json::json!({
+                "address": "t7q",
+                "reported": false,
+                "status": null,
+                "foreground": {"name": shell}
+            }),
+        );
+        assert!(
+            matches!(
+                actions::detect_caller(&store, &hc, Some("t7q"), true, true),
+                Caller::User { confirmed: true }
+            ),
+            "{shell}: app claude-code cũ trong CSDL không được chặn người dùng"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn live_agent_status_with_shell_foreground_stays_agent() -> Result<()> {
+    // Trạng thái agent còn sống thắng foreground trông như shell.
+    let store = Store::open_in_memory()?;
+    let hc = hc_get(
+        "t7y",
+        serde_json::json!({
+            "address": "t7y",
+            "reported": true,
+            "status": {"app": "codex", "state": "working"},
+            "foreground": {"name": "pwsh.exe"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t7y"), true, true),
+        Caller::Agent(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn non_null_status_without_app_with_shell_foreground_stays_agent() -> Result<()> {
+    // Một trạng thái còn sống (kể cả thiếu app) nghĩa là có thứ gì đó đang báo cáo: không coi là shell rảnh.
+    let store = Store::open_in_memory()?;
+    let hc = hc_get(
+        "t7y",
+        serde_json::json!({
+            "address": "t7y",
+            "reported": true,
+            "status": {"state": "working"},
+            "foreground": {"name": "pwsh.exe"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t7y"), true, true),
+        Caller::Agent(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn non_shell_foreground_keeps_current_rules() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    // reported true + foreground node.exe → vẫn là agent.
+    let hc = hc_get(
+        "t1n",
+        serde_json::json!({
+            "address": "t1n",
+            "reported": true,
+            "status": null,
+            "foreground": {"name": "node.exe"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t1n"), true, true),
+        Caller::Agent(_)
+    ));
+    // foreground node.exe + app claude-code trong CSDL → vẫn là agent.
+    term(&store, "t2n", "claude-code", None);
+    let hc = hc_get(
+        "t2n",
+        serde_json::json!({
+            "address": "t2n",
+            "reported": false,
+            "status": null,
+            "foreground": {"name": "node.exe"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t2n"), true, true),
+        Caller::Agent(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn hc_get_error_stays_agent_even_with_shell_looking_pane() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let failing = FakeHc {
+        fail_get: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        actions::detect_caller(&store, &failing, Some("t7y"), true, true),
+        Caller::Agent(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn shell_foreground_without_tty_is_agent() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let hc = hc_get(
+        "t7y",
+        serde_json::json!({
+            "address": "t7y",
+            "reported": true,
+            "status": null,
+            "foreground": {"name": "pwsh.exe"}
+        }),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &hc, Some("t7y"), false, true),
+        Caller::Agent(_)
+    ));
+    Ok(())
+}
+
 #[test]
 fn reply_only_to_agent_questions_and_done_dismisses() -> Result<()> {
     let store = Store::open_in_memory()?;

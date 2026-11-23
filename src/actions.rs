@@ -65,6 +65,32 @@ pub fn classify_caller(
 const AGENT_APPS: [&str; 4] = ["claude-code", "codex", "opencode", "antigravity"];
 /// Agent và hành động tự động chỉ được dừng những app này (danh sách trắng).
 const AGENT_KILLABLE_APPS: [&str; 1] = ["opencode"];
+/// Tên tiến trình shell tương tác (sau khi bỏ đuôi `.exe`, chữ thường).
+const SHELL_NAMES: [&str; 8] = [
+    "pwsh",
+    "powershell",
+    "cmd",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+    "nu",
+];
+
+fn is_interactive_shell(name: &str) -> bool {
+    let base = name.trim().to_ascii_lowercase();
+    let base = base.strip_suffix(".exe").unwrap_or(&base);
+    SHELL_NAMES.contains(&base)
+}
+
+/// `hc get` cho thấy tiến trình nền là shell tương tác và không còn trạng thái nào đang sống
+/// (`status` null/vắng). Các cờ `reported`/app trong CSDL có thể còn sót lại từ agent đã thoát.
+fn idle_shell_foreground(v: &serde_json::Value) -> bool {
+    let Some(name) = v["foreground"]["name"].as_str() else {
+        return false;
+    };
+    is_interactive_shell(name) && v["status"].is_null()
+}
 
 /// App hiện tại của terminal: ưu tiên `hc get` (mới nhất), rồi CSDL. None nếu không biết.
 fn current_app(store: &Store, hc: &dyn Hc, terminal: &str) -> Option<String> {
@@ -90,11 +116,16 @@ pub fn detect_caller(
         Some(t) => match hc.get(t) {
             Err(_) => true,
             Ok(v) => {
-                let row = terminal_row_from(&v);
-                let app = row
-                    .app
-                    .or_else(|| store.terminal(t).ok().flatten().and_then(|r| r.app));
-                row.reported || app.as_deref().is_some_and(|a| AGENT_APPS.contains(&a))
+                if idle_shell_foreground(&v) {
+                    // Agent đã thoát, shell của người dùng hiện lại: bỏ qua cờ reported/CSDL cũ.
+                    false
+                } else {
+                    let row = terminal_row_from(&v);
+                    let app = row
+                        .app
+                        .or_else(|| store.terminal(t).ok().flatten().and_then(|r| r.app));
+                    row.reported || app.as_deref().is_some_and(|a| AGENT_APPS.contains(&a))
+                }
             }
         },
     };

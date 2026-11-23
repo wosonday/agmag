@@ -381,6 +381,18 @@ pub fn branch_entry_for(cwd: Option<&str>, task: Option<&str>) -> Option<String>
     task.and_then(entry_from)
 }
 
+/// The cwd a row is resolved by: its own, else the live `TermView.cwd` (linked session cwd).
+/// Empty cwds count as missing.
+fn row_cwd<'a>(t: &'a TerminalRow, snap: &'a crate::dashboard::Snapshot) -> Option<&'a str> {
+    t.cwd.as_deref().filter(|c| !c.is_empty()).or_else(|| {
+        snap.terminals
+            .iter()
+            .find(|v| v.address == t.address)
+            .map(|v| v.cwd.as_str())
+            .filter(|c| !c.is_empty())
+    })
+}
+
 /// address → root for every terminal with a cwd: the row's cwd, else the live `TermView.cwd`
 /// (the linked session's cwd) from the snapshot. Empty cwds are skipped.
 pub fn compute_roots(
@@ -391,14 +403,7 @@ pub fn compute_roots(
 ) -> Roots {
     let mut out = Roots::new();
     for t in terms {
-        let cwd = t.cwd.as_deref().filter(|c| !c.is_empty()).or_else(|| {
-            snap.terminals
-                .iter()
-                .find(|v| v.address == t.address)
-                .map(|v| v.cwd.as_str())
-                .filter(|c| !c.is_empty())
-        });
-        if let Some(cwd) = cwd {
+        if let Some(cwd) = row_cwd(t, snap) {
             out.insert(t.address.clone(), cache.root_of(cwd, resolve));
         }
     }
@@ -455,7 +460,7 @@ pub fn load_project_view(
         } else {
             None
         };
-        let stage = branch_entry_for(t.cwd.as_deref(), t.task.as_deref())
+        let stage = branch_entry_for(row_cwd(t, snap), t.task.as_deref())
             .and_then(|entry| branches::get(&branches_file, &entry).ok().flatten())
             .and_then(|fields| {
                 fields

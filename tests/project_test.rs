@@ -895,6 +895,56 @@ fn load_project_view_exited_status_uses_dashboard_format() -> anyhow::Result<()>
 }
 
 #[test]
+fn load_project_view_stage_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let root_norm = norm_cwd(&root);
+    fs::write(tmp.path().join("BRANCHES.md"), "### a/b\n- status: wip\n")?;
+    let wt = format!(r"{root}\.wt\a--b");
+
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+    let sid = store.session_id_for_path(Source::Codex, "p1")?;
+    store.set_session_identity(sid, "conv-1", Some(&wt))?;
+
+    // Live terminal without a row cwd; the session (TermView) cwd is the worktree directory.
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.link_terminal("t1", sid, "auto")?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |cwd: &str| -> Option<String> {
+        let n = norm_cwd(cwd);
+        if n == root_norm || n == norm_cwd(&wt) {
+            Some(root.clone())
+        } else {
+            None
+        }
+    };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    assert_eq!(
+        roots.get("t1").map(String::as_str),
+        Some(root_norm.as_str())
+    );
+    let key = ProjectKey {
+        root: root_norm.clone(),
+        name: project_name(&root_norm),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    let a1 = pv.agents.iter().find(|a| a.address == "t1").unwrap();
+    assert_eq!(a1.state, "live");
+    assert_eq!(a1.stage.as_deref(), Some("wip"));
+    Ok(())
+}
+
+#[test]
 fn compute_roots_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
     let root = tmp.path().to_str().unwrap().to_string();

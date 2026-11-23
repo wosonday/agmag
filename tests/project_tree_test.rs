@@ -22,7 +22,7 @@ fn terminal(
 fn tree_order_prefers_live_then_newest_on_name_collision() {
     // Two terminals share the name "worker": t1 is exited/older, t2 is live/newer.
     // A child references "worker" by name and should attach to the live one (t2).
-    let members = vec![
+    let members = [
         terminal("t1", Some("worker"), None, "exited", 10),
         terminal("t2", Some("worker"), None, "live", 20),
         terminal("c1", Some("child"), Some("worker"), "live", 30),
@@ -36,7 +36,7 @@ fn tree_order_prefers_live_then_newest_on_name_collision() {
 
 #[test]
 fn tree_order_prefers_newest_when_both_live_on_name_collision() {
-    let members = vec![
+    let members = [
         terminal("t1", Some("worker"), None, "live", 10),
         terminal("t2", Some("worker"), None, "live", 20),
         terminal("c1", Some("child"), Some("worker"), "live", 30),

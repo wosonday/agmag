@@ -106,8 +106,22 @@ fn list_projects_counts_live_agents_and_open_inbox() {
     let terms = vec![
         term("t1", Some("ceo"), Some(r"D:\Project\shop"), "live", None, 1),
         term("t2", Some("t7"), Some(r"D:\Project\shop"), "live", None, 2),
-        term("t3", Some("t9"), Some(r"D:\Project\shop"), "exited", None, 3),
-        term("t4", Some("agmag"), Some(r"D:\Project\agmag"), "live", None, 4),
+        term(
+            "t3",
+            Some("t9"),
+            Some(r"D:\Project\shop"),
+            "exited",
+            None,
+            3,
+        ),
+        term(
+            "t4",
+            Some("agmag"),
+            Some(r"D:\Project\agmag"),
+            "live",
+            None,
+            4,
+        ),
     ];
     let roots = roots(&[
         ("t1", r"D:\Project\shop"),
@@ -116,10 +130,10 @@ fn list_projects_counts_live_agents_and_open_inbox() {
         ("t4", r"D:\Project\agmag"),
     ]);
     let inbox = vec![
-        inbox_item(1, Some("t1")),      // address → shop
-        inbox_item(2, Some("agmag")),   // name → agmag
-        inbox_item(3, Some("x9")),      // unknown terminal → no project
-        inbox_item(4, None),            // no terminal → no project
+        inbox_item(1, Some("t1")),    // address → shop
+        inbox_item(2, Some("agmag")), // name → agmag
+        inbox_item(3, Some("x9")),    // unknown terminal → no project
+        inbox_item(4, None),          // no terminal → no project
         InboxRow {
             resolved_ms: Some(10),
             ..inbox_item(5, Some("t1"))
@@ -144,7 +158,14 @@ fn membership_matches_address_or_name() {
     let terms = vec![
         term("t1", Some("ceo"), Some(r"D:\Project\shop"), "live", None, 1),
         term("t2", None, Some(r"D:\Project\shop"), "live", None, 2),
-        term("t3", Some("other"), Some(r"D:\Project\agmag"), "live", None, 3),
+        term(
+            "t3",
+            Some("other"),
+            Some(r"D:\Project\agmag"),
+            "live",
+            None,
+            3,
+        ),
     ];
     let roots = roots(&[
         ("t1", r"D:\Project\shop"),
@@ -190,11 +211,15 @@ fn match_project_rules() {
     );
 
     // Unique prefix.
+    let unique = vec![
+        summary(r"D:\Project\shop", "shop"),
+        summary(r"D:\Project\agmag", "agmag"),
+    ];
     assert_eq!(
-        match_project(&list, "sho2"),
+        match_project(&unique, "sho"),
         CdMatch::Found(ProjectKey {
-            root: norm_cwd(r"D:\Project\shop2"),
-            name: "shop2".into()
+            root: norm_cwd(r"D:\Project\shop"),
+            name: "shop".into()
         })
     );
 
@@ -235,8 +260,9 @@ fn match_project_rules() {
 
 #[test]
 fn tree_survives_cycles_and_foreign_parents() {
-    // t1 ↔ t2 cycle; t3's parent is outside the member set.
-    let cyc = vec![
+    // t1 ↔ t2 cycle; t3's parent is outside the member set. The real root (t3) comes
+    // first; the cycle is then broken at its oldest node (t1).
+    let cyc = [
         term("t1", None, None, "live", Some("t2"), 10),
         term("t2", None, None, "live", Some("t1"), 20),
         term("t3", None, None, "live", Some("x9"), 30),
@@ -246,13 +272,20 @@ fn tree_survives_cycles_and_foreign_parents() {
     let mut seen: Vec<usize> = order.iter().map(|(i, _, _)| *i).collect();
     seen.sort_unstable();
     assert_eq!(seen, vec![0, 1, 2], "every member exactly once: {order:?}");
-    // Roots ordered by created_ms: t1 (cycle broken at created order) then t3.
-    assert_eq!(order[0], (0, 0, false));
-    assert_eq!(order[1], (1, 1, true));
-    assert_eq!(order[2], (2, 0, false));
+    assert_eq!(order[0], (2, 0, false));
+    assert_eq!(order[1], (0, 0, false));
+    assert_eq!(order[2], (1, 1, true));
+
+    // Roots ordered by created_ms, not by input order.
+    let two_roots = [
+        term("late", None, None, "live", None, 90),
+        term("early", None, None, "live", None, 5),
+    ];
+    let refs: Vec<&TerminalRow> = two_roots.iter().collect();
+    assert_eq!(tree_order(&refs), vec![(1, 0, false), (0, 0, false)]);
 
     // A normal 1-root / 2-children tree.
-    let tree = vec![
+    let tree = [
         term("r", None, None, "live", None, 1),
         term("c1", None, None, "live", Some("r"), 2),
         term("c2", None, None, "live", Some("r"), 3),
@@ -264,7 +297,7 @@ fn tree_survives_cycles_and_foreign_parents() {
     );
 
     // Parents resolve by name too.
-    let named = vec![
+    let named = [
         term("t1", Some("ceo"), None, "live", None, 1),
         term("t2", None, None, "live", Some("ceo"), 2),
     ];
@@ -303,7 +336,10 @@ fn git_common_root_on_real_repo_and_worktree() -> anyhow::Result<()> {
 
     let base = tempfile::tempdir()?;
     let wt = base.path().join("wt");
-    git(d, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "b1"]);
+    git(
+        d,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "b1"],
+    );
 
     let main = git_common_root(d.to_str().unwrap()).expect("main root");
     let from_wt = git_common_root(wt.to_str().unwrap()).expect("worktree root");

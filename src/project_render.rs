@@ -255,7 +255,7 @@ fn tokens_label(n: u64) -> String {
     }
 }
 
-fn age_label(secs: i64) -> String {
+pub(crate) fn age_label(secs: i64) -> String {
     let secs = secs.max(0);
     if secs < 60 {
         format!("{secs}s")

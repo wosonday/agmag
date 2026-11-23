@@ -127,4 +127,11 @@ impl Store {
         }
         Ok(out)
     }
+
+    /// Latest message per unordered (from_t, to_t) pair where both ends are in `parties`
+    /// (highest id wins). Empty `parties` → empty result.
+    pub fn pair_latest_messages(&self, parties: &[String]) -> Result<Vec<MessageRow>> {
+        let _ = parties;
+        todo!("Task 1")
+    }
 }

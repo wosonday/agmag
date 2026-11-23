@@ -15,7 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
-use super::global::{Focus, GlobalData, GlobalState, Popup};
+use super::global::{Focus, GlobalData, GlobalState, Popup, visible_sections};
 use super::theme::Theme;
 use crate::actions::kind_to_english;
 use crate::dashboard::{
@@ -24,7 +24,8 @@ use crate::dashboard::{
 use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
-const MESSAGES_H: u16 = 6;
+/// Six message rows plus the panel's top and bottom borders, so wide screens show six messages.
+const MESSAGES_H: u16 = 8;
 const PROMPT: &str = "agm> ";
 const HELP: &str =
     " tab panels · ↑↓ select · ⏎ open · r reply · d done · s send · t theme · ? help · q quit";
@@ -178,15 +179,9 @@ fn draw_sections(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let mut chosen: Vec<Section> = data
-        .view
-        .iter()
-        .copied()
-        .filter(|sec| *sec != Section::Messages)
-        .collect();
-    if chosen.is_empty() {
-        chosen = Section::DEFAULT.to_vec();
-    }
+    let mut chosen = visible_sections(&data.view);
+    // `Messages` is pinned and drawn separately below the section area.
+    chosen.pop();
     if chosen.len() == 1 {
         draw_section(frame, area, chosen[0], state, data, ctx);
         return;
@@ -398,6 +393,16 @@ fn quota_line(q: &QuotaRow, now_s: i64, ctx: Ctx) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Widest content of a column, floored and capped so one long value cannot squeeze the others.
+fn content_width(values: impl Iterator<Item = usize>, min: usize, cap: usize) -> u16 {
+    values.max().unwrap_or(0).clamp(min, cap) as u16
+}
+
+/// Cells a table needs: its columns, the highlight symbol column and one space between columns.
+fn columns_width(widths: &[u16], highlight: usize) -> usize {
+    widths.iter().map(|w| *w as usize).sum::<usize>() + highlight + widths.len()
+}
+
 fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
     let block = panel(
         format!(" {} ", section_title(Section::Terminals)),
@@ -419,48 +424,56 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     }
 
     let width = inner.width;
-    let mut constraints = vec![Constraint::Length(1), Constraint::Min(8)];
-    let mut headers = vec!["", "name"];
-    let show_app = width >= 34;
-    let show_model = width >= 46;
-    let show_status = width >= 58;
-    let show_ctx = width >= 70;
-    let show_task = width >= 88;
-    let show_tokens = width >= 98;
-    let show_last = width >= 108;
-    let show_place = width >= 126;
-    if show_app {
-        constraints.push(Constraint::Length(7));
-        headers.push("app");
+    let terms = &snap.terminals;
+    // Size columns from content: a long name must not squeeze app/model out, and each column has
+    // a cap so one hostile value cannot eat the row.
+    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 6, 20);
+    let app_w = content_width(terms.iter().map(|t| dash_value(&t.app).width()), 3, 12);
+    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 22);
+    let status_w = content_width(
+        terms.iter().map(|t| status_label(&t.status, ctx).0.width()),
+        6,
+        14,
+    );
+    let tokens_w = content_width(terms.iter().map(|t| tokens_label(t.tokens).width()), 6, 6);
+    let last_w = content_width(terms.iter().map(|t| last_msg_label(t, ctx).width()), 5, 10);
+    let place_w = content_width(
+        terms
+            .iter()
+            .map(|t| dash_value(&where_label(&t.place, &t.cwd)).width()),
+        6,
+        14,
+    );
+
+    const HIGHLIGHT_W: usize = 2; // `▸ ` / `> `
+    const TASK_MIN: usize = 6;
+    let mut columns: Vec<(&'static str, u16)> = vec![("", 1), ("name", name_w)];
+    let optional = [
+        ("app", app_w),
+        ("model", model_w),
+        ("status", status_w),
+        ("ctx", 9),
+        ("tokens", tokens_w),
+        ("last", last_w),
+        ("place", place_w),
+    ];
+    for (header, col_width) in optional {
+        let mut trial: Vec<u16> = columns.iter().map(|(_, w)| *w).collect();
+        trial.push(col_width);
+        // Keep the flexible task column at least `TASK_MIN` cells wide.
+        if columns_width(&trial, HIGHLIGHT_W) + 1 + TASK_MIN <= width as usize {
+            columns.push((header, col_width));
+        }
     }
-    if show_model {
-        constraints.push(Constraint::Length(9));
-        headers.push("model");
-    }
-    if show_status {
-        constraints.push(Constraint::Length(9));
-        headers.push("status");
-    }
-    if show_ctx {
-        constraints.push(Constraint::Length(8));
-        headers.push("ctx");
-    }
-    if show_task {
-        constraints.push(Constraint::Min(6));
-        headers.push("task");
-    }
-    if show_tokens {
-        constraints.push(Constraint::Length(6));
-        headers.push("tokens");
-    }
-    if show_last {
-        constraints.push(Constraint::Length(9));
-        headers.push("last");
-    }
-    if show_place {
-        constraints.push(Constraint::Length(10));
-        headers.push("place");
-    }
+    columns.push(("task", 0));
+
+    let show_app = columns.iter().any(|(h, _)| *h == "app");
+    let show_model = columns.iter().any(|(h, _)| *h == "model");
+    let show_status = columns.iter().any(|(h, _)| *h == "status");
+    let show_ctx = columns.iter().any(|(h, _)| *h == "ctx");
+    let show_tokens = columns.iter().any(|(h, _)| *h == "tokens");
+    let show_last = columns.iter().any(|(h, _)| *h == "last");
+    let show_place = columns.iter().any(|(h, _)| *h == "place");
 
     let mut rows: Vec<Row<'static>> = Vec::new();
     for t in &snap.terminals {
@@ -478,9 +491,7 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         if show_ctx {
             cells.push(context_cell(t.context_pct, ctx));
         }
-        if show_task {
-            cells.push(Cell::from(dash_value(&t.task)));
-        }
+        cells.push(Cell::from(dash_value(&t.task)));
         if show_tokens {
             cells.push(Cell::from(align_right(&tokens_label(t.tokens))));
         }
@@ -493,8 +504,18 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         rows.push(Row::new(cells));
     }
 
-    let header =
-        Row::new(headers.into_iter().map(Cell::from)).style(Style::new().fg(ctx.theme.muted));
+    let header = Row::new(columns.iter().map(|(h, _)| Cell::from(*h)))
+        .style(Style::new().fg(ctx.theme.muted));
+    let constraints: Vec<Constraint> = columns
+        .iter()
+        .map(|(header, col_width)| {
+            if *header == "task" {
+                Constraint::Min(TASK_MIN as u16)
+            } else {
+                Constraint::Length(*col_width)
+            }
+        })
+        .collect();
     let selected = state
         .sel_terminal
         .as_deref()
@@ -795,9 +816,12 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
             .unwrap_or_else(|| sanitize_one_line(address))
     };
     let mut lines: Vec<Line<'static>> = Vec::new();
+    // Wide panels have room for one line per message (`from → to KIND age  text`), so the pinned
+    // six rows show more of the conversation; narrow ones keep the header/text split.
+    let one_line = inner.width >= 100;
     for message in &snap.messages {
         let age = age_label(ctx.now_ms.saturating_sub(message.ts_ms) / 1_000);
-        lines.push(Line::from(vec![
+        let header = Line::from(vec![
             Span::styled(
                 format!("{} {arrow} {} ", party(&message.from), party(&message.to)),
                 Style::new().fg(ctx.theme.title),
@@ -809,19 +833,30 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
                 ),
                 Style::new().fg(ctx.theme.accent),
             ),
-        ]));
-        lines.push(Line::from(Span::styled(
-            sanitize_one_line(&message.text),
-            Style::new(),
-        )));
+        ]);
+        if one_line {
+            let mut line = header;
+            line.spans.push(Span::styled(
+                format!("  {}", sanitize_one_line(&message.text)),
+                Style::new(),
+            ));
+            lines.push(line);
+        } else {
+            lines.push(header);
+            lines.push(Line::from(Span::styled(
+                sanitize_one_line(&message.text),
+                Style::new(),
+            )));
+        }
     }
     let scroll = state.scroll.get(&Section::Messages).copied().unwrap_or(0);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
-            .scroll((scroll, 0)),
-        inner,
-    );
+    let paragraph = Paragraph::new(lines).scroll((scroll, 0));
+    let paragraph = if one_line {
+        paragraph
+    } else {
+        paragraph.wrap(Wrap { trim: true })
+    };
+    frame.render_widget(paragraph, inner);
 }
 
 fn draw_bridged(
@@ -867,11 +902,13 @@ fn draw_output(frame: &mut Frame, area: Rect, text: &str, scroll: u16, ctx: Ctx)
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let lines: Vec<Line<'static>> = text
-        .lines()
-        .map(|line| Line::from(Span::styled(sanitize_one_line(line), Style::new())))
-        .collect();
-    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner);
+    let text: Text<'static> = ansi_to_text(text);
+    frame.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        inner,
+    );
 }
 
 /// Command bar; returns the cursor position when the command line has focus.
@@ -881,13 +918,19 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     }
     let prompt_w = PROMPT.width();
     let available = (area.width as usize).saturating_sub(prompt_w);
-    let cursor_cells = cells_before(&state.cmd.text, state.cmd.cursor);
-    let scroll = if cursor_cells >= available {
-        cursor_cells - available + 1
-    } else {
-        0
-    };
-    let visible = visible_slice(&state.cmd.text, scroll, available);
+    // No room for even one cell of input: draw nothing there instead of computing a negative
+    // cursor column (`cursor_cells - scroll` used to underflow at 5 columns and fewer).
+    if available == 0 {
+        return None;
+    }
+    let text = sanitize_one_line(&state.cmd.text);
+    let cursor_chars = state.cmd.cursor.min(text.chars().count());
+    let cursor_cells = cells_before(&text, cursor_chars);
+    let scroll = cursor_cells
+        .saturating_sub(available)
+        .saturating_add(1)
+        .min(cursor_cells);
+    let visible = visible_slice(&text, scroll, available);
     let line = Line::from(vec![
         Span::styled(
             PROMPT,
@@ -904,7 +947,7 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     let x = area
         .x
         .saturating_add(prompt_w as u16)
-        .saturating_add((cursor_cells - scroll) as u16)
+        .saturating_add((cursor_cells.saturating_sub(scroll)).min(u16::MAX as usize) as u16)
         .min(area.right().saturating_sub(1));
     Some(Position::new(x, area.y))
 }

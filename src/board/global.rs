@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::cmd::NoteKind;
 use super::theme::ThemeName;
-use crate::dashboard::{Section, Snapshot};
+use crate::dashboard::{Section, Snapshot, sanitize_one_line};
 use crate::project::ProjectKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,10 @@ pub struct GlobalState {
     pub output_scroll: u16,
     pub theme: ThemeName,
     pub note: Option<(NoteKind, String)>,
+    /// Index of `sel_terminal` in the last snapshot, so a removed row keeps its neighbour.
+    prev_terminal_idx: Option<usize>,
+    /// Index of `sel_inbox` in the last snapshot, so a removed row keeps its neighbour.
+    prev_inbox_idx: Option<usize>,
 }
 
 impl GlobalState {
@@ -82,6 +86,8 @@ impl GlobalState {
             output_scroll: 0,
             theme,
             note: None,
+            prev_terminal_idx: None,
+            prev_inbox_idx: None,
         }
     }
 
@@ -106,49 +112,56 @@ impl GlobalState {
     }
 
     pub fn sync(&mut self, data: &GlobalData) {
-        // Keep terminal selection by address, nearest neighbour when gone, None when empty.
+        // Keep terminal selection by address; when it disappears, take the row that slid into its
+        // previous index (the nearest neighbour) instead of jumping to the last row.
         if let Some(snap) = data.snap.as_ref() {
             let terms = &snap.terminals;
             if terms.is_empty() {
                 self.sel_terminal = None;
+                self.prev_terminal_idx = None;
             } else if let Some(addr) = self.sel_terminal.as_deref() {
                 if let Some(i) = terms.iter().position(|t| t.address == addr) {
                     self.sel_terminal = Some(terms[i].address.clone());
+                    self.prev_terminal_idx = Some(i);
                 } else {
-                    // nearest neighbour by previous index is not stored; pick closest by id-like
-                    // fallback: keep a stable neighbour. We don't have old index, so pick the last
-                    // or first? Plan says "nearest neighbour when gone" - we need to track index.
-                    // Without stored index, pick the closest by scanning: choose the one at same
-                    // position clamped. We don't know position. Store-less fallback: first.
-                    // Better: keep by address already failed; choose nearest by previous index.
-                    // We'll track indices internally via helper; but fields are frozen. Use the
-                    // selection's previous position by remembering? Not in struct. Instead, pick
-                    // the element with minimum distance in the old list? Old list gone.
-                    // Pragmatic: clamp to last.
-                    let idx = terms.len().saturating_sub(1);
+                    let idx = self
+                        .prev_terminal_idx
+                        .unwrap_or(0)
+                        .min(terms.len().saturating_sub(1));
                     self.sel_terminal = Some(terms[idx].address.clone());
+                    self.prev_terminal_idx = Some(idx);
                 }
             } else {
                 self.sel_terminal = Some(terms[0].address.clone());
+                self.prev_terminal_idx = Some(0);
             }
 
             let inbox = &snap.inbox;
             if inbox.is_empty() {
                 self.sel_inbox = None;
+                self.prev_inbox_idx = None;
             } else if let Some(id) = self.sel_inbox {
                 if let Some(i) = inbox.iter().position(|r| r.id == id) {
                     self.sel_inbox = Some(inbox[i].id);
+                    self.prev_inbox_idx = Some(i);
                 } else {
-                    let idx = inbox.len().saturating_sub(1);
+                    let idx = self
+                        .prev_inbox_idx
+                        .unwrap_or(0)
+                        .min(inbox.len().saturating_sub(1));
                     self.sel_inbox = Some(inbox[idx].id);
+                    self.prev_inbox_idx = Some(idx);
                 }
             } else {
                 self.sel_inbox = Some(inbox[0].id);
+                self.prev_inbox_idx = Some(0);
             }
         } else {
-            // No snapshot: keep selections as-is? Plan says "None when empty" - no data means empty.
+            // No snapshot: no rows to select.
             self.sel_terminal = None;
             self.sel_inbox = None;
+            self.prev_terminal_idx = None;
+            self.prev_inbox_idx = None;
         }
 
         if let Focus::Panel(sec) = self.focus
@@ -175,7 +188,8 @@ impl GlobalState {
                 GEffect::None
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     input.push(c);
@@ -256,6 +270,18 @@ impl GlobalState {
                 self.history_down();
                 GEffect::None
             }
+            KeyCode::PageUp => {
+                if data.output.is_some() {
+                    self.output_scroll = self.output_scroll.saturating_sub(5);
+                }
+                GEffect::None
+            }
+            KeyCode::PageDown => {
+                if data.output.is_some() {
+                    self.output_scroll = self.output_scroll.saturating_add(5);
+                }
+                GEffect::None
+            }
             KeyCode::Tab => {
                 let panels = visible_panels(data);
                 if let Some(first) = panels.first().copied() {
@@ -271,7 +297,8 @@ impl GlobalState {
                 GEffect::None
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     let idx = char_to_byte(&self.cmd.text, self.cmd.cursor);
@@ -362,12 +389,18 @@ impl GlobalState {
                         .and_then(|s| s.terminals.iter().find(|t| t.address == addr))
                         .map(|t| {
                             if t.name.is_empty() {
-                                t.address.clone()
+                                sanitize_one_line(&t.address)
                             } else {
-                                t.name.clone()
+                                sanitize_one_line(&t.name)
                             }
                         })
-                        .unwrap_or(addr);
+                        .unwrap_or_else(|| sanitize_one_line(&addr));
+                    // A name made only of control/escape text falls back to the address.
+                    let name = if name.is_empty() {
+                        sanitize_one_line(&addr)
+                    } else {
+                        name
+                    };
                     self.focus_cmdline_with(format!("send {name} "));
                 }
                 GEffect::None
@@ -386,7 +419,8 @@ impl GlobalState {
                 GEffect::None
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     self.focus = Focus::CmdLine;
@@ -469,6 +503,7 @@ impl GlobalState {
                     .unwrap_or(0);
                 let next = cur.saturating_sub(1);
                 self.sel_terminal = Some(terms[next].address.clone());
+                self.prev_terminal_idx = Some(next);
             }
             Section::Inbox => {
                 let Some(snap) = data.snap.as_ref() else {
@@ -485,6 +520,7 @@ impl GlobalState {
                     .unwrap_or(0);
                 let next = cur.saturating_sub(1);
                 self.sel_inbox = Some(inbox[next].id);
+                self.prev_inbox_idx = Some(next);
             }
             _ => {
                 let entry = self.scroll.entry(sec).or_insert(0);
@@ -511,6 +547,7 @@ impl GlobalState {
                     .unwrap_or(0);
                 let next = (cur + 1).min(terms.len() - 1);
                 self.sel_terminal = Some(terms[next].address.clone());
+                self.prev_terminal_idx = Some(next);
             }
             Section::Inbox => {
                 let Some(snap) = data.snap.as_ref() else {
@@ -527,6 +564,7 @@ impl GlobalState {
                     .unwrap_or(0);
                 let next = (cur + 1).min(inbox.len() - 1);
                 self.sel_inbox = Some(inbox[next].id);
+                self.prev_inbox_idx = Some(next);
             }
             _ => {
                 let entry = self.scroll.entry(sec).or_insert(0);
@@ -537,14 +575,23 @@ impl GlobalState {
 }
 
 fn visible_panels(data: &GlobalData) -> Vec<Section> {
-    let mut panels: Vec<Section> = data
-        .view
+    visible_sections(&data.view)
+}
+
+/// The panels the global screen shows: the chosen sections in `view` (dropping `Messages`, which
+/// is pinned and never counted) followed by `Messages`. An empty or messages-only view falls back
+/// to `Section::DEFAULT`, exactly as the drawing does, so `Tab` and the screen never disagree.
+pub(crate) fn visible_sections(view: &[Section]) -> Vec<Section> {
+    let mut sections: Vec<Section> = view
         .iter()
         .copied()
         .filter(|s| *s != Section::Messages)
         .collect();
-    panels.push(Section::Messages);
-    panels
+    if sections.is_empty() {
+        sections = Section::DEFAULT.to_vec();
+    }
+    sections.push(Section::Messages);
+    sections
 }
 
 fn char_to_byte(s: &str, char_idx: usize) -> usize {
@@ -700,6 +747,52 @@ mod tests {
     }
 
     #[test]
+    fn pgdn_scrolls_output_from_cmdline() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let mut data = GlobalData {
+            output: Some((0..40).map(|i| format!("line-{i:02}\n")).collect()),
+            ..GlobalData::default()
+        };
+        assert_eq!(st.focus, Focus::CmdLine);
+
+        st.on_key(key(KeyCode::PageDown), &data);
+        assert_eq!(st.output_scroll, 5, "PgDn must scroll the Output panel");
+        st.on_key(key(KeyCode::PageDown), &data);
+        assert_eq!(st.output_scroll, 10);
+        st.on_key(key(KeyCode::PageUp), &data);
+        assert_eq!(st.output_scroll, 5);
+
+        // No Output panel open: paging does nothing.
+        data.output = None;
+        st.on_key(key(KeyCode::PageDown), &data);
+        assert_eq!(st.output_scroll, 5);
+    }
+
+    #[test]
+    fn tab_matches_drawn_panels_for_empty_and_messages_only_view() {
+        for view in [Vec::new(), vec![Section::Messages]] {
+            let data = data_with(view.clone(), vec![], vec![]);
+            let expected = visible_sections(&view);
+            assert_eq!(expected.last(), Some(&Section::Messages));
+            assert!(
+                expected.len() > 1,
+                "an empty or messages-only view must fall back to the drawn defaults"
+            );
+
+            let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+            let mut seen = Vec::new();
+            loop {
+                st.on_key(key(KeyCode::Tab), &data);
+                match st.focus {
+                    Focus::Panel(sec) => seen.push(sec),
+                    Focus::CmdLine => break,
+                }
+            }
+            assert_eq!(seen, expected, "Tab must visit exactly the drawn panels");
+        }
+    }
+
+    #[test]
     fn history_up_down_and_dedupe() {
         let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
         let data = GlobalData::default();
@@ -829,6 +922,64 @@ mod tests {
     }
 
     #[test]
+    fn control_chars_not_inserted() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let data = GlobalData::default();
+        for c in ['\x1b', '\x07', '\n', '\r', '\u{7f}'] {
+            st.on_key(char_key(c), &data);
+        }
+        assert_eq!(
+            st.cmd.text, "",
+            "control chars must not reach the command line"
+        );
+
+        st.popup = Some(Popup::Confirm {
+            prompt: "kill t1?".into(),
+            input: String::new(),
+        });
+        for c in ['\x1b', '\x07', '\n', '\r', '\u{7f}'] {
+            st.on_key(char_key(c), &data);
+        }
+        assert_eq!(
+            st.popup,
+            Some(Popup::Confirm {
+                prompt: "kill t1?".into(),
+                input: String::new(),
+            }),
+            "control chars must not reach the confirmation input"
+        );
+    }
+
+    #[test]
+    fn send_prefill_sanitized() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let data = data_with(
+            vec![Section::Terminals],
+            vec![
+                term("addr\x1b[31m1", "evil\x1b]0;pwn\x07name"),
+                term("addr\x1b[31m2", ""),
+            ],
+            vec![],
+        );
+        st.focus = Focus::Panel(Section::Terminals);
+
+        st.sel_terminal = Some("addr\x1b[31m1".into());
+        st.on_key(char_key('s'), &data);
+        assert_eq!(st.cmd.text, "send evilname ");
+        assert!(
+            !st.cmd.text.contains('\x1b'),
+            "escape reached the command line"
+        );
+
+        // An empty name falls back to the (sanitized) address.
+        st.focus = Focus::Panel(Section::Terminals);
+        st.sel_terminal = Some("addr\x1b[31m2".into());
+        st.on_key(char_key('s'), &data);
+        assert_eq!(st.cmd.text, "send addr2 ");
+        assert!(!st.cmd.text.contains('\x1b'));
+    }
+
+    #[test]
     fn unbound_printable_in_panel_goes_to_cmdline() {
         let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
         let data = data_with(vec![Section::Terminals], vec![term("a", "t1")], vec![]);
@@ -838,6 +989,43 @@ mod tests {
         assert_eq!(st.focus, Focus::CmdLine);
         assert_eq!(st.cmd.text, "x");
         assert_eq!(st.cmd.cursor, 1);
+    }
+
+    #[test]
+    fn sync_selects_neighbour_after_middle_removal() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let mut data = data_with(
+            vec![Section::Inbox],
+            vec![],
+            (1..=5).map(inbox).collect::<Vec<_>>(),
+        );
+        st.sel_inbox = Some(3);
+        st.sync(&data);
+        // Rows 1..5 with 3 selected; 3 closes, the row that took its place (4) is selected.
+        data.snap.as_mut().unwrap().inbox = vec![inbox(1), inbox(2), inbox(4), inbox(5)];
+        st.sync(&data);
+        assert_eq!(st.sel_inbox, Some(4));
+    }
+
+    #[test]
+    fn sync_clears_closed_inbox_selection() {
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        let mut data = data_with(
+            vec![Section::Inbox],
+            vec![],
+            vec![inbox(1), inbox(2), inbox(3)],
+        );
+        st.sel_inbox = Some(2);
+        st.sync(&data);
+        // The `d` command closed item 2: after the refresh it is gone and no longer selected.
+        data.snap.as_mut().unwrap().inbox = vec![inbox(1), inbox(3)];
+        st.sync(&data);
+        assert_ne!(
+            st.sel_inbox,
+            Some(2),
+            "selection still points at the closed item"
+        );
+        assert_eq!(st.sel_inbox, Some(3));
     }
 
     #[test]

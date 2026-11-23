@@ -474,6 +474,9 @@ pub fn run(
                     ),
                 });
             }
+            Ok(TuiCmd::Cd(_) | TuiCmd::Show(_)) => {
+                note = Some((NoteKind::Warn, "cd/show: not wired yet".into()))
+            }
             Err(e) => note = Some((NoteKind::Err, e)),
         }
     }

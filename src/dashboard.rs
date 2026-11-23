@@ -1708,10 +1708,15 @@ pub enum TuiCmd {
     Policy(bool),
     /// `view` alone shows the current choice; with arguments, the sections to display.
     View(Option<Vec<Section>>),
+    /// `cd` alone lists projects; `Some(q)` enters project `q` (`".."` / `"/"` leave the scope).
+    Cd(Option<String>),
+    /// `show <#>` prints one inbox item in full.
+    Show(i64),
 }
 
 /// TUI commands: full name shown in the `cmd:` bar, single-letter alias still accepted.
-pub const TUI_COMMANDS: [(&str, &str, &str); 9] = [
+/// `cd`/`show` take no alias (`c` is cleanup, `s` is send): their alias field is empty.
+pub const TUI_COMMANDS: [(&str, &str, &str); 11] = [
     ("reply", "r", "<#> <text>"),
     ("done", "d", "<#|a-b|kind:K|term:T>"),
     ("send", "s", "<terminal> <TYPE> <message>"),
@@ -1720,6 +1725,8 @@ pub const TUI_COMMANDS: [(&str, &str, &str); 9] = [
     ("kill", "k", "<terminal>"),
     ("policy", "p", "on|off"),
     ("view", "v", "<up to 3 sections>"),
+    ("cd", "", "[project|..]"),
+    ("show", "", "<#>"),
     ("quit", "q", ""),
 ];
 
@@ -1868,7 +1875,7 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
         .map_or((line, ""), |(h, r)| (h, r.trim()));
     let Some((name, _, _)) = TUI_COMMANDS
         .iter()
-        .find(|(name, alias, _)| head == *name || head == *alias)
+        .find(|(name, alias, _)| head == *name || (!alias.is_empty() && head == *alias))
     else {
         if head.is_empty() {
             return Ok(TuiCmd::Refresh);
@@ -1911,6 +1918,13 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
         "policy" if rest == "on" || rest == "off" => TuiCmd::Policy(rest == "on"),
         "view" if rest.is_empty() => TuiCmd::View(None),
         "view" => TuiCmd::View(Some(parse_view(rest)?)),
+        "cd" => TuiCmd::Cd((!rest.is_empty()).then(|| rest.to_string())),
+        "show" => rest
+            .strip_prefix('#')
+            .unwrap_or(rest)
+            .parse::<i64>()
+            .map(TuiCmd::Show)
+            .map_err(|_| usage("show"))?,
         other => return Err(usage(other)),
     })
 }

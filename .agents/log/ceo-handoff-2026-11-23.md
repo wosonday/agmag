@@ -30,3 +30,18 @@ context % (session not linked), so this is a phase-boundary handoff, target ≤ 
 - Judge worker stalls by worktree file mtimes; kill only specific worker PIDs, never all opencode.exe.
 - agy headless: `agy --model gemini-4-argon-high --mode plan --print="..."`, give it a diff file, no shell commands.
 - Never push without the user's OK.
+
+## Update 2026-11-24 (CEO session after rotation 3)
+- TUI board DONE and merged to local `main` at 74788b4 (not pushed; origin/main still 6ab619c, 79 commits ahead).
+  Plan docs/superpowers/plans/2026-11-23-tui-board.md; Task 0 scaffold by CEO, tracks a–d + c2 polish + fix1 by OpenCode
+  workers (a hy4-flash-free, b iceman-free, c/d/c2/fix1 opencode-go/deepseek-v4.1-flash; deepseek-v4.1-flash-free and
+  mimo-v2.6-flash-free hit the free limit). Reviews .agents/reviews/tui-board-{1,2}.md (agy gemini-4-hydrogen-high:
+  round 1 CHƯA ĐẠT, 5 items fixed; round 2 ĐẠT). Gates on main: 521 tests, clippy, fmt, harness lint 34 docs 0 errors.
+- Not verified in a real terminal yet (user said "tiếp tục" without reporting a run). Ask for feedback on `agm board`
+  and `cd <project>` → `q` back to `agm>` (stdin hand-shake) on Windows Terminal + herdr pane.
+- Known gaps: `task:` in agent detail is always `-` (AgentView has no task); edge labels of children of two different
+  parents on one row can overdraw the neighbour's drop (round-2 Nên sửa #2). Phase 2 (whole `agm tui` on ratatui,
+  `--plain`) needs its own short design + review round.
+- Pending user decisions: push main; remove merged worktrees (tui-project-a..k, fix-caller-shell, tui-review,
+  tui-verify, tui-board, tui-board-a..d, -c2, -fix1); owner of the uncommitted delegated-approval work in D:/Project/agmag;
+  `cargo install --path D:\Project\agmag.wt\main`.

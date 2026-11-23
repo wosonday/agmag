@@ -20,6 +20,8 @@ pub mod opencode_models;
 pub mod opencode_quota;
 pub mod parse;
 pub mod policy;
+pub mod project;
+pub mod project_render;
 pub mod report;
 pub mod rotation;
 pub mod store;

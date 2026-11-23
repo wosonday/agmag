@@ -142,7 +142,7 @@ agm tui
   (no messages)
 ──────────────────────────────────────────────────────────────────
 cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <message> · cleanup [1,2|all]
-     interrupt <terminal> · kill <terminal> · policy on|off · view <up to 3 sections> · quit
+     interrupt <terminal> · kill <terminal> · cd [project|..] · show <#> · policy on|off · view <up to 3 sections> · quit
      TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
 
@@ -157,6 +157,8 @@ TUI commands (type, then Enter):
 | `interrupt t5` · `kill t5` | Interrupt / kill (both require an extra `y` confirmation) |
 | `policy off` | Disable all automatic actions |
 | `view` · `view terminals inbox` · `view default` | Show the current view / pick up to 3 sections (`quota`, `usage`, `terminals`, `budgets`, `inbox`, `system`); remembered across restarts. RECENT MESSAGES is always shown and does not count |
+| `cd` · `cd agmag` · `cd ..` | List projects / enter a project / return to the global view |
+| `show 1` | Print inbox item 1 in full |
 | `quit` | Quit |
 
 Each command also accepts its first letter as a shortcut (`r`, `d`, `s`, `c`, `i`, `k`, `p`, `q`). Message types for `send`: `ASSIGN`, `REPORT`, `ERROR`, `QUESTION`, `BLOCKED`, `PASS`, `FAIL` (any letter case). The legacy Vietnamese types (`GIAO`, `BÁO CÁO`, `LỖI`, `HỎI`, `CHẶN`, `ĐẠT`, `CHƯA ĐẠT`) still work in the TUI; messages are stored and forwarded with the Vietnamese code, and `agm send --type` is unchanged.
@@ -164,6 +166,26 @@ Each command also accepts its first letter as a shortcut (`r`, `d`, `s`, `c`, `i
 TERMINALS columns: `●` is colored by state (green working, cyan idle/done, red blocked, yellow handed off, gray exited) followed by the terminal name, shortened to 12 characters (address when unnamed; commands accept either). `agent` is the CLI, `model`/`effort` come from the linked session log (Codex `effort`, Claude Code `effort`, OpenCode variant, agy model suffix such as `-high`), and `where` is herdr's location as `hc ls` shows it (`MATHY-AI / 1`, `agmag / agm-ceo`), falling back to the working folder name. `last msg` is the latest message involving the terminal, in English: `→ REPORT` means it sent a report, `← ASSIGN` means it received an assignment. Colors match RECENT MESSAGES (cyan ASSIGN, green REPORT/PASS, yellow QUESTION, red ERROR/FAIL, bold red BLOCKED).
 
 The dashboard prints every row (nothing is cut to the pane height); scroll up with the mouse to see the top. Each repaint clears the screen and the scrollback first, so older frames never pile up, and it only repaints when something changed or after you type a command, so scrolling up to read is not interrupted on every refresh. It shows at most 3 chosen sections (default `quota terminals inbox`) plus RECENT MESSAGES, always pinned just above the command bar. The pane width is detected automatically; `COLUMNS` overrides it (clamped to 60–200). Long names, paths and messages are shortened to that width. Unicode text is measured in terminal cells without splitting graphemes; embedded terminal control sequences are stripped. Truncation affects display only, not stored messages or action targets.
+
+### Per-project view (`cd`)
+
+Type `cd` to list projects: each row shows the project name, live agents, open
+inbox items, and a `(no project)` count for inbox items whose terminal is missing
+or unknown. `cd <name>` enters a project (case-insensitive, unique prefix;
+worktrees join their main repo); `cd ..` or `cd /` returns to the global view.
+The prompt shows the scope, for example `agm[agmag]>`.
+
+The project view shows, for that project only:
+
+- **Agents** — a tree with status symbol + word, `doing:` latest activity from
+  the session log with age, a `ctx` bar, a 60-minute token sparkline, and branch
+  stage from `BRANCHES.md`.
+- **Inbox** — items wrapped up to 4 lines.
+- **Messages** — newest 20, wrapped up to 3 lines, with age.
+
+`show <#>` prints one inbox item in full. `reply`, `done`, and `send` keep using
+global `#ID`s, so they work inside and outside a project. Unknown values show as
+`-`.
 
 The TUI shows a **red** warning when a handed-off session and its successor are both running in the same directory, and backfills missing months for the statistics automatically. Only **you** can open the TUI from a terminal (agents can't).
 

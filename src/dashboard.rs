@@ -14,23 +14,23 @@ use crate::report::{QuotaRow, UsageBucket, UsageSummary, spark_bar, usage_summar
 use crate::store::{InboxRow, MessageRow, Store};
 use crate::sysmon::{CpuStats, SysStats, human_bytes, mount_label};
 
-const RESET: &str = "\x1b[0m";
-const DIM: &str = "\x1b[2m";
-const GRAY: &str = "\x1b[90m";
-const WHITE: &str = "\x1b[97m";
-const CYAN: &str = "\x1b[36m";
-const BRIGHT_CYAN: &str = "\x1b[96m";
-const BOLD_CYAN: &str = "\x1b[1;96m";
-const BRIGHT_GREEN: &str = "\x1b[92m";
-const BOLD_GREEN: &str = "\x1b[1;92m";
-const BRIGHT_YELLOW: &str = "\x1b[93m";
-const BOLD_YELLOW: &str = "\x1b[1;93m";
-const BRIGHT_RED: &str = "\x1b[91m";
-const BOLD_RED: &str = "\x1b[1;91m";
-const BRIGHT_MAGENTA: &str = "\x1b[95m";
-const MAGENTA: &str = "\x1b[35m";
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
+pub(crate) const RESET: &str = "\x1b[0m";
+pub(crate) const DIM: &str = "\x1b[2m";
+pub(crate) const GRAY: &str = "\x1b[90m";
+pub(crate) const WHITE: &str = "\x1b[97m";
+pub(crate) const CYAN: &str = "\x1b[36m";
+pub(crate) const BRIGHT_CYAN: &str = "\x1b[96m";
+pub(crate) const BOLD_CYAN: &str = "\x1b[1;96m";
+pub(crate) const BRIGHT_GREEN: &str = "\x1b[92m";
+pub(crate) const BOLD_GREEN: &str = "\x1b[1;92m";
+pub(crate) const BRIGHT_YELLOW: &str = "\x1b[93m";
+pub(crate) const BOLD_YELLOW: &str = "\x1b[1;93m";
+pub(crate) const BRIGHT_RED: &str = "\x1b[91m";
+pub(crate) const BOLD_RED: &str = "\x1b[1;91m";
+pub(crate) const BRIGHT_MAGENTA: &str = "\x1b[95m";
+pub(crate) const MAGENTA: &str = "\x1b[35m";
+pub(crate) const GREEN: &str = "\x1b[32m";
+pub(crate) const YELLOW: &str = "\x1b[33m";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TermView {
@@ -79,6 +79,17 @@ pub struct Snapshot {
     pub system: Option<SysStats>,
 }
 
+/// Stored `(status, kind)` → the dashboard's status text: `blocked` with a kind becomes
+/// `BLOCKED (kind)`, otherwise the stored status, `-` when unknown.
+pub fn format_status(status: Option<&str>, kind: Option<&str>) -> String {
+    match (status, kind) {
+        (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
+        (Some("blocked"), None) => "BLOCKED".into(),
+        (Some(s), _) => s.to_string(),
+        (None, _) => "-".into(),
+    }
+}
+
 pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     let mut terminals = Vec::new();
     for t in store.terminals(true)? {
@@ -121,12 +132,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
                 },
             )
             .ok();
-        let mut status = match (t.status.as_deref(), t.kind.as_deref()) {
-            (Some("blocked"), Some(k)) => format!("BLOCKED ({k})"),
-            (Some("blocked"), None) => "BLOCKED".into(),
-            (Some(s), _) => s.to_string(),
-            (None, _) => "-".into(),
-        };
+        let mut status = format_status(t.status.as_deref(), t.kind.as_deref());
         if t.handoff_state == "handed_off" {
             status.push_str(" [HANDED OFF]");
         }
@@ -181,7 +187,7 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     })
 }
 
-fn paint(style: &str, text: &str) -> String {
+pub(crate) fn paint(style: &str, text: &str) -> String {
     format!("{style}{text}{RESET}")
 }
 
@@ -256,7 +262,7 @@ fn month_abbr(mo: &str) -> &str {
     }
 }
 
-fn section(icon: &str, title: &str, width: usize) -> String {
+pub(crate) fn section(icon: &str, title: &str, width: usize) -> String {
     let clean_title = one_line(title, width.saturating_sub(10));
     let prefix_len = 3 + icon.chars().count() + 1 + clean_title.chars().count() + 1;
     let line = "─".repeat(width.saturating_sub(1).saturating_sub(prefix_len));
@@ -292,7 +298,7 @@ fn app_cell(app: &str) -> Cell {
     }
 }
 
-fn status_color(status: &str) -> Color {
+pub(crate) fn status_color(status: &str) -> Color {
     if status.starts_with("BLOCKED") {
         Color::Red
     } else if status.contains("[HANDED OFF]") {
@@ -393,7 +399,7 @@ fn ctx_cell(ctx: Option<f64>) -> Cell {
     c.set_alignment(CellAlignment::Right)
 }
 
-fn inbox_source_badge(source: &str) -> String {
+pub(crate) fn inbox_source_badge(source: &str) -> String {
     let clean = sanitize_one_line(source);
     let tag = format!("[{clean}]");
     match clean.as_str() {
@@ -418,7 +424,7 @@ fn kind_style(english: &str) -> (&'static str, Color, bool) {
     }
 }
 
-fn msg_kind_badge(kind: &str) -> String {
+pub(crate) fn msg_kind_badge(kind: &str) -> String {
     let clean = sanitize_one_line(kind_to_english(kind));
     paint(kind_style(&clean).0, &format!("[{clean}]"))
 }
@@ -514,7 +520,7 @@ fn wrap_plain_words(
     out
 }
 
-fn render_header(s: &Snapshot, width: usize) -> String {
+pub(crate) fn render_header(s: &Snapshot, width: usize) -> String {
     let max_w = width.saturating_sub(1);
     let policy_plain = if s.policy_on {
         "● POLICY ON"
@@ -701,7 +707,7 @@ fn used_of(used: u64, total: u64) -> String {
 
 /// Column where meter bars start (`  ▣ CPU    `), so core rows line up under the CPU bar.
 const METER_INDENT: usize = 11;
-const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+pub(crate) const SPARK: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
 /// `12 cores · busiest #3 97% · 4 idle (<10%)`: the CPU line's detail.
 fn cpu_detail(c: &CpuStats) -> String {
@@ -966,7 +972,7 @@ pub fn render_sys_report(sys: &SysStats, width: usize) -> String {
     out
 }
 
-fn render_footer(width: usize) -> String {
+pub(crate) fn render_footer(width: usize) -> String {
     let cmd = |k: &str, args: &str| {
         if args.is_empty() {
             paint(BOLD_CYAN, k)
@@ -1160,6 +1166,21 @@ pub fn render_view(
 
 /// Lines below the command bar that `agm tui` writes itself (note + `agm>` prompt).
 const FRAME_RESERVE: usize = 2;
+
+/// Header + a project body (AGENTS/INBOX/MESSAGES) + footer, every line bounded to the pane like
+/// [`render_view`]. The body is already bounded by the project renderer; the header and footer are not.
+pub fn render_scoped(s: &Snapshot, body: &str, width: usize) -> String {
+    let max_w = width.saturating_sub(1);
+    let mut out = render_header(s, width);
+    for line in body.lines() {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out += &render_footer(width);
+    out.lines()
+        .map(|line| format!("{}\n", bounded_styled_line(line, max_w)))
+        .collect()
+}
 
 /// Shrinks blocks to `budget` lines total. Small blocks keep every line; large ones share the rest evenly and end
 /// with a "… N more lines" marker. Each block keeps at least its title line.
@@ -1580,7 +1601,7 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
 }
 
 /// Strip ANSI CSI/OSC/escape sequences and replace newlines/control chars with spaces.
-fn sanitize_one_line(s: &str) -> String {
+pub(crate) fn sanitize_one_line(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -1708,10 +1729,15 @@ pub enum TuiCmd {
     Policy(bool),
     /// `view` alone shows the current choice; with arguments, the sections to display.
     View(Option<Vec<Section>>),
+    /// `cd` alone lists projects; `Some(q)` enters project `q` (`".."` / `"/"` leave the scope).
+    Cd(Option<String>),
+    /// `show <#>` prints one inbox item in full.
+    Show(i64),
 }
 
 /// TUI commands: full name shown in the `cmd:` bar, single-letter alias still accepted.
-pub const TUI_COMMANDS: [(&str, &str, &str); 9] = [
+/// `cd`/`show` take no alias (`c` is cleanup, `s` is send): their alias field is empty.
+pub const TUI_COMMANDS: [(&str, &str, &str); 11] = [
     ("reply", "r", "<#> <text>"),
     ("done", "d", "<#|a-b|kind:K|term:T>"),
     ("send", "s", "<terminal> <TYPE> <message>"),
@@ -1720,6 +1746,8 @@ pub const TUI_COMMANDS: [(&str, &str, &str); 9] = [
     ("kill", "k", "<terminal>"),
     ("policy", "p", "on|off"),
     ("view", "v", "<up to 3 sections>"),
+    ("cd", "", "[project|..]"),
+    ("show", "", "<#>"),
     ("quit", "q", ""),
 ];
 
@@ -1868,7 +1896,7 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
         .map_or((line, ""), |(h, r)| (h, r.trim()));
     let Some((name, _, _)) = TUI_COMMANDS
         .iter()
-        .find(|(name, alias, _)| head == *name || head == *alias)
+        .find(|(name, alias, _)| head == *name || (!alias.is_empty() && head == *alias))
     else {
         if head.is_empty() {
             return Ok(TuiCmd::Refresh);
@@ -1911,6 +1939,13 @@ pub fn parse_command(line: &str) -> std::result::Result<TuiCmd, String> {
         "policy" if rest == "on" || rest == "off" => TuiCmd::Policy(rest == "on"),
         "view" if rest.is_empty() => TuiCmd::View(None),
         "view" => TuiCmd::View(Some(parse_view(rest)?)),
+        "cd" => TuiCmd::Cd((!rest.is_empty()).then(|| rest.to_string())),
+        "show" => rest
+            .strip_prefix('#')
+            .unwrap_or(rest)
+            .parse::<i64>()
+            .map(TuiCmd::Show)
+            .map_err(|_| usage("show"))?,
         other => return Err(usage(other)),
     })
 }

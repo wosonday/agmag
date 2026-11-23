@@ -38,7 +38,7 @@
 
 **Files:**
 - Create: `src/project.rs` (types + stub functions with `todo!()` bodies), `src/project_render.rs` (stub), `src/store/project.rs` (stub `impl Store`)
-- Modify: `src/lib.rs` (`pub mod project; pub mod project_render;`), `src/store/mod.rs` (`mod project;`), `src/dashboard.rs` (make `paint`, `section`, `msg_kind_badge`, `inbox_source_badge`, `sanitize_one_line`, `status_color`, `render_header`, `render_footer` and the `SPARK` const `pub(crate)`; no behavior change)
+- Modify: `src/lib.rs` (`pub mod project; pub mod project_render;`), `src/store/mod.rs` (`mod project;`), `src/dashboard.rs` (make `paint`, `section`, `msg_kind_badge`, `inbox_source_badge`, `sanitize_one_line`, `status_color`, `render_header`, `render_footer`, the `SPARK` const and the ANSI color consts (`RESET`, `GRAY`, `WHITE`, `CYAN`, `BRIGHT_GREEN`, `BRIGHT_RED`, `BRIGHT_YELLOW`, …) `pub(crate)`; no behavior change)
 
 **Interfaces (produced; all later tasks consume exactly these):**
 

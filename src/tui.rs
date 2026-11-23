@@ -13,10 +13,12 @@ use anyhow::Result;
 use agmag::actions::{self, Caller, CleanupCandidate, eligible_cleanups, execute_cleanup_batch};
 use agmag::config::Config;
 use agmag::dashboard::{
-    Section, TuiCmd, bounded_styled_line, one_line, parse_command, parse_view, render_view,
-    snapshot,
+    Section, Snapshot, TuiCmd, bounded_styled_line, one_line, parse_command, parse_view,
+    render_scoped, render_view, snapshot,
 };
 use agmag::hc::HcCli;
+use agmag::project::{self, CdMatch, ProjectKey, RootCache};
+use agmag::project_render;
 use agmag::report::{compute_local_bounds, coverage_status, sqlite_offset_at};
 use agmag::store::Store;
 
@@ -117,6 +119,7 @@ fn render_frame(
     w: usize,
     cleanup_list: Option<&[CleanupCandidate]>,
     note: Option<(NoteKind, &str)>,
+    scope: Option<&str>,
 ) -> String {
     let max_w = w.saturating_sub(1);
     let mut body = String::with_capacity(text.len() + 512);
@@ -161,8 +164,48 @@ fn render_frame(
             frame.push_str(&bounded_styled_line(line, max_w));
         }
     }
-    frame.push_str("\x1b[J\x1b[1;96magm>\x1b[0m ");
+    frame.push_str("\x1b[J\x1b[1;96m");
+    match scope {
+        // The project name comes from a directory name: sanitize it before painting.
+        Some(name) => {
+            let name = one_line(name, max_w.saturating_sub(7));
+            let _ = write!(frame, "agm[{name}]>");
+        }
+        None => frame.push_str("agm>"),
+    }
+    frame.push_str("\x1b[0m ");
     frame
+}
+
+/// The body shown when the database cannot be read, shared by the global and scoped frames.
+fn db_error_text(e: &anyhow::Error, w: usize) -> String {
+    format!(
+        "\x1b[1;91m{}\x1b[0m\n",
+        one_line(
+            &format!("failed to read database: {e:#}"),
+            w.saturating_sub(1)
+        )
+    )
+}
+
+/// A scoped frame body: roots for every terminal of the project, then AGENTS/INBOX/MESSAGES.
+fn scoped_text(
+    store: &Store,
+    snap: &Snapshot,
+    key: &ProjectKey,
+    cache: &mut RootCache,
+    w: usize,
+    now: i64,
+) -> String {
+    let terms = match store.terminals(false) {
+        Ok(t) => t,
+        Err(e) => return db_error_text(&e, w),
+    };
+    let roots = project::compute_roots(&terms, snap, cache, &project::git_common_root);
+    match project::load_project_view(store, snap, key, &roots, now) {
+        Ok(pv) => render_scoped(snap, &project_render::render_project_body(&pv, w, now), w),
+        Err(e) => db_error_text(&e, w),
+    }
 }
 
 pub fn run(
@@ -215,6 +258,11 @@ pub fn run(
     let mut pending: Option<TuiCmd> = None;
     let mut cleanup_list: Option<Vec<CleanupCandidate>> = None;
     let mut cleanup_selected: Option<Vec<CleanupCandidate>> = None;
+    // Project scope of this session: the project entered with `cd`, the cwd → root cache, and the
+    // `show` / `cd` listing block printed above the note until the next command.
+    let mut scope: Option<ProjectKey> = None;
+    let mut roots_cache = RootCache::new();
+    let mut shown: Option<String> = None;
 
     // RAM/CPU/disk for the header and SYSTEM section; kept across frames because CPU % is a difference.
     let mut sampler = agmag::sysmon::SysSampler::new();
@@ -227,24 +275,29 @@ pub fn run(
         let _ = scan(store);
         let now = crate::now_ms();
         let w = pane_width();
+        let mut snap: Option<Snapshot> = None;
         let text = match snapshot(store, cfg, now) {
             Ok(mut s) => {
                 s.system = sampler.as_mut().map(|m| m.sample());
-                render_view(&s, w, &view, None)
+                let text = match &scope {
+                    Some(key) => scoped_text(store, &s, key, &mut roots_cache, w, now),
+                    None => render_view(&s, w, &view, None),
+                };
+                snap = Some(s);
+                text
             }
-            Err(e) => format!(
-                "\x1b[1;91m{}\x1b[0m\n",
-                one_line(
-                    &format!("failed to read database: {e:#}"),
-                    w.saturating_sub(1)
-                )
-            ),
+            Err(e) => db_error_text(&e, w),
         };
+        let mut text = text;
+        if let Some(block) = &shown {
+            text.push_str(block);
+        }
         let frame = render_frame(
             &text,
             w,
             cleanup_list.as_deref(),
             note.as_ref().map(|(k, s)| (*k, s.as_str())),
+            scope.as_ref().map(|k| k.name.as_str()),
         );
         if needs_redraw(&frame, last_frame.as_deref(), after_input) {
             out.write_all(CLEAR_ALL)?;
@@ -262,6 +315,7 @@ pub fn run(
         after_input = true;
         let now = crate::now_ms();
         note = None;
+        shown = None;
 
         if let Some(sel) = cleanup_selected.take() {
             if line.trim() == "y" {
@@ -474,6 +528,76 @@ pub fn run(
                     ),
                 });
             }
+            Ok(TuiCmd::Cd(None)) => {
+                if let Some(s) = &snap {
+                    match (store.terminals(false), store.inbox(true)) {
+                        (Ok(terms), Ok(inbox)) => {
+                            let roots = project::compute_roots(
+                                &terms,
+                                s,
+                                &mut roots_cache,
+                                &project::git_common_root,
+                            );
+                            let (list, no_project) = project::list_projects(&terms, &inbox, &roots);
+                            shown = Some(project_render::render_project_list(&list, no_project, w));
+                        }
+                        (Err(e), _) | (_, Err(e)) => {
+                            note = Some((NoteKind::Err, format!("error: {e:#}")))
+                        }
+                    }
+                } else {
+                    note = Some((NoteKind::Err, "failed to read database".into()));
+                }
+            }
+            Ok(TuiCmd::Cd(Some(q))) => {
+                if q == ".." || q == "/" {
+                    scope = None;
+                    note = Some((NoteKind::Ok, "back to all projects".into()));
+                } else if let Some(s) = &snap {
+                    match store.inbox(true) {
+                        Ok(inbox) => match store.terminals(false) {
+                            Ok(terms) => {
+                                let roots = project::compute_roots(
+                                    &terms,
+                                    s,
+                                    &mut roots_cache,
+                                    &project::git_common_root,
+                                );
+                                let (list, _) = project::list_projects(&terms, &inbox, &roots);
+                                match project::match_project(&list, &q) {
+                                    // Entering keeps the scope even if the project has no members left.
+                                    CdMatch::Found(key) => {
+                                        note =
+                                            Some((NoteKind::Ok, format!("project: {}", key.name)));
+                                        scope = Some(key);
+                                    }
+                                    CdMatch::Ambiguous(candidates) => {
+                                        note = Some((
+                                            NoteKind::Warn,
+                                            format!("ambiguous: {}", candidates.join(", ")),
+                                        ));
+                                    }
+                                    CdMatch::NotFound => {
+                                        note = Some((
+                                            NoteKind::Err,
+                                            format!("no project matching '{q}'"),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
+                        },
+                        Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
+                    }
+                } else {
+                    note = Some((NoteKind::Err, "failed to read database".into()));
+                }
+            }
+            Ok(TuiCmd::Show(id)) => match store.inbox_item(id) {
+                Ok(Some(item)) => shown = Some(project_render::render_inbox_item(&item, w)),
+                Ok(None) => note = Some((NoteKind::Err, format!("no inbox item #{id}"))),
+                Err(e) => note = Some((NoteKind::Err, format!("error: {e:#}"))),
+            },
             Err(e) => note = Some((NoteKind::Err, e)),
         }
     }
@@ -510,10 +634,61 @@ mod tests {
     }
     use unicode_width::UnicodeWidthStr;
 
+    fn strip_ansi(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' && chars.next() == Some('[') {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn prompt_shows_scope() {
+        let scoped = render_frame("", 60, None, None, Some("shop"));
+        let plain = strip_ansi(&scoped);
+        assert!(
+            plain
+                .lines()
+                .last()
+                .is_some_and(|l| l.contains("agm[shop]> ")),
+            "scoped prompt missing:\n{plain}"
+        );
+
+        let global = render_frame("", 60, None, None, None);
+        let plain = strip_ansi(&global);
+        assert!(
+            plain.lines().last().is_some_and(|l| l.contains("agm> ")),
+            "global prompt missing:\n{plain}"
+        );
+        assert!(!plain.contains("agm["), "{plain}");
+
+        // A project name is untrusted (a directory): its escapes must render inert.
+        let hostile = render_frame("", 60, None, None, Some("\x1b]0;pwn\x07shop\x1b[2J"));
+        assert!(!hostile.contains("\x1b]0;"), "OSC must not reach the frame");
+        assert!(!hostile.contains("\x1b[2J"), "CSI must not reach the frame");
+        let plain = strip_ansi(&hostile);
+        assert!(
+            plain
+                .lines()
+                .last()
+                .is_some_and(|l| l.contains("agm[shop]> ")),
+            "{plain}"
+        );
+    }
+
     #[test]
     fn frame_note_strips_untrusted_escapes_and_bounds_wide_text() {
         let malicious = format!("\x1b[2J\x1b]52;c;c2VjcmV0\x07\x1b(B{}", "界👩‍💻".repeat(30));
-        let frame = render_frame("", 60, None, Some((NoteKind::Err, &malicious)));
+        let frame = render_frame("", 60, None, Some((NoteKind::Err, &malicious)), None);
         assert!(!frame.contains("\x1b[2J"));
         assert!(!frame.contains("\x1b]52"));
         assert!(!frame.contains("\x1b(B"));

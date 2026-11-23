@@ -270,14 +270,17 @@ fn inbox_wraps_to_four_lines_messages_to_three() {
 #[test]
 fn untrusted_text_is_inert() {
     let evil = "pwn\x1b]0;pwn\x07\x1b[2J\r\nsecond";
-    let mut agent = agent("a", 0, true);
-    agent.doing = Some(TurnRow {
+    let mut a = agent("a", 0, true);
+    a.label = evil.into();
+    a.stage = Some(evil.into());
+    a.doing = Some(TurnRow {
         ts_ms: 0,
         role: "assistant".into(),
         summary: evil.into(),
     });
     let inbox = vec![InboxRow {
         id: 1,
+        source: evil.into(),
         text: evil.into(),
         ..Default::default()
     }];
@@ -288,12 +291,130 @@ fn untrusted_text_is_inert() {
         text: evil.into(),
         ..Default::default()
     }];
-    let out = render_project_body(&view(vec![agent], inbox, messages), 110, 0);
+    let pv = ProjectView {
+        key: ProjectKey {
+            root: "D:\\Project\\agmag".into(),
+            name: evil.into(),
+        },
+        agents: vec![a],
+        inbox,
+        messages,
+    };
+    let out = render_project_body(&pv, 110, 0);
 
     assert!(!out.contains("\x1b]"), "OSC survived: {out:?}");
     assert!(!out.contains("\x1b[2J"), "CSI clear survived: {out:?}");
     assert!(!out.contains('\r'), "raw CR survived: {out:?}");
     assert!(out.contains("pwn"), "{out:?}");
+
+    let list = vec![ProjectSummary {
+        key: ProjectKey {
+            root: "D:\\Project\\agmag".into(),
+            name: evil.into(),
+        },
+        live_agents: 1,
+        open_inbox: 0,
+    }];
+    let list_out = render_project_list(&list, 0, 80);
+    assert!(
+        !list_out.contains("\x1b]"),
+        "OSC survived in list: {list_out:?}"
+    );
+    assert!(
+        !list_out.contains("\x1b[2J"),
+        "CSI survived in list: {list_out:?}"
+    );
+    assert!(
+        !list_out.contains('\r'),
+        "raw CR survived in list: {list_out:?}"
+    );
+}
+
+#[test]
+fn long_label_and_model_do_not_push_status_offscreen() {
+    let now = 1_700_000_000_000i64;
+    let mut a = agent("a1", 0, true);
+    a.label = "L".repeat(100);
+    a.app = "claude-code".into();
+    a.model = "M".repeat(100);
+    a.effort = "high".into();
+    a.status = "working".into();
+    a.context_pct = Some(42.0);
+    a.tokens = Some(12_345);
+    a.spark = Some(vec![1; 12]);
+    a.stage = Some("wip".into());
+
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![a], vec![], vec![]),
+        110,
+        now,
+    ));
+    assert!(plain.contains("working"), "{plain}");
+    assert!(plain.contains("42%"), "{plain}");
+    assert!(plain.contains("12k"), "{plain}");
+    assert!(plain.contains("stage:"), "{plain}");
+    assert!(plain.contains("wip"), "{plain}");
+    for line in plain.lines() {
+        assert!(
+            UnicodeWidthStr::width(line) < 110,
+            "{line:?} is {}",
+            UnicodeWidthStr::width(line)
+        );
+    }
+
+    let plain60 = strip_ansi(&render_project_body(
+        &view(
+            vec![{
+                let mut b = agent("b1", 0, true);
+                b.label = "L".repeat(100);
+                b.model = "M".repeat(100);
+                b.status = "working".into();
+                b.context_pct = Some(42.0);
+                b.tokens = Some(12_345);
+                b
+            }],
+            vec![],
+            vec![],
+        ),
+        60,
+        now,
+    ));
+    assert!(plain60.contains("working"), "{plain60}");
+    assert!(plain60.contains("42%"), "{plain60}");
+}
+
+#[test]
+fn long_inbox_source_and_message_kind_are_capped() {
+    let now = 1_700_000_000_000i64;
+    let inbox = vec![InboxRow {
+        id: 1,
+        terminal: Some("t1".into()),
+        source: "S".repeat(100),
+        text: "hello".into(),
+        ..Default::default()
+    }];
+    let messages = vec![MessageRow {
+        from: "a".into(),
+        to: "b".into(),
+        kind: "K".repeat(100),
+        text: "msg".into(),
+        ts_ms: now,
+        ..Default::default()
+    }];
+    let plain = strip_ansi(&render_project_body(
+        &view(vec![], inbox, messages),
+        60,
+        now,
+    ));
+    assert!(plain.contains("hello"), "{plain}");
+    assert!(plain.contains("msg"), "{plain}");
+    for line in plain.lines() {
+        assert!(
+            UnicodeWidthStr::width(line) < 60,
+            "{line:?} is {}",
+            UnicodeWidthStr::width(line)
+        );
+    }
 }
 
 #[test]
@@ -401,6 +522,70 @@ fn zero_width_does_not_panic() {
         },
         0,
     );
+}
+
+#[test]
+fn handed_off_status_keeps_symbol_and_full_words() {
+    let mut idle = agent("a1", 0, false);
+    idle.status = "idle [HANDED OFF]".into();
+    let mut working = agent("a2", 0, false);
+    working.status = "working [HANDED OFF]".into();
+    let mut blocked_lower = agent("a3", 0, false);
+    blocked_lower.status = "blocked".into();
+    let mut blocked_upper = agent("a4", 0, true);
+    blocked_upper.status = "BLOCKED: needs decision".into();
+    let out = render_project_body(
+        &view(
+            vec![idle, working, blocked_lower, blocked_upper],
+            vec![],
+            vec![],
+        ),
+        110,
+        0,
+    );
+    let plain = strip_ansi(&out);
+    assert!(plain.contains("○ idle [HANDED OFF]"), "{plain}");
+    assert!(plain.contains("● working [HANDED OFF]"), "{plain}");
+    // Both lowercase 'blocked' and 'BLOCKED...' should render as blocked symbol+word
+    let blocked_lines: Vec<&str> = plain
+        .lines()
+        .filter(|l| l.contains("a3") || l.contains("a4"))
+        .collect();
+    assert_eq!(blocked_lines.len(), 2, "{plain}");
+    for line in blocked_lines {
+        assert!(line.contains("◐ blocked"), "{line}");
+    }
+}
+
+#[test]
+fn project_list_disambiguates_duplicate_names() {
+    let list = vec![
+        ProjectSummary {
+            key: ProjectKey {
+                root: "D:\\a\\shop".into(),
+                name: "shop".into(),
+            },
+            live_agents: 1,
+            open_inbox: 0,
+        },
+        ProjectSummary {
+            key: ProjectKey {
+                root: "D:\\b\\shop".into(),
+                name: "shop".into(),
+            },
+            live_agents: 2,
+            open_inbox: 1,
+        },
+    ];
+    let plain = strip_ansi(&render_project_list(&list, 0, 100));
+    assert!(plain.contains("shop (D:\\a\\shop)"), "{plain}");
+    assert!(plain.contains("shop (D:\\b\\shop)"), "{plain}");
+}
+
+#[test]
+fn project_list_empty_shows_no_projects() {
+    let plain = strip_ansi(&render_project_list(&[], 0, 60));
+    assert!(plain.contains("(no projects)"), "{plain}");
 }
 
 #[test]

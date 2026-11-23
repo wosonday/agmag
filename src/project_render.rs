@@ -17,6 +17,8 @@ use crate::store::{InboxRow, MessageRow};
 const NARROW_NO_SPARK: usize = 70;
 /// Widths below this also drop the context bar.
 const NARROW_NO_CTX: usize = 50;
+/// Max display cells for agent label and model/effort text, like the global TERMINALS name column.
+const NAME_CELLS: usize = 12;
 
 /// AGENTS + INBOX + MESSAGES sections for one project (no header/footer).
 pub fn render_project_body(pv: &ProjectView, width: usize, now_ms: i64) -> String {
@@ -60,15 +62,32 @@ pub fn render_project_body(pv: &ProjectView, width: usize, now_ms: i64) -> Strin
 
 /// The `cd` listing: one line per project plus `(no project)` when `no_project > 0`.
 pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: usize) -> String {
+    if list.is_empty() && no_project == 0 {
+        return bounded_block(vec![paint(GRAY, "  (no projects)")], width);
+    }
+
+    let display_name = |p: &ProjectSummary| -> String {
+        let shared = list
+            .iter()
+            .filter(|other| other.key.name == p.key.name)
+            .count()
+            > 1;
+        if shared {
+            format!("{} ({})", p.key.name, p.key.root)
+        } else {
+            p.key.name.clone()
+        }
+    };
+
     let mut name_w = list
         .iter()
-        .map(|p| sanitize_one_line(&p.key.name).width())
+        .map(|p| sanitize_one_line(&display_name(p)).width())
         .max()
         .unwrap_or(0);
     if no_project > 0 {
         name_w = name_w.max("(no project)".width());
     }
-    let name_w = name_w.clamp(6, 24);
+    let name_w = name_w.clamp(6, width.saturating_sub(18).max(6));
     // Pad the plain name before painting: `pad_cells` measures display cells, so it must not
     // see ANSI escapes (otherwise the `(no project)` row drifts left of the project rows).
     let row = |style: &str, name: &str, live: String, inbox: String| {
@@ -84,7 +103,7 @@ pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: us
     for p in list {
         lines.push(row(
             WHITE,
-            &p.key.name,
+            &display_name(p),
             paint(BOLD_CYAN, &format!("{} live", p.live_agents)),
             paint(BRIGHT_YELLOW, &format!("{} inbox", p.open_inbox)),
         ));
@@ -159,17 +178,20 @@ fn kind_ansi(english: &str) -> &'static str {
 }
 
 fn status_parts(status: &str) -> (&'static str, String) {
-    if status.starts_with("BLOCKED") {
+    let handed_off = status.strip_suffix(" [HANDED OFF]");
+    let base = handed_off.unwrap_or(status);
+    let base_lower = base.to_ascii_lowercase();
+    if base_lower.starts_with("blocked") {
         ("◐", "blocked".into())
-    } else if status == "working" || status == "running" {
+    } else if base == "working" || base == "running" {
         ("●", status.into())
-    } else if status == "idle" {
-        ("○", "idle".into())
-    } else if status == "done" {
-        ("✓", "done".into())
-    } else if status == "exited" {
-        ("×", "exited".into())
-    } else if status.is_empty() || status == "-" {
+    } else if base == "idle" {
+        ("○", status.into())
+    } else if base == "done" {
+        ("✓", status.into())
+    } else if base == "exited" {
+        ("×", status.into())
+    } else if base.is_empty() || base == "-" {
         ("?", "-".into())
     } else {
         ("?", status.into())
@@ -280,7 +302,7 @@ fn agent_lines(agents: &[AgentView], width: usize, now_ms: i64) -> Vec<String> {
 }
 
 fn agent_identity_line(agent: &AgentView, prefix: &str, width: usize) -> String {
-    let label = sanitize_one_line(&agent.label);
+    let label = one_line(&agent.label, NAME_CELLS);
     let mut segments = vec![format!("{prefix}{}", paint(WHITE, &label))];
 
     let app = sanitize_one_line(&agent.app);
@@ -293,6 +315,7 @@ fn agent_identity_line(agent: &AgentView, prefix: &str, width: usize) -> String 
     } else {
         format!("{model}/{effort}")
     };
+    let model_effort = one_line(&model_effort, NAME_CELLS);
     segments.push(match (app.is_empty(), model_effort.is_empty()) {
         (true, true) => paint(GRAY, "-"),
         (false, true) => paint(BRIGHT_MAGENTA, &app),
@@ -367,7 +390,7 @@ fn agent_doing_line(agent: &AgentView, cont: &str, width: usize, now_ms: i64) ->
 fn inbox_lines(item: &InboxRow, width: usize, max_lines: usize) -> Vec<String> {
     let max_w = width.saturating_sub(1);
     let terminal = one_line(item.terminal.as_deref().unwrap_or("-"), (max_w / 5).max(3));
-    let source = sanitize_one_line(&item.source);
+    let source = one_line(&item.source, (max_w / 5).max(3));
     let id = format!("#{}", item.id);
     let first_prefix = format!(
         "  {} {} {} {} ",
@@ -393,7 +416,7 @@ fn message_lines(message: &MessageRow, width: usize, now_ms: i64, max_lines: usi
     let cap = (max_w / 6).max(3);
     let from = one_line(&message.from, cap);
     let to = one_line(&message.to, cap);
-    let kind = sanitize_one_line(kind_to_english(&message.kind));
+    let kind = one_line(kind_to_english(&message.kind), (max_w / 5).max(3));
     let status = sanitize_one_line(&message.status);
     let age_color = match status.as_str() {
         "delivered" | "sent" => BRIGHT_GREEN,
@@ -407,7 +430,7 @@ fn message_lines(message: &MessageRow, width: usize, now_ms: i64, max_lines: usi
         paint(CYAN, &from),
         paint(GRAY, "→"),
         paint(WHITE, &to),
-        msg_kind_badge(&message.kind),
+        msg_kind_badge(&kind),
     );
     let first_plain =
         2 + age.width() + 1 + from.width() + 1 + 1 + 1 + to.width() + 2 + (kind.width() + 2) + 2;

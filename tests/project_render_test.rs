@@ -270,14 +270,17 @@ fn inbox_wraps_to_four_lines_messages_to_three() {
 #[test]
 fn untrusted_text_is_inert() {
     let evil = "pwn\x1b]0;pwn\x07\x1b[2J\r\nsecond";
-    let mut agent = agent("a", 0, true);
-    agent.doing = Some(TurnRow {
+    let mut a = agent("a", 0, true);
+    a.label = evil.into();
+    a.stage = Some(evil.into());
+    a.doing = Some(TurnRow {
         ts_ms: 0,
         role: "assistant".into(),
         summary: evil.into(),
     });
     let inbox = vec![InboxRow {
         id: 1,
+        source: evil.into(),
         text: evil.into(),
         ..Default::default()
     }];
@@ -288,12 +291,43 @@ fn untrusted_text_is_inert() {
         text: evil.into(),
         ..Default::default()
     }];
-    let out = render_project_body(&view(vec![agent], inbox, messages), 110, 0);
+    let pv = ProjectView {
+        key: ProjectKey {
+            root: "D:\\Project\\agmag".into(),
+            name: evil.into(),
+        },
+        agents: vec![a],
+        inbox,
+        messages,
+    };
+    let out = render_project_body(&pv, 110, 0);
 
     assert!(!out.contains("\x1b]"), "OSC survived: {out:?}");
     assert!(!out.contains("\x1b[2J"), "CSI clear survived: {out:?}");
     assert!(!out.contains('\r'), "raw CR survived: {out:?}");
     assert!(out.contains("pwn"), "{out:?}");
+
+    let list = vec![ProjectSummary {
+        key: ProjectKey {
+            root: "D:\\Project\\agmag".into(),
+            name: evil.into(),
+        },
+        live_agents: 1,
+        open_inbox: 0,
+    }];
+    let list_out = render_project_list(&list, 0, 80);
+    assert!(
+        !list_out.contains("\x1b]"),
+        "OSC survived in list: {list_out:?}"
+    );
+    assert!(
+        !list_out.contains("\x1b[2J"),
+        "CSI survived in list: {list_out:?}"
+    );
+    assert!(
+        !list_out.contains('\r'),
+        "raw CR survived in list: {list_out:?}"
+    );
 }
 
 #[test]

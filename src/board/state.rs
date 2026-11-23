@@ -216,6 +216,19 @@ impl BoardState {
         }
     }
 
+    /// Switches project and forgets the previous project's selections.
+    fn enter_project(&mut self, key: ProjectKey) {
+        if self.project.as_ref() != Some(&key) {
+            self.sel_agent = None;
+            self.sel_inbox = None;
+            self.agent_idx = 0;
+            self.inbox_idx = 0;
+            self.msg_scroll = 0;
+        }
+        self.project = Some(key);
+        self.panel = Panel::Orchestration;
+    }
+
     fn move_up(&mut self, data: &BoardData) {
         match self.panel {
             Panel::Projects => {
@@ -261,6 +274,9 @@ impl BoardState {
         } else {
             (cur + 1).min(len - 1)
         };
+        if next != cur {
+            self.msg_scroll = 0;
+        }
         self.agent_idx = next;
         self.sel_agent = Some(view.agents[next].address.clone());
     }
@@ -290,8 +306,7 @@ impl BoardState {
             Panel::Projects => {
                 if let Some(p) = data.projects.get(self.sel_project) {
                     let key = p.key.clone();
-                    self.project = Some(key.clone());
-                    self.panel = Panel::Orchestration;
+                    self.enter_project(key.clone());
                     return Effect::SwitchProject(key);
                 }
                 Effect::None
@@ -474,9 +489,8 @@ impl BoardState {
                 self.mode = Mode::Normal;
                 if let Some(p) = data.projects.get(idx) {
                     let key = p.key.clone();
-                    self.project = Some(key.clone());
                     self.sel_project = idx;
-                    self.panel = Panel::Orchestration;
+                    self.enter_project(key.clone());
                     return Effect::SwitchProject(key);
                 }
                 Effect::None
@@ -983,6 +997,35 @@ mod tests {
             s.note.as_ref().map(|n| n.text.as_str()),
             Some("item #10 is closed")
         );
+    }
+
+    #[test]
+    fn switching_project_forgets_old_selection() {
+        let (mut st, mut d) = state_with_data();
+        st.sel_agent = Some("old-agent".into());
+        st.sel_inbox = Some(999);
+        st.msg_scroll = 7;
+        d.projects = vec![summary("agmag"), summary("shop")];
+        st.panel = Panel::Projects;
+        st.sel_project = 1;
+        assert_eq!(
+            st.on_key(key(KeyCode::Enter), &d),
+            Effect::SwitchProject(pk("shop"))
+        );
+        assert_eq!(st.sel_agent, None);
+        assert_eq!(st.sel_inbox, None);
+        assert_eq!(st.msg_scroll, 0);
+        assert_eq!(st.panel, Panel::Orchestration);
+    }
+
+    #[test]
+    fn selecting_another_agent_resets_message_scroll() {
+        let (mut st, d) = state_with_data();
+        st.sync(&d);
+        st.panel = Panel::Orchestration;
+        st.msg_scroll = 5;
+        st.on_key(key(KeyCode::Down), &d);
+        assert_eq!(st.msg_scroll, 0);
     }
 
     #[test]

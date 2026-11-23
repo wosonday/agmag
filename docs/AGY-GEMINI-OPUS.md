@@ -47,7 +47,15 @@ Antigravity CLI (`agy`) absorbs **architecture offloading, technical advising, h
 
 ---
 
-## 2. Token Tracking in `agm`
+## 2. Shared Context, Memory & Ponytail Policy
+
+- **Phase and role skills:** follow [Skill Routing](SKILL-ROUTING.md). Co-Architect uses `system-design`, adding `architecture` for an ADR; Senior Reviewer uses `code-review`; a developer uses feature/debugging/review-fix workflows; Docs uses `documentation`. Argon uses `writing-skills` when reusable skills change, or `skill-creator` for a new skill, rather than for every harness wording edit.
+- **Availability and verification:** resolve skill IDs/paths in agy before dispatch and record `skill_refs`. Do not assume Codex/Claude plugins are visible here. Default to one workflow plus one relevant domain skill, allow justified phase additions, and retain final `verification-before-completion` or its approved runtime playbook.
+- **Understand-Anything (`.ua/`):** Install via `install.ps1` (Windows) or `install.sh antigravity` (Linux/macOS) and query the committed `.ua/knowledge-graph.json` read-only instead of scanning the entire repository.
+- **Shared Memory permissions (`Propose, review, flag conflicts`):** Read `.agents/memory/published/` and task logs; write proposals and conflict flags to `.agents/memory/inbox/<ID>-agy.md` (with `type: proposal | conflict`) and review notes to `.agents/reviews/`. Never edit `.agents/memory/published/` directly—only Claude CEO publishes. Do not self-review code authored by `agy`.
+- **Ponytail by role (never `ultra` by default):** design/advisory exploration uses `off` / `lite`; implementation and independent review use `full`; short docs use `off` / `lite` only when helpful. Ponytail complements the workflow and does not remove approved requirements or domain checks.
+
+## 3. Token Tracking in `agm`
 
 - **`agm ask` sessions:** usage and summaries are recorded directly in `agm.db` and deduplicated against transcript files.
 - **Interactive `agy` CLI sessions:** `agm` scans `transcript.jsonl` under `~/.gemini/antigravity-cli/brain/` and correlates `antigravity` terminals by working directory.

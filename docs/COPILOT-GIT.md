@@ -4,6 +4,7 @@ GitHub Copilot CLI (`copilot-git`) is the **only agent** permitted to integrate 
 
 ## 1. Startup & Scope
 
+- **Skill selection:** use the Git playbook and [final verification workflow](SKILL-ROUTING.md). Integration normally needs no discovery, design, coding or independent code-review skill. Ponytail is off by default; `verification-before-completion` (or its approved runtime playbook) supports exact-SHA and post-merge checks without waiving them.
 - Run **exactly 1 `copilot-git` session** in the **main checkout** (on `main`) so integrations are strictly **sequential**—one branch/feature per merge.
 - Launch command:
   ```powershell
@@ -25,6 +26,7 @@ Depending on project mode, `copilot-git` receives work from:
 2. The branch's `head` SHA does not match the approved SHA from Review/Docs (extra commits added after `ready`).
 3. Audit/Review results or required doc updates are missing.
 4. Any branch in `depends_on` has not been merged into `main`.
+5. A non-CEO feature branch modifies `.agents/memory/published/` or `.ua/` without explicit Claude CEO approval.
 
 ---
 
@@ -34,7 +36,7 @@ Depending on project mode, `copilot-git` receives work from:
 2. **Verify exact SHA and merge sequentially** into `main` at the main checkout.
    - On merge conflicts, business logic conflicts, or >1 migration head: **stop immediately—never edit feature code to force a pass**; set `status: needs-rebase` in `BRANCHES.md` and notify the lane's BOT-CEO via `agm send <lane> --type LỖI --task <ID> "..."`.
 3. **Re-run post-merge Audit/CI gates** on `main` (ESLint `--max-warnings 0`, typecheck, tests, build). If any check fails: log the failure, set `failed` (or `git revert` if already pushed further), and return to the manager/BOT-CEO.
-4. **Trigger GitNexus refresh:** after a clean merge, invoke **`gitnexus-sync`** (`gitnexus analyze --index-only` in the main checkout) or rely on the `post-merge` hook so BOT-CEOs never query a stale graph (`staleness: behind`).
+4. **Understand-Anything (`.ua/`) batch refresh:** do **not** run full re-indexing on every tiny merge. When a merged branch adds/moves modules or alters public interfaces, notify Claude CEO to run incremental `/understand` on `main` in batch (end of wave/day) and commit `.ua/` (excluding `.ua/intermediate/` and `.ua/diff-overlay.json`).
 5. **Update final status & clean up:**
    - Update `BRANCHES.md` to `merged` (or `deployed` if deployment is enabled and authorized).
    - Remove the worktree and merged branch (`cleanup-wt.sh`) only after verifying the worktree is clean and `agm ps` shows no live session inside that directory.

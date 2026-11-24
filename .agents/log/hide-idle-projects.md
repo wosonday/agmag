@@ -32,3 +32,14 @@ Task: `.agents/tasks/hide-idle-projects.md`. Ẩn dự án idle (`live_agents ==
   vào renderer. `cd <name>` / `match_project` vẫn nhận full list, không đổi.
 - Xanh: 14/14 `project_render_test`, 1/1 test `cd_list_*` (`--bin agm`).
 - Commit: `feat(tui): hide idle projects in the cd listing`.
+
+### Step 3: cột dự án của bảng dùng `split_idle` (RED → GREEN)
+- `tests/board_runtime_test.rs`: thêm `load_data_hides_idle_projects_but_keeps_the_scoped_one` —
+  3 thư mục `live` (1 agent live), `ghost` (exited), `scoped` (exited). Không scope → chỉ `live`;
+  scope tới `scoped` → `live` + `scoped`, `ghost` vẫn bị ẩn và `data.view` mở được.
+  Đỏ: danh sách có cả 3 (`left: 3, right: 1`).
+- `src/board/mod.rs`: `load_data` gọi `split_idle(all_projects, state.project.as_ref())`; dự án
+  đang scope được giữ lại dù idle. Không đổi `resolve_project` (~100), `match_project`, hay
+  `src/board/app.rs` (~302) — phân giải tên vẫn dùng full list.
+- Xanh: 7/7 `board_runtime_test`.
+- Commit: `feat(board): hide idle projects in the project column`.

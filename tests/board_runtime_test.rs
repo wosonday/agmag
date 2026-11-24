@@ -8,8 +8,9 @@ use agmag::board;
 use agmag::board::state::{BoardState, Effect, Panel};
 use agmag::board::theme::{self, ThemeName};
 use agmag::config::Config;
+use agmag::correlate::norm_cwd;
 use agmag::dashboard::{TuiCmd, parse_command};
-use agmag::project::RootCache;
+use agmag::project::{ProjectKey, RootCache};
 use agmag::store::{Store, TerminalRow};
 
 fn term(address: &str, name: &str, cwd: &str) -> TerminalRow {
@@ -94,6 +95,48 @@ fn load_data_without_project_lists_projects() -> anyhow::Result<()> {
     assert_eq!(data.now_ms, 1_000_000);
     assert_eq!(state.panel, Panel::Projects);
     assert!(state.sel_agent.is_none() && state.sel_inbox.is_none());
+    Ok(())
+}
+
+#[test]
+fn load_data_hides_idle_projects_but_keeps_the_scoped_one() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let live_dir = tmp.path().join("live");
+    let ghost_dir = tmp.path().join("ghost");
+    let scoped_dir = tmp.path().join("scoped");
+    std::fs::create_dir_all(&live_dir)?;
+    std::fs::create_dir_all(&ghost_dir)?;
+    std::fs::create_dir_all(&scoped_dir)?;
+
+    let mut ghost = term("t2", "ghost", ghost_dir.to_str().unwrap());
+    ghost.state = "exited".into();
+    let mut scoped_idle = term("t3", "scoped", scoped_dir.to_str().unwrap());
+    scoped_idle.state = "exited".into();
+
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&term("t1", "ceo", live_dir.to_str().unwrap()))?;
+    store.upsert_terminal(&ghost)?;
+    store.upsert_terminal(&scoped_idle)?;
+
+    let cfg = Config::builtin();
+    let mut cache = RootCache::new();
+
+    // No scope: both exited projects are idle and must leave the display list.
+    let mut state = BoardState::new(None, ThemeName::default());
+    let data = board::load_data(&store, &cfg, &mut cache, &mut state, 1_000_000)?;
+    assert_eq!(data.projects.len(), 1, "{:?}", data.projects);
+    assert_eq!(data.projects[0].key.name, "live");
+
+    // Scoped to an idle project: it stays in the column, and still opens its board view.
+    let scoped = ProjectKey {
+        root: norm_cwd(scoped_dir.to_str().unwrap()),
+        name: "scoped".into(),
+    };
+    let mut state = BoardState::new(Some(scoped), ThemeName::default());
+    let data = board::load_data(&store, &cfg, &mut cache, &mut state, 1_000_000)?;
+    let names: Vec<_> = data.projects.iter().map(|p| p.key.name.as_str()).collect();
+    assert_eq!(names, vec!["live", "scoped"], "{names:?}");
+    assert!(data.view.is_some());
     Ok(())
 }
 

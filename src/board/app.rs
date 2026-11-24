@@ -591,6 +591,11 @@ fn draw_frame(
             {
                 cursor = Some(pos);
             }
+            if state.popup.is_some() {
+                // A confirm popup is modal: nothing on the board stays hit-testable (the empty
+                // overlay rect contains no point), matching how the board's own popups behave.
+                board.hit_map.begin_overlay(Rect::default());
+            }
             if let Some(pos) = cursor {
                 let x = pos.x.min(area.right().saturating_sub(1));
                 let y = pos.y.min(area.bottom().saturating_sub(1));
@@ -627,7 +632,6 @@ fn run_board_dispatch(
     }
 }
 
-/// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
 /// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
 #[allow(clippy::too_many_arguments)]
 fn handle_mouse(

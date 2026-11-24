@@ -29,3 +29,9 @@ Task: `.agents/tasks/tui-layout.md` — T1 content-fitted overview, compact Term
 - CODE: `global.rs` now defines `HitMap { panels, rows, borders }`, `RowTarget` (terminal/inbox/message/agent/project), `BorderId` (top-pair vertical, horizontal-by-section-index), `Hit` and the pure `hit(map, x, y)` with border → row → panel priority. `GlobalState` holds a `RefCell<HitMap>` with `hit_map()` / `clear_hit_map()` / `push_*`; `draw_global` clears and refills it every frame without changing any `app.rs` call site. Renderers record panel rects, the top-pair divider, horizontal boundaries, terminal/inbox table rows (with the table's scroll offset) and message-row rects. No mouse events are handled.
 - GREEN: unit + render hit-map tests pass, including a stale-row check after a second draw.
 - Gates: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` all clean.
+
+## Step 5 — CHANGELOG + final gates
+
+- Added a `[Unreleased]` section above `## [0.5.0]` in `CHANGELOG.md` with one Vietnamese bullet under `### Thay đổi` covering the content-fitted overview and compact Terminals. CRLF preserved (`git ls-files --eol CHANGELOG.md` → `i/crlf w/crlf`).
+- Final gates (all clean, recorded): `cargo fmt --check` → ok; `cargo clippy --all-targets -- -D warnings` → Finished, zero warnings; `cargo test` → all 42 test binaries report `ok`, 0 failed.
+- No mouse handling, no resize, no edits to `src/board/mod.rs`, `state.rs` or `view.rs`; app.rs call sites unchanged. No push/merge/branch switch.

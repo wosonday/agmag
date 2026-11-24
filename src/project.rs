@@ -62,6 +62,10 @@ pub struct AgentView {
     pub spark: Option<Vec<u64>>,
     /// `status` of the matching BRANCHES.md entry.
     pub stage: Option<String>,
+    /// Task of the terminal row (`agm spawn --task`); None when empty/unknown.
+    pub task: Option<String>,
+    /// Role label of the terminal row (`worker`, `audit`, …); None when unknown.
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -505,6 +509,8 @@ pub fn load_project_view(
             tokens: view.and_then(|v| v.tokens),
             spark: t.session.and_then(|sid| buckets.get(&sid).cloned()),
             stage,
+            task: t.task.clone().filter(|s| !s.is_empty()),
+            role: t.role.clone().filter(|s| !s.is_empty()),
         });
     }
     Ok(ProjectView {

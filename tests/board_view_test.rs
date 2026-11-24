@@ -38,6 +38,8 @@ fn agent(address: &str, label: &str, depth: usize) -> AgentView {
         tokens: None,
         spark: None,
         stage: None,
+        task: None,
+        role: None,
     }
 }
 

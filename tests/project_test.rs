@@ -1032,3 +1032,51 @@ fn compute_roots_falls_back_to_live_termview_cwd() -> anyhow::Result<()> {
     assert_eq!(calls.get(), 1);
     Ok(())
 }
+
+#[test]
+fn load_project_view_carries_task_and_role() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().to_str().unwrap().to_string();
+    let root_norm = norm_cwd(&root);
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        cwd: Some(root.clone()),
+        task: Some("TUI-7".into()),
+        role: Some("worker".into()),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t2".into(),
+        cwd: Some(root.clone()),
+        task: Some(String::new()),
+        role: Some(String::new()),
+        state: "live".into(),
+        created_ms: 2,
+        ..Default::default()
+    })?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let terms = store.terminals(false)?;
+    let resolve = |_: &str| -> Option<String> { Some(root.clone()) };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    let key = ProjectKey {
+        root: root_norm.clone(),
+        name: project_name(&root_norm),
+    };
+
+    let pv = load_project_view(&store, &snap, &key, &roots, now)?;
+    let a1 = pv.agents.iter().find(|a| a.address == "t1").unwrap();
+    assert_eq!(a1.task.as_deref(), Some("TUI-7"));
+    assert_eq!(a1.role.as_deref(), Some("worker"));
+
+    let a2 = pv.agents.iter().find(|a| a.address == "t2").unwrap();
+    assert_eq!(a2.task, None);
+    assert_eq!(a2.role, None);
+    Ok(())
+}

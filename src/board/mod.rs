@@ -624,6 +624,8 @@ mod tests {
             tokens: None,
             spark: None,
             stage: None,
+            task: None,
+            role: None,
         }
     }
 

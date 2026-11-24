@@ -213,3 +213,15 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
 - `cargo test --test actions_test approval_grant_human_line` 1 passed; `cargo test --test cli_test approval` 11 passed;
   `cargo fmt --check` sạch. EOL: main.rs vẫn `i/crlf w/crlf`.
 - Commit: `fix(approval): print readable grant lines in approval ls`.
+
+### Gates (final, fix round 1)
+- `cargo fmt --check` → 0 (sạch).
+- `cargo clippy --all-targets -- -D warnings` → 0 (sạch).
+- `cargo test` → 682 passed, 0 failed (tăng 18 test so với 664 của vòng trước).
+- `python scripts/lint_harness.py` → 35 documents, 0 errors.
+- EOL: `git ls-files --eol` — `src/main.rs` và `CHANGELOG.md` vẫn `i/crlf w/crlf`; không có tệp nào bị `w/mixed`
+  mới (ba tệp mixed có sẵn: `.agents/log/cli-help-english.md`, `.agents/log/sysmon-disk-identity.md`,
+  `tests/codex_quota_test.rs` — không đụng vào).
+- Docs: README.md, README_vi.md, BOT-CEO.md đã cập nhật hành động không phân biệt hoa/thường, human-only
+  add/revoke qua caller detection, `--expires-ms` epoch ms tuyệt đối, check read-only, grant mới thay thế grant cũ.
+- Commits: 10 commit `fix(approval): …` (item 4 gộp log riêng, không có thay đổi mã) + commit ghi nhận gates này.

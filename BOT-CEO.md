@@ -43,8 +43,10 @@ Chi tiết đầy đủ về model, phân quyền bộ nhớ và Ponytail nằm 
 CEO chỉ được auto-approve hành động đã nằm trong whitelist toàn cục hoặc grant theo task:
 
 - Cấu hình toàn cục dùng `[policy].delegated_actions` trong `providers.toml`.
-- Grant theo task dùng `agm approval add <lane> <task> <action> ...` và chỉ người dùng TTY được tạo/revoke.
+- Grant theo task dùng `agm approval add <lane> <task> <action> ...` và chỉ người dùng TTY được tạo/thu hồi (`agm approval add|ls|revoke`).
 - Grant task không được vượt lane/task/action đã ủy quyền và chỉ được áp dụng trong thời hạn còn hiệu lực.
+- Trước khi tự làm, CEO kiểm bằng `agm approval check <action> [--lane <L>] [--task <T>]` (agent gọi được, không cần TTY); tool MCP tương đương là `agm_approval_check` với `action` (bắt buộc), `lane`, `task`. Kết quả JSON: `{"decision":"allowed|requires_human|hard_prohibited","action":…,"lane":…,"task":…,"source":"hard|global|grant:<id>|none"}`.
+- Mã thoát `agm approval check`: `0` = allowed (được tự làm), `5` = requires_human (gửi `HỎI/CHẶN` rồi chờ), `6` = hard_prohibited (không làm). Mã khác 0 thì không tự duyệt.
 - Hành động ngoài whitelist hoặc grant hết hiệu lực gửi `HỎI/CHẶN` và dừng ở điểm cần quyết định.
 - Các hành động rủi ro như merge/push/deploy, Extra Usage, thay đổi billing/quota, kill Claude/Codex, đổi harness hoặc tự mở rộng grant là `hard prohibited` dù whitelist có ghi.
 

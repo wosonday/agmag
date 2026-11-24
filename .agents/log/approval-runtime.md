@@ -93,3 +93,12 @@
 - Xanh: `cargo test --test config_test delegated_actions` 1 passed; `invalid_ctx` 1 passed;
   `cargo test --test actions_test approval_rule` 9 passed; `cargo fmt --check` sạch.
 - Commit: `feat(config): reject bad delegated_actions entries`.
+
+### Step 6: docs (worker capped mid-step; finished by CEO)
+- opencode/deepseek-v4.1-flash-free hit "Free usage limit reached" after editing BOT-CEO.md §2.1, README.md,
+  README_vi.md (approval commands, exit codes 5/6, MCP 8 tools), HERDR-CORE-BOT.md, AGENTS-TUTORIAL.md and
+  CHANGELOG.md; nothing was committed. CEO reviewed those edits, added the 0.5.0 note in docs/AGM-0.4.0-GUIDE.md.
+
+### Gates (final, 2026-11-24, CEO)
+- `cargo fmt --check` sạch; `cargo clippy --all-targets -- -D warnings` sạch; `cargo test` 664 passed, 0 failed;
+  `python scripts/lint_harness.py` 0 errors. EOL: CHANGELOG.md, src/main.rs CRLF giữ nguyên; còn lại LF.

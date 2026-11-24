@@ -33,7 +33,7 @@ Tóm tắt các chức năng mới:
 
 - **`agm branch get <ENTRY>`**: đọc một mục `### <lane>/<slug>` trong `BRANCHES.md`.
 - **`agm branch set <ENTRY> key=value ...`**: sửa hoặc tạo mục dưới khóa, có kiểm tra `status: ready`.
-- **`agm mcp`**: MCP server qua stdio với 7 tool: `agm_send`, `agm_inbox`, `agm_ps`, `agm_quota`, `agm_spawn`, `agm_branch_get`, `agm_branch_update`.
+- **`agm mcp`**: MCP server qua stdio với 7 tool: `agm_send`, `agm_inbox`, `agm_ps`, `agm_quota`, `agm_spawn`, `agm_branch_get`, `agm_branch_update`. Từ 0.5.0 có thêm tool thứ 8 `agm_approval_check` (chỉ đọc).
 - **Không có** tool nào để kill, interrupt, manage, cleanup, reply hay done qua MCP. Những việc đó vẫn **chỉ người dùng** làm được, bằng CLI.
 
 Mọi lệnh của 0.3.3 giữ nguyên hành vi và cờ, trừ một chỗ: `--role` giờ được chuẩn hóa (xem §7).
@@ -151,7 +151,7 @@ Kiểm tra giao thức trực tiếp, không cần client:
 
 Kết quả đúng là ba dòng JSON:
 - dòng 1 có `"serverInfo":{"name":"agm","version":"0.4.0"}`;
-- dòng 2 liệt kê 7 tool;
+- dòng 2 liệt kê 7 tool (8 tool từ 0.5.0);
 - dòng 3 có `"isError":false` và danh sách terminal.
 
 Kiểm tra với client thật:

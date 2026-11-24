@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Thêm mới
+
+- Bảng dự án TUI: bắt chuột (nhấn để chọn/focus, cuộn, nhấp đúp mở hoặc soạn trả lời inbox), giữ Shift+kéo để chọn chữ; `AGM_MOUSE=0` để tắt.
+
 ## [0.5.0] - 2026-11-24
 
 ### Thêm mới

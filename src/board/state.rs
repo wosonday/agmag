@@ -1,6 +1,9 @@
 //! Board state and key handling: `on_key` turns a key into an `Effect` without any I/O.
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 
 use super::theme::ThemeName;
 use super::{BoardData, Note};
@@ -13,6 +16,84 @@ pub enum Panel {
     Orchestration,
     Detail,
     Inbox,
+}
+
+/// Rects recorded during the last board draw, used for mouse hit testing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoardHitMap {
+    pub panels: Vec<(Rect, Panel)>,
+    pub project_rows: Vec<(Rect, usize)>,
+    pub agent_cards: Vec<(Rect, String)>,
+    pub inbox_rows: Vec<(Rect, i64)>,
+    pub picker_rows: Vec<(Rect, usize)>,
+    /// An open popup (picker, reply, help, output, ...) is modal: only this rect is hit-testable.
+    pub overlay: Option<Rect>,
+}
+
+impl BoardHitMap {
+    /// Makes `rect` the only hit-testable area: an overlay hides whatever was drawn under it.
+    /// What the overlay itself draws records its own entries after this call.
+    pub fn begin_overlay(&mut self, rect: Rect) {
+        self.panels.clear();
+        self.project_rows.clear();
+        self.agent_cards.clear();
+        self.inbox_rows.clear();
+        self.picker_rows.clear();
+        self.overlay = Some(rect);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HitTarget {
+    Panel(Panel),
+    ProjectRow(usize),
+    AgentCard(String),
+    InboxRow(i64),
+    PickerRow(usize),
+}
+
+/// Pure hit test: most specific target wins (rows/cards before panels).
+/// Picker rows are checked first because the picker popup overlays the board.
+/// An overlay is modal: nothing outside its rect is hit, so a hidden target never wins.
+pub fn hit(map: &BoardHitMap, x: u16, y: u16) -> Option<HitTarget> {
+    if let Some(overlay) = map.overlay
+        && !contains(overlay, x, y)
+    {
+        return None;
+    }
+    for (rect, idx) in &map.picker_rows {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::PickerRow(*idx));
+        }
+    }
+    for (rect, idx) in &map.project_rows {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::ProjectRow(*idx));
+        }
+    }
+    for (rect, addr) in &map.agent_cards {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::AgentCard(addr.clone()));
+        }
+    }
+    for (rect, id) in &map.inbox_rows {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::InboxRow(*id));
+        }
+    }
+    for (rect, panel) in &map.panels {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::Panel(*panel));
+        }
+    }
+    None
+}
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    x >= rect.x
+        && x < rect.x.saturating_add(rect.width)
+        && y >= rect.y
+        && y < rect.y.saturating_add(rect.height)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +145,39 @@ pub enum Effect {
     Quit,
 }
 
+/// What one mouse event did: the effect to apply, and whether anything visible changed (so the
+/// caller must redraw). Ignored events (`Moved`, `Up`, `Drag`, a popup being open, ...) are not a
+/// change and must not force a redraw.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MouseOutcome {
+    pub effect: Effect,
+    pub changed: bool,
+}
+
+impl MouseOutcome {
+    fn ignored() -> Self {
+        Self {
+            effect: Effect::None,
+            changed: false,
+        }
+    }
+
+    /// Nothing to apply, but the board's visible state moved (or not).
+    fn from_change(changed: bool) -> Self {
+        Self {
+            effect: Effect::None,
+            changed,
+        }
+    }
+
+    fn changed(effect: Effect) -> Self {
+        Self {
+            effect,
+            changed: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BoardState {
     pub panel: Panel,
@@ -80,6 +194,7 @@ pub struct BoardState {
     pub note: Option<Note>,
     agent_idx: usize,
     inbox_idx: usize,
+    last_click: Option<(HitTarget, i64)>,
 }
 
 impl BoardState {
@@ -101,6 +216,200 @@ impl BoardState {
             note: None,
             agent_idx: 0,
             inbox_idx: 0,
+            last_click: None,
+        }
+    }
+
+    const DOUBLE_CLICK_MS: i64 = 400;
+
+    pub fn on_mouse(
+        &mut self,
+        mouse: MouseEvent,
+        map: &BoardHitMap,
+        data: &BoardData,
+        now_ms: i64,
+    ) -> MouseOutcome {
+        // Ignore all mouse events while any popup/confirm/prompt mode is open.
+        if !matches!(self.mode, Mode::Normal | Mode::PickProject { .. }) {
+            return MouseOutcome::ignored();
+        }
+        // Act only on Down/Drag/Up(Left) and Scroll; ignore others.
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown => {}
+            _ => return MouseOutcome::ignored(),
+        }
+
+        let Some(target) = hit(map, mouse.column, mouse.row) else {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                self.last_click = None;
+            }
+            return MouseOutcome::ignored();
+        };
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                MouseOutcome::from_change(self.on_scroll(&target, -1, data))
+            }
+            MouseEventKind::ScrollDown => {
+                MouseOutcome::from_change(self.on_scroll(&target, 1, data))
+            }
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(target, data, now_ms),
+            // Drag/Up(Left): no action, but don't count them as a change either.
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
+                MouseOutcome::ignored()
+            }
+            _ => MouseOutcome::ignored(),
+        }
+    }
+
+    fn on_scroll(&mut self, target: &HitTarget, delta: i32, data: &BoardData) -> bool {
+        let panel = match target {
+            HitTarget::Panel(p) => *p,
+            HitTarget::ProjectRow(_) | HitTarget::PickerRow(_) => Panel::Projects,
+            HitTarget::AgentCard(_) => Panel::Orchestration,
+            HitTarget::InboxRow(_) => Panel::Inbox,
+        };
+        match panel {
+            Panel::Projects => {
+                if let Mode::PickProject { idx } = &mut self.mode {
+                    let max = data.projects.len().saturating_sub(1);
+                    let before = *idx;
+                    if delta < 0 {
+                        *idx = idx.saturating_sub(1);
+                    } else if *idx < max {
+                        *idx += 1;
+                    }
+                    *idx != before
+                } else {
+                    let max = data.projects.len().saturating_sub(1);
+                    let before = self.sel_project;
+                    if delta < 0 {
+                        self.sel_project = self.sel_project.saturating_sub(1);
+                    } else if self.sel_project < max {
+                        self.sel_project += 1;
+                    }
+                    self.sel_project != before
+                }
+            }
+            Panel::Orchestration => {
+                let before = self.sel_agent.clone();
+                self.move_agent(delta, data);
+                self.sel_agent != before
+            }
+            Panel::Detail => {
+                let before = self.msg_scroll;
+                if delta < 0 {
+                    self.msg_scroll = self.msg_scroll.saturating_sub(1);
+                } else {
+                    self.msg_scroll = self.msg_scroll.saturating_add(1);
+                }
+                self.msg_scroll != before
+            }
+            Panel::Inbox => {
+                let before = self.sel_inbox;
+                self.move_inbox(delta, data);
+                self.sel_inbox != before
+            }
+        }
+    }
+
+    fn on_left_down(&mut self, target: HitTarget, data: &BoardData, now_ms: i64) -> MouseOutcome {
+        let is_double = self.last_click.as_ref().is_some_and(|(prev, ts)| {
+            *prev == target && now_ms.saturating_sub(*ts) <= Self::DOUBLE_CLICK_MS
+        });
+        self.last_click = Some((target.clone(), now_ms));
+
+        if is_double {
+            return self.on_double_click(target, data);
+        }
+
+        match target {
+            HitTarget::Panel(panel) => {
+                let changed = self.panel != panel;
+                self.panel = panel;
+                MouseOutcome::from_change(changed)
+            }
+            HitTarget::ProjectRow(idx) | HitTarget::PickerRow(idx) => {
+                let sel = idx.min(data.projects.len().saturating_sub(1));
+                let changed = self.sel_project != sel;
+                self.sel_project = sel;
+                if let Mode::PickProject { idx: ref mut pidx } = self.mode {
+                    let changed = changed || *pidx != self.sel_project;
+                    *pidx = self.sel_project;
+                    MouseOutcome::from_change(changed)
+                } else {
+                    let changed = changed || self.panel != Panel::Projects;
+                    self.panel = Panel::Projects;
+                    MouseOutcome::from_change(changed)
+                }
+            }
+            HitTarget::AgentCard(address) => {
+                let before = (self.panel, self.sel_agent.clone());
+                self.panel = Panel::Orchestration;
+                self.select_agent(&address, data);
+                MouseOutcome::from_change(before != (self.panel, self.sel_agent.clone()))
+            }
+            HitTarget::InboxRow(id) => {
+                let before = (self.panel, self.sel_inbox);
+                self.panel = Panel::Inbox;
+                self.select_inbox(id, data);
+                MouseOutcome::from_change(before != (self.panel, self.sel_inbox))
+            }
+        }
+    }
+
+    fn on_double_click(&mut self, target: HitTarget, data: &BoardData) -> MouseOutcome {
+        // A double-click consumes the click pair.
+        self.last_click = None;
+        match target {
+            HitTarget::ProjectRow(idx) | HitTarget::PickerRow(idx) => {
+                self.sel_project = idx.min(data.projects.len().saturating_sub(1));
+                if let Some(p) = data.projects.get(self.sel_project) {
+                    let key = p.key.clone();
+                    self.mode = Mode::Normal;
+                    self.enter_project(key.clone());
+                    return MouseOutcome::changed(Effect::SwitchProject(key));
+                }
+                MouseOutcome::ignored()
+            }
+            HitTarget::InboxRow(id) => {
+                self.panel = Panel::Inbox;
+                self.select_inbox(id, data);
+                // Pre-fill the reply command exactly like the `r` key does (nothing is sent).
+                self.mode = Mode::Reply {
+                    id,
+                    input: String::new(),
+                };
+                MouseOutcome::changed(Effect::None)
+            }
+            _ => MouseOutcome::ignored(),
+        }
+    }
+
+    fn select_agent(&mut self, address: &str, data: &BoardData) {
+        let Some(view) = data.view.as_ref() else {
+            return;
+        };
+        if let Some(i) = view.agents.iter().position(|a| a.address == address) {
+            if self.sel_agent.as_deref() != Some(address) {
+                self.msg_scroll = 0;
+            }
+            self.agent_idx = i;
+            self.sel_agent = Some(address.to_string());
+        }
+    }
+
+    fn select_inbox(&mut self, id: i64, data: &BoardData) {
+        let Some(view) = data.view.as_ref() else {
+            return;
+        };
+        if let Some(i) = view.inbox.iter().position(|r| r.id == id) {
+            self.inbox_idx = i;
+            self.sel_inbox = Some(id);
         }
     }
 
@@ -1094,5 +1403,465 @@ mod tests {
         s.sync(&d);
         assert_eq!(s.sel_agent, None);
         assert_eq!(s.sel_inbox, None);
+    }
+
+    fn mouse(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn hit_map() -> BoardHitMap {
+        BoardHitMap {
+            panels: vec![
+                (Rect::new(0, 0, 20, 10), Panel::Orchestration),
+                (Rect::new(20, 0, 20, 10), Panel::Detail),
+                (Rect::new(0, 10, 40, 5), Panel::Inbox),
+            ],
+            agent_cards: vec![
+                (Rect::new(1, 1, 8, 3), "t1".into()),
+                (Rect::new(1, 4, 8, 3), "t2".into()),
+            ],
+            inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10), (Rect::new(1, 12, 38, 1), 11)],
+            ..BoardHitMap::default()
+        }
+    }
+
+    #[test]
+    fn mouse_down_focuses_panel_and_selects_targets() {
+        let (mut s, d) = state_with_data();
+        let map = hit_map();
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 25, 2),
+            &map,
+            &d,
+            1,
+        );
+        assert_eq!(e.effect, Effect::None);
+        assert_eq!(s.panel, Panel::Detail);
+
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 5),
+            &map,
+            &d,
+            2,
+        );
+        assert_eq!(e.effect, Effect::None);
+        assert_eq!(s.panel, Panel::Orchestration);
+        assert_eq!(s.sel_agent.as_deref(), Some("t2"));
+
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 12),
+            &map,
+            &d,
+            3,
+        );
+        assert_eq!(e.effect, Effect::None);
+        assert_eq!(s.panel, Panel::Inbox);
+        assert_eq!(s.sel_inbox, Some(11));
+    }
+
+    #[test]
+    fn mouse_scroll_moves_selection_or_detail_scroll() {
+        let (mut s, d) = state_with_data();
+        let map = hit_map();
+        s.panel = Panel::Orchestration;
+        s.sel_agent = Some("t1".into());
+        s.sync(&d);
+        s.on_mouse(mouse(MouseEventKind::ScrollDown, 2, 2), &map, &d, 1);
+        assert_eq!(s.sel_agent.as_deref(), Some("t2"));
+
+        s.on_mouse(mouse(MouseEventKind::ScrollDown, 25, 2), &map, &d, 2);
+        assert_eq!(s.msg_scroll, 1);
+        s.on_mouse(mouse(MouseEventKind::ScrollUp, 25, 2), &map, &d, 3);
+        assert_eq!(s.msg_scroll, 0);
+
+        s.sel_inbox = Some(10);
+        s.sync(&d);
+        s.on_mouse(mouse(MouseEventKind::ScrollDown, 2, 11), &map, &d, 4);
+        assert_eq!(s.sel_inbox, Some(11));
+    }
+
+    #[test]
+    fn mouse_double_click_opens_project_and_replies_inbox() {
+        let (mut s, d) = state_with_data();
+        let map = BoardHitMap {
+            panels: vec![(Rect::new(0, 0, 20, 10), Panel::Projects)],
+            project_rows: vec![(Rect::new(1, 1, 18, 1), 1)],
+            picker_rows: vec![(Rect::new(5, 5, 10, 1), 0)],
+            inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10)],
+            ..BoardHitMap::default()
+        };
+
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 1),
+            &map,
+            &d,
+            100,
+        );
+        assert_eq!(e.effect, Effect::None);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 1),
+            &map,
+            &d,
+            300,
+        );
+        assert_eq!(e.effect, Effect::SwitchProject(pk("shop")));
+        assert_eq!(s.project, Some(pk("shop")));
+
+        let (mut s, d) = state_with_data();
+        s.mode = Mode::PickProject { idx: 0 };
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 6, 5),
+            &map,
+            &d,
+            100,
+        );
+        assert_eq!(e.effect, Effect::None);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 6, 5),
+            &map,
+            &d,
+            400,
+        );
+        assert_eq!(e.effect, Effect::SwitchProject(pk("agmag")));
+        assert_eq!(s.mode, Mode::Normal);
+
+        let (mut s, d) = state_with_data();
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 11),
+            &map,
+            &d,
+            100,
+        );
+        assert_eq!(e.effect, Effect::None);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 11),
+            &map,
+            &d,
+            450,
+        );
+        assert_eq!(e.effect, Effect::None);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn mouse_ignored_in_popup_modes_and_non_left_actions() {
+        let (mut s, d) = state_with_data();
+        let map = hit_map();
+        s.mode = Mode::ConfirmDone { id: 10 };
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 2),
+            &map,
+            &d,
+            1,
+        );
+        assert_eq!(e.effect, Effect::None);
+        assert_eq!(s.mode, Mode::ConfirmDone { id: 10 });
+
+        s.mode = Mode::Normal;
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Right), 2, 2),
+            &map,
+            &d,
+            2,
+        );
+        assert_eq!(e.effect, Effect::None);
+        assert_eq!(s.sel_agent.as_deref(), Some("t1"));
+        let e = s.on_mouse(mouse(MouseEventKind::Moved, 2, 2), &map, &d, 3);
+        assert_eq!(e.effect, Effect::None);
+    }
+
+    fn safety_map() -> BoardHitMap {
+        BoardHitMap {
+            panels: vec![
+                (Rect::new(0, 0, 20, 10), Panel::Orchestration),
+                (Rect::new(20, 0, 20, 10), Panel::Detail),
+                (Rect::new(0, 10, 40, 5), Panel::Inbox),
+                (Rect::new(0, 15, 40, 5), Panel::Projects),
+            ],
+            project_rows: vec![(Rect::new(1, 16, 10, 1), 0)],
+            agent_cards: vec![(Rect::new(1, 1, 8, 3), "t1".into())],
+            inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10), (Rect::new(1, 12, 38, 1), 11)],
+            picker_rows: vec![(Rect::new(1, 17, 10, 1), 1)],
+            overlay: None,
+        }
+    }
+
+    #[test]
+    fn mouse_cannot_reach_destructive_or_send_actions() {
+        // Every event starts from a FRESH Mode::Normal state: one shared state could enter Reply on
+        // the first click and hide the rest of the matrix behind the popup guard.
+        let map = safety_map();
+        let kinds = [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Right),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Right),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollUp,
+        ];
+        let coords = [(1u16, 1u16), (25, 2), (2, 11), (2, 16), (2, 17), (99, 99)];
+        for kind in kinds {
+            for (c, r) in coords {
+                let (mut s, d) = state_with_data();
+                assert_eq!(s.mode, Mode::Normal);
+                let out = s.on_mouse(mouse(kind, c, r), &map, &d, 1_000);
+                assert!(
+                    matches!(out.effect, Effect::None | Effect::SwitchProject(_)),
+                    "mouse produced unsafe effect: {out:?}"
+                );
+                assert!(
+                    !matches!(
+                        out.effect,
+                        Effect::Done { .. }
+                            | Effect::Reply { .. }
+                            | Effect::Send { .. }
+                            | Effect::Quit
+                            | Effect::SaveTheme(_)
+                    ),
+                    "mouse reached a send/destructive effect: {out:?}"
+                );
+                assert!(
+                    !matches!(
+                        s.mode,
+                        Mode::ConfirmDone { .. }
+                            | Mode::Send { .. }
+                            | Mode::ShowItem { .. }
+                            | Mode::Filter { .. }
+                            | Mode::Help
+                    ),
+                    "mouse entered a modal mode: {:?}",
+                    s.mode
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mouse_is_ignored_in_every_modal_mode() {
+        let map = safety_map();
+        let (_, d) = state_with_data();
+        let modes = [
+            Mode::Reply {
+                id: 10,
+                input: "draft".into(),
+            },
+            Mode::Send {
+                to: "t1".into(),
+                kind: 0,
+                input: "draft".into(),
+            },
+            Mode::ShowItem { id: 10 },
+            Mode::Filter { input: "x".into() },
+            Mode::Help,
+            Mode::ConfirmDone { id: 10 },
+        ];
+        let kinds = [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ];
+        let coords = [(1u16, 1u16), (2, 11), (2, 16), (2, 17), (99, 99)];
+        for mode in modes {
+            for kind in kinds {
+                for (c, r) in coords {
+                    let (mut s, _) = state_with_data();
+                    s.mode = mode.clone();
+                    let before = (
+                        s.panel,
+                        s.sel_agent.clone(),
+                        s.sel_inbox,
+                        s.msg_scroll,
+                        s.sel_project,
+                    );
+                    let out = s.on_mouse(mouse(kind, c, r), &map, &d, 5_000);
+                    assert_eq!(out.effect, Effect::None, "{mode:?} + {kind:?}");
+                    assert!(!out.changed, "{mode:?} + {kind:?} changed state");
+                    assert_eq!(s.mode, mode, "{mode:?} was left by {kind:?}");
+                    assert_eq!(
+                        (
+                            s.panel,
+                            s.sel_agent.clone(),
+                            s.sel_inbox,
+                            s.msg_scroll,
+                            s.sel_project
+                        ),
+                        before,
+                        "{mode:?} + {kind:?} moved the board behind the popup"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn double_click_edges() {
+        let map = safety_map();
+        let (_, d) = state_with_data();
+        let down = |c: u16, r: u16| mouse(MouseEventKind::Down(MouseButton::Left), c, r);
+
+        // 401 ms apart is two clicks, not a double-click.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        s.on_mouse(down(2, 11), &map, &d, 1_401);
+        assert!(
+            !matches!(s.mode, Mode::Reply { .. }),
+            "401 ms apart counted as a double-click"
+        );
+
+        // The documented 400 ms window is inclusive.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        s.on_mouse(down(2, 11), &map, &d, 1_400);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
+
+        // Two different targets within the window: two plain clicks, never a double-click.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        let out = s.on_mouse(down(2, 12), &map, &d, 1_100);
+        assert_eq!(out.effect, Effect::None);
+        assert!(!matches!(s.mode, Mode::Reply { .. }));
+        assert_eq!(s.sel_inbox, Some(11));
+
+        // Windows sends a release between the two downs; it must not break the pair.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        s.on_mouse(
+            mouse(MouseEventKind::Up(MouseButton::Left), 2, 11),
+            &map,
+            &d,
+            1_010,
+        );
+        s.on_mouse(down(2, 11), &map, &d, 1_050);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
+
+        // Triple click: the pair opens the reply prefill, the third down is ignored by the popup.
+        let out = s.on_mouse(down(2, 11), &map, &d, 1_060);
+        assert_eq!(out.effect, Effect::None);
+        assert!(!out.changed);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn mouse_reports_whether_it_changed_anything() {
+        let (mut s, d) = state_with_data();
+        let map = hit_map();
+
+        // Ignored event kinds never force a redraw, whatever they point at.
+        for (kind, col, row) in [
+            (MouseEventKind::Moved, 2, 2),
+            (MouseEventKind::Up(MouseButton::Left), 2, 2),
+            (MouseEventKind::Drag(MouseButton::Left), 2, 2),
+            (MouseEventKind::Down(MouseButton::Right), 2, 2),
+            (MouseEventKind::Down(MouseButton::Middle), 2, 11),
+            (MouseEventKind::Up(MouseButton::Right), 2, 11),
+        ] {
+            let out = s.on_mouse(mouse(kind, col, row), &map, &d, 1);
+            assert_eq!(out.effect, Effect::None, "{kind:?}");
+            assert!(!out.changed, "{kind:?} forced a redraw");
+        }
+
+        // A click outside every target changes nothing either.
+        assert!(
+            !s.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 99, 99),
+                &map,
+                &d,
+                2
+            )
+            .changed
+        );
+
+        // Popup modes ignore the mouse.
+        s.mode = Mode::Help;
+        assert!(
+            !s.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 2, 2),
+                &map,
+                &d,
+                3
+            )
+            .changed
+        );
+        s.mode = Mode::Normal;
+
+        // Clicking what is already focused/selected is not a change...
+        s.panel = Panel::Orchestration;
+        s.sel_agent = Some("t1".into());
+        s.sync(&d);
+        assert!(
+            !s.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 2, 2),
+                &map,
+                &d,
+                10
+            )
+            .changed,
+            "clicking the selected card forced a redraw"
+        );
+        // ... but clicking another target is.
+        let out = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 5),
+            &map,
+            &d,
+            20,
+        );
+        assert!(out.changed);
+        assert_eq!(s.sel_agent.as_deref(), Some("t2"));
+
+        // A scroll that cannot move (already at the top) changes nothing; one that moves does.
+        assert!(
+            !s.on_mouse(mouse(MouseEventKind::ScrollUp, 25, 2), &map, &d, 30)
+                .changed,
+            "scrolling past the top forced a redraw"
+        );
+        assert!(
+            s.on_mouse(mouse(MouseEventKind::ScrollDown, 25, 2), &map, &d, 40)
+                .changed
+        );
+
+        // Scrolling past the end of the agent list changes nothing.
+        s.sel_agent = Some("t3".into());
+        s.sync(&d);
+        assert!(
+            !s.on_mouse(mouse(MouseEventKind::ScrollDown, 2, 2), &map, &d, 50)
+                .changed
+        );
     }
 }

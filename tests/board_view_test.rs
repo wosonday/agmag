@@ -2,9 +2,10 @@
 
 use agmag::board::BoardData;
 use agmag::board::flows::Edge;
+use agmag::board::state::{BoardHitMap, HitTarget, Panel};
 use agmag::board::state::{BoardState, Mode};
 use agmag::board::theme::{ThemeName, theme};
-use agmag::board::view::{LayoutMode, draw, draw_in, layout_mode};
+use agmag::board::view::{LayoutMode, draw, draw_in, hit, layout_mode};
 use agmag::project::{AgentView, ProjectKey, ProjectSummary, ProjectView, TurnRow};
 use agmag::store::{InboxRow, MessageRow};
 use ratatui::Terminal;
@@ -64,7 +65,11 @@ fn render(size: (u16, u16), state: &BoardState, data: &BoardData, ascii: bool) -
     let backend = TestBackend::new(size.0, size.1);
     let mut terminal = Terminal::new(backend).unwrap();
     let th = theme(state.theme);
-    terminal.draw(|f| draw(f, state, data, &th, ascii)).unwrap();
+    terminal
+        .draw(|f| {
+            draw(f, state, data, &th, ascii);
+        })
+        .unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -1171,7 +1176,9 @@ fn draw_in_respects_area() {
         height: 30,
     };
     terminal
-        .draw(|f| draw_in(f, sub, &state, &d, &th, false))
+        .draw(|f| {
+            draw_in(f, sub, &state, &d, &th, false);
+        })
         .unwrap();
     let buf = terminal.backend().buffer();
     for y in 0..40 {
@@ -1262,4 +1269,266 @@ fn hidden_cards_show_more_indicator() {
         "test assumes the orphan is hidden:\n{all}"
     );
     assert!(all.contains("more"), "no hidden-cards indicator:\n{all}");
+}
+
+fn mouse(
+    kind: ratatui::crossterm::event::MouseEventKind,
+    column: u16,
+    row: u16,
+) -> ratatui::crossterm::event::MouseEvent {
+    ratatui::crossterm::event::MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+    }
+}
+
+#[test]
+fn picker_popup_makes_the_board_behind_it_unreachable() {
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+
+    // The picker opens by default when `agm board` runs without a project; the board behind it is
+    // still drawn (status, cards, inbox), so only the hit map can make the overlay modal.
+    let mut state = BoardState::new(None, ThemeName::CatppuccinMocha);
+    state.mode = Mode::PickProject { idx: 0 };
+    let mut d = data(vec![agent("ceo", "ceo-card", 0)]);
+    d.projects = vec![
+        ProjectSummary {
+            key: key(),
+            live_agents: 1,
+            open_inbox: 1,
+        },
+        ProjectSummary {
+            key: ProjectKey {
+                root: "D:/p/shop".into(),
+                name: "shop".into(),
+            },
+            live_agents: 0,
+            open_inbox: 0,
+        },
+    ];
+    d.view.as_mut().unwrap().inbox = vec![InboxRow {
+        id: 10,
+        ts_ms: NOW,
+        terminal: Some("t1".into()),
+        source: "agent".into(),
+        kind: Some("done".into()),
+        text: "behind the picker".into(),
+        ..InboxRow::default()
+    }];
+
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let th = theme(state.theme);
+    let mut map = BoardHitMap::default();
+    terminal
+        .draw(|f| {
+            map = draw_in(f, f.area(), &state, &d, &th, false);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    // The background is really drawn: the inbox row and the agent card are visible under the popup.
+    let (bx, by) = find(&buf, "#10");
+    let (cx, cy) = find(&buf, "ceo-card");
+    assert!(
+        by != cy,
+        "test needs the inbox row and the card on different rows"
+    );
+    assert!(
+        hit(&map, bx, by).is_none(),
+        "background inbox row is hit-testable behind the picker: {:?} at {bx},{by}",
+        hit(&map, bx, by)
+    );
+    assert!(
+        hit(&map, cx, cy).is_none(),
+        "background agent card is hit-testable behind the picker: {:?} at {cx},{cy}",
+        hit(&map, cx, cy)
+    );
+
+    // Inside the popup, the picker panel and its rows are still live.
+    let overlay = map.overlay.expect("an open popup must mark the hit map");
+    assert_eq!(
+        hit(&map, overlay.x, overlay.y),
+        Some(HitTarget::Panel(Panel::Projects)),
+        "the picker panel itself must stay focusable"
+    );
+    assert!(map.picker_rows.len() >= 2, "picker rows missing");
+    let (row_rect, row_idx) = map.picker_rows[1];
+    assert_eq!(
+        hit(&map, row_rect.x + 2, row_rect.y),
+        Some(HitTarget::PickerRow(row_idx))
+    );
+
+    // Clicking and scrolling behind the popup changes nothing.
+    let _ = state.on_mouse(
+        mouse(MouseEventKind::Down(MouseButton::Left), bx, by),
+        &map,
+        &d,
+        100,
+    );
+    let _ = state.on_mouse(mouse(MouseEventKind::ScrollDown, bx, by), &map, &d, 200);
+    assert_eq!(state.mode, Mode::PickProject { idx: 0 });
+    assert_eq!(state.sel_inbox, None);
+    assert_eq!(state.panel, Panel::Projects);
+
+    // The double-click that used to close the picker and open Reply.
+    let _ = state.on_mouse(
+        mouse(MouseEventKind::Down(MouseButton::Left), bx, by),
+        &map,
+        &d,
+        300,
+    );
+    assert_eq!(
+        state.mode,
+        Mode::PickProject { idx: 0 },
+        "a double-click behind the picker must not open Reply"
+    );
+    let _ = state.on_mouse(
+        mouse(MouseEventKind::Down(MouseButton::Left), cx, cy),
+        &map,
+        &d,
+        400,
+    );
+    assert_eq!(state.mode, Mode::PickProject { idx: 0 });
+    assert_eq!(state.sel_agent, None);
+    assert_eq!(
+        state.sel_project, 0,
+        "a click behind the picker must not move the project selection"
+    );
+}
+
+#[test]
+fn inbox_hit_map_follows_the_rendered_scroll() {
+    // 10 items in a 3-row inbox: selecting the last item scrolls the first ones out.
+    let mut state = BoardState::new(Some(key()), ThemeName::CatppuccinMocha);
+    state.sel_inbox = Some(10);
+    let mut d = data(vec![agent("ceo", "ceo-card", 0)]);
+    d.view.as_mut().unwrap().inbox = (1..=10)
+        .map(|id| InboxRow {
+            id,
+            ts_ms: NOW,
+            terminal: Some("t1".into()),
+            source: "agent".into(),
+            kind: Some("done".into()),
+            text: format!("item {id}"),
+            ..InboxRow::default()
+        })
+        .collect();
+
+    let backend = TestBackend::new(140, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let th = theme(state.theme);
+    let mut map = BoardHitMap::default();
+    terminal
+        .draw(|f| {
+            map = draw_in(f, f.area(), &state, &d, &th, false);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    assert!(!map.inbox_rows.is_empty(), "no inbox rows recorded");
+    assert!(
+        map.inbox_rows.iter().all(|(_, id)| *id > 1),
+        "the first item is scrolled out but still hit-testable: {:?}",
+        map.inbox_rows
+    );
+    for (rect, id) in &map.inbox_rows {
+        assert!(
+            row_text(&buf, rect.y).contains(&format!("#{id} ")),
+            "inbox row #{} is not at the recorded y {}:\n{}",
+            id,
+            rect.y,
+            text(&buf)
+        );
+        assert_eq!(
+            hit(&map, rect.x + 1, rect.y),
+            Some(HitTarget::InboxRow(*id))
+        );
+    }
+}
+
+#[test]
+fn narrow_orchestration_hit_map_follows_the_rendered_scroll() {
+    // One CEO and 10 workers at 70x24: the list scrolls to the selected last worker.
+    let mut labels = vec![("ceo".to_string(), "ceo-card".to_string())];
+    for i in 0..10 {
+        labels.push((format!("w{i}"), format!("worker-{i:02}")));
+    }
+    let agents = labels
+        .iter()
+        .map(|(addr, label)| agent(addr, label, if addr == "ceo" { 0 } else { 1 }))
+        .collect();
+    let mut state = BoardState::new(Some(key()), ThemeName::CatppuccinMocha);
+    state.sel_agent = Some("w9".into());
+    let d = data(agents);
+
+    let backend = TestBackend::new(70, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let th = theme(state.theme);
+    let mut map = BoardHitMap::default();
+    terminal
+        .draw(|f| {
+            map = draw_in(f, f.area(), &state, &d, &th, false);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    assert_eq!(
+        layout_mode(buf.area.width, buf.area.height),
+        LayoutMode::Narrow
+    );
+    assert!(!map.agent_cards.is_empty(), "no agent rows recorded");
+    assert!(
+        map.agent_cards
+            .iter()
+            .all(|(_, addr)| addr != "ceo" && addr != "w0"),
+        "scrolled-away agents stayed hit-testable: {:?}",
+        map.agent_cards
+    );
+    for (rect, addr) in &map.agent_cards {
+        let label = labels
+            .iter()
+            .find(|(a, _)| a == addr)
+            .map(|(_, label)| label)
+            .unwrap_or_else(|| panic!("unknown agent {addr} in the hit map"));
+        assert!(
+            row_text(&buf, rect.y).contains(label),
+            "agent {addr} is not drawn at the recorded y {}:\n{}",
+            rect.y,
+            text(&buf)
+        );
+        assert_eq!(
+            hit(&map, rect.x + 1, rect.y),
+            Some(HitTarget::AgentCard(addr.clone()))
+        );
+    }
+    // The row the hidden CEO would occupy is the panel, never the hidden card.
+    let first_y = map.agent_cards[0].0.y;
+    assert_eq!(
+        hit(&map, 1, first_y.saturating_sub(1)),
+        Some(HitTarget::Panel(Panel::Orchestration))
+    );
+}
+
+#[test]
+fn help_popup_mouse_lines_fit_without_wrapping() {
+    let mut state = BoardState::new(Some(key()), ThemeName::CatppuccinMocha);
+    state.mode = Mode::Help;
+    let d = data(vec![agent("ceo", "ceo-card", 0)]);
+    let buf = render((100, 24), &state, &d, false);
+
+    let first = "mouse: click focus/select · wheel scroll · double-click open/reply prefill";
+    let second = "Shift+drag selects text · set AGM_MOUSE=0 to disable mouse capture";
+    assert!(
+        (0..buf.area.height).any(|y| row_text(&buf, y).contains(first)),
+        "the mouse help line is wrapped or clipped:\n{}",
+        text(&buf)
+    );
+    assert!(
+        (0..buf.area.height).any(|y| row_text(&buf, y).contains(second)),
+        "the Shift+drag help line is wrapped or clipped:\n{}",
+        text(&buf)
+    );
 }

@@ -144,6 +144,8 @@ cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <m
      TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
 
+Bảng dự án toàn màn hình cũng hỗ trợ chuột: nhấn để chọn/focus, cuộn để di chuyển, nhấp đúp để mở dự án hoặc điền sẵn lệnh trả lời inbox (không gửi cho đến khi bạn nhấn Enter). Giữ Shift khi kéo để chọn chữ; đặt `AGM_MOUSE=0` để tắt bắt chuột.
+
 Lệnh trong TUI (gõ rồi Enter):
 
 | Lệnh | Việc |

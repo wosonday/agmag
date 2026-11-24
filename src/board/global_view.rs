@@ -31,6 +31,8 @@ pub(crate) const MESSAGES_MIN: u16 = 4;
 pub(crate) const MIN_SECTION_H: u16 = 3;
 /// A dragged top-pair panel never gets narrower than this.
 pub(crate) const MIN_PANEL_W: u16 = 20;
+/// Below this width the sections are stacked instead of the two top panels sharing a row.
+pub(crate) const WIDE_MIN_COLS: u16 = 120;
 /// The top pair may never take more than this share of the sections area.
 const PAIR_CAP_PERCENT: u32 = 60;
 const PROMPT: &str = "agm> ";
@@ -234,7 +236,7 @@ fn section_layout(
 ) -> LayoutHeights {
     let mut chosen = visible_sections(&data.view);
     chosen.pop(); // Messages is drawn separately; it stays the last group below.
-    let wide = main.width >= 120 && chosen.len() >= 2;
+    let wide = main.width >= WIDE_MIN_COLS && chosen.len() >= 2;
     let mut desired: Vec<u16> = Vec::with_capacity(chosen.len());
     let mut stacked: Vec<Section> = Vec::with_capacity(chosen.len());
 

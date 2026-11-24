@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Rect;
 
 use super::cmd::NoteKind;
-use super::global_view::{MESSAGES_MIN, MIN_PANEL_W, MIN_SECTION_H};
+use super::global_view::{MESSAGES_MIN, MIN_PANEL_W, MIN_SECTION_H, WIDE_MIN_COLS};
 use super::theme::ThemeName;
 use crate::dashboard::{Section, Snapshot, TermView, sanitize_one_line};
 use crate::project::ProjectKey;
@@ -686,7 +686,7 @@ impl GlobalState {
             }
             Hit::Border(border) => {
                 // A press on a boundary arms a drag; the frame only changes on the first Drag.
-                self.start_drag(border, map);
+                self.start_drag(border, map, data);
                 (false, GEffect::None)
             }
         }
@@ -694,7 +694,7 @@ impl GlobalState {
 
     /// Arms a drag on a boundary that can move. `OutputTop` is not resizable and boundaries in a
     /// window too small for their floors are ignored instead of starting a no-op drag.
-    fn start_drag(&mut self, border: BorderId, map: &HitMap) {
+    fn start_drag(&mut self, border: BorderId, map: &HitMap, data: &GlobalData) {
         self.drag = None;
         if border == BorderId::OutputTop {
             return;
@@ -709,6 +709,12 @@ impl GlobalState {
         else {
             return;
         };
+        // Mirror `section_layout`: the Messages slot is not a resizable group, and the top pair
+        // folds the first two sections into one group only on a wide frame.
+        let mut chosen = visible_sections(&data.view);
+        chosen.pop();
+        let wide = area.width >= WIDE_MIN_COLS && chosen.len() >= 2;
+        let groups = chosen.len().saturating_sub(usize::from(wide));
         let start = match border {
             BorderId::TopPairVertical => {
                 if area.width < MIN_PANEL_W.saturating_mul(2) {
@@ -717,7 +723,11 @@ impl GlobalState {
                 area.x
             }
             BorderId::Horizontal(_) => {
-                if area.height <= MESSAGES_MIN.saturating_add(MIN_SECTION_H) {
+                // The exact floor `apply_height_overrides` uses: a window too short for every
+                // group's minimum plus Messages ignores the boundary instead of storing a ratio
+                // the renderer would never apply.
+                let budget = area.height.saturating_sub(MESSAGES_MIN);
+                if budget < MIN_SECTION_H.saturating_mul(groups as u16) {
                     return;
                 }
                 // The group above ends on the border's row; its first panel row is the anchor.

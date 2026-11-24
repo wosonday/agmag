@@ -1677,3 +1677,44 @@ fn mouse_drag_top_pair_divider_changes_drawn_widths() {
     assert_eq!(tx2, 90, "the right panel starts on the divider");
     assert_eq!(tw2, 50);
 }
+
+#[test]
+fn border_drag_is_ignored_in_a_window_too_short_for_the_floors() {
+    // 40x10 leaves an 8-row content area: three groups plus Messages cannot keep their floors,
+    // so `apply_height_overrides` ignores every stored ratio. Dragging must not arm either.
+    let d = dense_overview_data();
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let before = text(&render((40, 10), &state, &d, false));
+
+    let (id, boundary) = state
+        .hit_map()
+        .borders
+        .iter()
+        .find_map(|(rect, id)| matches!(id, BorderId::Horizontal(_)).then_some((*id, *rect)))
+        .expect("a horizontal boundary is still drawn in the cramped layout");
+    let x = boundary.x + boundary.width / 2;
+    let target = boundary.y.saturating_sub(2);
+
+    let (changed, effect) = state.on_mouse(down(x, boundary.y), &d, 1_000);
+    assert!(!changed, "{id:?} reported a change when only arming");
+    assert_eq!(effect, GEffect::None);
+    let (changed, effect) = state.on_mouse(drag(x, target), &d, 1_100);
+    assert!(
+        !changed,
+        "{id:?} moved in a window too short for its floors"
+    );
+    assert_eq!(effect, GEffect::None);
+    let (changed, effect) = state.on_mouse(up(x, target), &d, 1_200);
+    assert!(!changed);
+    assert_eq!(effect, GEffect::None, "{id:?} was persisted");
+    assert!(
+        state.layout.is_empty(),
+        "a no-op drag stored a stale override: {:?}",
+        state.layout
+    );
+    assert_eq!(
+        text(&render((40, 10), &state, &d, false)),
+        before,
+        "the cramped frame changed after an ignored drag"
+    );
+}

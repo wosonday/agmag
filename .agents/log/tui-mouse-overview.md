@@ -146,4 +146,10 @@ test-only items say so explicitly).
 1. Drag clears `last_click` — new test `mouse_drag_is_not_the_first_click_of_a_double_click`
    (red: the Down after Down → Drag → Up reset `Horizontal(2)`; green after clearing `last_click`
    in `on_drag` whenever a drag is active). Added `drag`/`up` mouse helpers in the global tests.
+2. `start_drag` floor matches `apply_height_overrides` — new integration test
+   `border_drag_is_ignored_in_a_window_too_short_for_the_floors` (red at 40x10: the drag armed on
+   `Horizontal(1)` and returned `SaveLayout`; green after deriving the group count from
+   `visible_sections(&data.view)` and the shared `WIDE_MIN_COLS` mode, and using the same
+   `(height - MESSAGES_MIN) < MIN_SECTION_H * groups` floor). Also asserts the frame is byte-identical
+   and `layout` stays empty.
 

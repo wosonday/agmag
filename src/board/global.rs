@@ -1954,7 +1954,7 @@ mod tests {
         assert!(changed);
         assert_eq!(eff, GEffect::OpenBoard("t1".into()));
 
-        // An inbox row pre-fills `reply #<id> ` and focuses the command line; nothing runs.
+        // An inbox row pre-fills `reply <id> ` and focuses the command line; nothing runs.
         let (mut st, data) = overview_state();
         st.on_mouse(down(45, 1), &data, 1_000);
         let (changed, eff) = st.on_mouse(down(45, 1), &data, 1_200);

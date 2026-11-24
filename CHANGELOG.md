@@ -5,7 +5,7 @@
 ### Thêm mới
 
 - Bảng dự án TUI: bắt chuột (nhấn để chọn/focus, cuộn, nhấp đúp mở hoặc soạn trả lời inbox), giữ Shift+kéo để chọn chữ; `AGM_MOUSE=0` để tắt.
-- Màn tổng `agm tui`: chuột nhấn để chọn/focus, cuộn để đổi lựa chọn hoặc cuộn panel, nhấp đúp mở bảng dự án của terminal hoặc điền sẵn `reply #<id>`; kéo viền để đổi tỉ lệ panel (lưu `tui_layout`), nhấp đúp viền hoặc `layout reset` để trả lại tỉ lệ tự động; `?` hiện trợ giúp.
+- Màn tổng `agm tui`: chuột nhấn để chọn/focus, cuộn để đổi lựa chọn hoặc cuộn panel, nhấp đúp mở bảng dự án của terminal hoặc điền sẵn `reply <id> `; kéo viền để đổi tỉ lệ panel (lưu `tui_layout`), nhấp đúp viền hoặc `layout reset` để trả lại tỉ lệ tự động; `?` hiện trợ giúp.
 
 ### Thay đổi
 

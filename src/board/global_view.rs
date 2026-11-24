@@ -382,7 +382,7 @@ pub fn fit_heights(desired: &[u16], flex: usize, total: u16, min: u16) -> Vec<u1
 ///
 /// `heights` is `[pair?, stacked..., messages]`: the last slot is always Messages, which stays
 /// flexible and takes what the other groups leave. A key sizes the group directly above
-/// `BorderId::Horizontal(key)` (on wide screens `Horizontal(2)` is above the top pair). Ratios are
+/// `BorderId::Horizontal(key)` (on wide screens `Horizontal(2)` is below the top pair). Ratios are
 /// recomputed from `total` every frame, no group drops below `MIN_SECTION_H` and Messages keeps
 /// `MESSAGES_MIN`; a window too short for those floors ignores the override entirely.
 fn apply_height_overrides(heights: &mut [u16], wide: bool, layout: &LayoutOverride, total: u16) {

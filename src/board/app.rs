@@ -375,6 +375,22 @@ fn load_global(
     Ok((snap, project_of))
 }
 
+/// Persists one layout text (empty = reset) and reports the result as a footer note. The `layout
+/// reset` command and both `SaveLayout` effects share it, so their wording can never drift.
+fn save_layout(store: &Store, state: &mut GlobalState, text: &str) {
+    state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, text) {
+        Ok(()) => (
+            NoteKind::Ok,
+            if text.is_empty() {
+                "layout reset".into()
+            } else {
+                "layout saved".into()
+            },
+        ),
+        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+    });
+}
+
 /// One key on the global screen: `GlobalState::on_key` plus what only the loop can do (dispatch,
 /// persisting the theme, closing the Output panel, quitting).
 fn handle_global_key(
@@ -401,10 +417,7 @@ fn handle_global_key(
                 // help/result text covering the screen.
                 data.output = None;
                 state.output_scroll = 0;
-                state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, "") {
-                    Ok(()) => (NoteKind::Ok, "layout reset".into()),
-                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                });
+                save_layout(store, state, "");
                 return AppAction::Stay;
             }
             let dispatched = dispatch(&line);
@@ -440,17 +453,7 @@ fn handle_global_key(
             AppAction::Stay
         }
         GEffect::SaveLayout(text) => {
-            state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, &text) {
-                Ok(()) => (
-                    NoteKind::Ok,
-                    if text.is_empty() {
-                        "layout reset".into()
-                    } else {
-                        "layout saved".into()
-                    },
-                ),
-                Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-            });
+            save_layout(store, state, &text);
             AppAction::Stay
         }
         GEffect::ShowHelp => {
@@ -732,17 +735,7 @@ fn handle_mouse(
                     }
                 }
                 GEffect::SaveLayout(text) => {
-                    state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, &text) {
-                        Ok(()) => (
-                            NoteKind::Ok,
-                            if text.is_empty() {
-                                "layout reset".into()
-                            } else {
-                                "layout saved".into()
-                            },
-                        ),
-                        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
-                    });
+                    save_layout(store, state, &text);
                     Next::Redraw
                 }
                 // The overview's mouse never sends or quits (anti-goal): never dispatch it.
@@ -1012,6 +1005,26 @@ mod tests {
         // A corrupt setting is ignored: the overview falls back to content fitting.
         store.set_setting(LAYOUT_SETTING_KEY, "garbage").unwrap();
         assert_eq!(saved_layout(&store).unwrap(), LayoutOverride::default());
+    }
+
+    #[test]
+    fn save_layout_note_matches_the_stored_text() {
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+
+        save_layout(&store, &mut state, "h2=0.5000");
+        assert_eq!(
+            store.setting(LAYOUT_SETTING_KEY).unwrap().as_deref(),
+            Some("h2=0.5000")
+        );
+        assert_eq!(state.note, Some((NoteKind::Ok, "layout saved".into())));
+
+        save_layout(&store, &mut state, "");
+        assert_eq!(
+            store.setting(LAYOUT_SETTING_KEY).unwrap().as_deref(),
+            Some("")
+        );
+        assert_eq!(state.note, Some((NoteKind::Ok, "layout reset".into())));
     }
 
     #[test]

@@ -172,4 +172,12 @@ test-only items say so explicitly).
      `BorderId::OutputTop` and asserts `(false, GEffect::None)` every time.
    - `overview_mouse_never_dispatches_or_confirms` now also checks the `GEffect` of every
      double-click pair (not only `Next`) and adds a Down → Drag → Up sweep over every target.
+7. Oddments:
+   - new test `save_layout_note_matches_the_stored_text` (red: helper missing) and one shared
+     `save_layout(store, state, text)` helper now handles the `layout reset` command and both
+     `GEffect::SaveLayout` branches (key and mouse).
+   - comment typo in `apply_height_overrides`: `Horizontal(2)` is *below* the top pair.
+   - `CHANGELOG.md` line 8 now says `` `reply <id> ` `` (no `#`, trailing space) like the `r` key
+     and the double-click prefill; the matching test comment in `global.rs` is fixed too.
+     CHANGELOG stayed CRLF (`i/crlf w/crlf`).
 

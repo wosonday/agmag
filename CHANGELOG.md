@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Thêm mới
+
+- Bảng dự án TUI: bắt chuột (nhấn để chọn/focus, cuộn, nhấp đúp mở hoặc soạn trả lời inbox), giữ Shift+kéo để chọn chữ; `AGM_MOUSE=0` để tắt.
+
 ### Thay đổi
 
 - Màn tổng của `agm tui` giờ tự chia chiều cao các panel theo nội dung (Inbox trống chỉ cao 3 dòng, Messages nhận phần diện tích còn lại thay vì cố định 8 dòng); bảng Terminals gọn hơn với tiêu đề `Terminals (N agents · M shells)`: ẩn cột toàn dấu `-`, xếp agent trước, shell thường sau và làm mờ shell.

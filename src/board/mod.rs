@@ -24,7 +24,7 @@ use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::{Hide, Show};
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -308,13 +308,32 @@ impl<T: TermControl> Drop for TermGuard<T> {
     }
 }
 
+/// Whether mouse capture should be enabled. `AGM_MOUSE=0` disables it as an escape hatch;
+/// any other value (or unset) leaves it on.
+pub fn mouse_enabled(env_value: Option<&str>) -> bool {
+    !matches!(env_value, Some("0"))
+}
+
 fn enter_console() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, Hide)
+    if mouse_enabled(std::env::var("AGM_MOUSE").ok().as_deref()) {
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)
+    } else {
+        execute!(io::stdout(), EnterAlternateScreen, Hide)
+    }
 }
 
 fn leave_console() -> io::Result<()> {
-    let shown = execute!(io::stdout(), Show, LeaveAlternateScreen);
+    let shown = if mouse_enabled(std::env::var("AGM_MOUSE").ok().as_deref()) {
+        execute!(
+            io::stdout(),
+            Show,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )
+    } else {
+        execute!(io::stdout(), Show, LeaveAlternateScreen)
+    };
     let raw = disable_raw_mode();
     shown.and(raw)
 }
@@ -342,6 +361,8 @@ pub(crate) struct BoardScreen {
     refresh_note: Option<String>,
     /// The last key ran an action, so the caller refreshes before drawing again.
     needs_refresh: bool,
+    /// Rects recorded during the last draw, used for mouse hit testing.
+    pub(crate) hit_map: view::BoardHitMap,
 }
 
 /// What a key on the board screen did: stay on it, or leave it (`q` / `esc` / `ctrl+c`).
@@ -359,6 +380,7 @@ impl BoardScreen {
             cache: RootCache::new(),
             refresh_note: None,
             needs_refresh: false,
+            hit_map: view::BoardHitMap::default(),
         }
     }
 
@@ -382,8 +404,8 @@ impl BoardScreen {
         self.needs_refresh
     }
 
-    pub(crate) fn draw(&self, frame: &mut Frame, palette: &theme::Theme, ascii: bool) {
-        view::draw(frame, &self.state, &self.data, palette, ascii);
+    pub(crate) fn draw(&mut self, frame: &mut Frame, palette: &theme::Theme, ascii: bool) {
+        self.hit_map = view::draw(frame, &self.state, &self.data, palette, ascii);
     }
 
     pub(crate) fn on_key(
@@ -419,6 +441,48 @@ impl BoardScreen {
             }
         }
         BoardKeyResult::Stay
+    }
+
+    /// Applies one mouse event; returns whether the caller must redraw. Ignored events (moves,
+    /// releases, drags, right/middle buttons, an open popup) return `false` so nothing flickers.
+    pub(crate) fn on_mouse(
+        &mut self,
+        mouse: event::MouseEvent,
+        store: &Store,
+        hc: &dyn Hc,
+        now_ms: i64,
+    ) -> bool {
+        self.needs_refresh = false;
+        let prev_agent = self.state.sel_agent.clone();
+        let outcome = self
+            .state
+            .on_mouse(mouse, &self.hit_map, &self.data, now_ms);
+        if let Effect::SwitchProject(key) = &outcome.effect {
+            self.state.project = Some(key.clone());
+        }
+        let mut redraw = outcome.changed;
+        match outcome.effect {
+            Effect::None => {
+                if self.state.sel_agent != prev_agent
+                    && let Err(e) = reload_conversation(store, &self.state, &mut self.data)
+                {
+                    self.state.note = Some(Note {
+                        ok: false,
+                        text: format!("error: {e:#}"),
+                    });
+                }
+                // The conversation belongs to the selected agent, so a changed selection must
+                // repaint even when the click itself touched only the hit map.
+                redraw |= self.state.sel_agent != prev_agent;
+            }
+            Effect::Quit => {}
+            other => {
+                apply_effect(store, hc, other, &mut self.state, now_ms);
+                self.needs_refresh = true;
+                redraw = true;
+            }
+        }
+        redraw
     }
 }
 
@@ -459,6 +523,15 @@ fn run_loop(
                         draw_board(&mut terminal, screen, ascii)?;
                     }
                 },
+                Event::Mouse(mouse) => {
+                    let redraw = screen.on_mouse(mouse, store, hc, clock_ms());
+                    if screen.needs_refresh() {
+                        break;
+                    }
+                    if redraw {
+                        draw_board(&mut terminal, screen, ascii)?;
+                    }
+                }
                 Event::Resize(_, _) => draw_board(&mut terminal, screen, ascii)?,
                 _ => {}
             }
@@ -468,7 +541,7 @@ fn run_loop(
 
 fn draw_board(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    screen: &BoardScreen,
+    screen: &mut BoardScreen,
     ascii: bool,
 ) -> Result<()> {
     let palette = theme::theme(screen.theme());
@@ -557,6 +630,15 @@ mod tests {
     }
 
     #[test]
+    fn mouse_enabled_respects_env() {
+        assert!(mouse_enabled(None));
+        assert!(mouse_enabled(Some("1")));
+        assert!(mouse_enabled(Some("yes")));
+        assert!(mouse_enabled(Some("")));
+        assert!(!mouse_enabled(Some("0")));
+    }
+
+    #[test]
     fn initial_state_opens_picker_without_project() {
         let st = initial_state(None, theme::ThemeName::default());
         assert_eq!(st.mode, state::Mode::PickProject { idx: 0 });
@@ -630,6 +712,135 @@ mod tests {
             task: None,
             role: None,
         }
+    }
+
+    #[test]
+    fn board_screen_mouse_only_redraws_on_change() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }
+        }
+
+        let store = Store::open_in_memory().unwrap();
+        let mut screen = BoardScreen::new(
+            Some(ProjectKey {
+                root: "/repo/agmag".into(),
+                name: "agmag".into(),
+            }),
+            theme::ThemeName::default(),
+        );
+        screen.hit_map = view::BoardHitMap {
+            panels: vec![(
+                ratatui::layout::Rect::new(0, 0, 20, 10),
+                state::Panel::Detail,
+            )],
+            ..view::BoardHitMap::default()
+        };
+        let hc = NoHc;
+
+        // Moves, releases, drags and non-left buttons must not repaint the screen.
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+        ] {
+            assert!(
+                !screen.on_mouse(mouse(kind, 1, 1), &store, &hc, 1),
+                "{kind:?} forced a redraw"
+            );
+        }
+
+        // A click on another panel moves the focus, so it does.
+        assert!(
+            screen.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &store,
+                &hc,
+                10
+            ),
+            "a focus-changing click must redraw"
+        );
+        assert_eq!(screen.state.panel, state::Panel::Detail);
+
+        // A scroll at the top of the conversation changes nothing; scrolling down does.
+        assert!(!screen.on_mouse(mouse(MouseEventKind::ScrollUp, 1, 1), &store, &hc, 20));
+        assert!(screen.on_mouse(mouse(MouseEventKind::ScrollDown, 1, 1), &store, &hc, 30));
+    }
+
+    #[test]
+    fn board_screen_mouse_selecting_another_agent_reloads_the_conversation() -> Result<()> {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let store = Store::open_in_memory()?;
+        store.add_message(&MessageRow {
+            ts_ms: 1,
+            from: "a".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for a".into(),
+            ..MessageRow::default()
+        })?;
+        store.add_message(&MessageRow {
+            ts_ms: 2,
+            from: "b".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for b".into(),
+            ..MessageRow::default()
+        })?;
+
+        let mut screen = BoardScreen::new(
+            Some(ProjectKey {
+                root: "/repo/agmag".into(),
+                name: "agmag".into(),
+            }),
+            theme::ThemeName::default(),
+        );
+        screen.data = BoardData {
+            view: Some(ProjectView {
+                key: ProjectKey {
+                    root: "/repo/agmag".into(),
+                    name: "agmag".into(),
+                },
+                agents: vec![board_agent("a"), board_agent("b")],
+                inbox: Vec::new(),
+                messages: Vec::new(),
+            }),
+            ..BoardData::default()
+        };
+        screen.state.sel_agent = Some("a".into());
+        reload_conversation(&store, &screen.state, &mut screen.data)?;
+        assert_eq!(screen.data.conversation[0].text, "for a");
+
+        screen.hit_map = state::BoardHitMap {
+            agent_cards: vec![(ratatui::layout::Rect::new(1, 1, 20, 3), "b".to_string())],
+            ..state::BoardHitMap::default()
+        };
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(
+            screen.on_mouse(click, &store, &NoHc, 1_000),
+            "selecting another agent must redraw"
+        );
+        assert_eq!(screen.state.sel_agent.as_deref(), Some("b"));
+        assert_eq!(screen.data.conversation.len(), 1);
+        assert_eq!(
+            screen.data.conversation[0].text, "for b",
+            "the conversation of the previous agent survived the click"
+        );
+        Ok(())
     }
 
     #[test]

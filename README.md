@@ -146,6 +146,8 @@ cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <m
      TYPE: ASSIGN REPORT ERROR QUESTION BLOCKED PASS FAIL
 ```
 
+The full-screen board also supports mouse: click to focus/select, wheel to scroll, and double-click to open a project or pre-fill an inbox reply (nothing is sent until you press Enter). Hold Shift while dragging to select text; set `AGM_MOUSE=0` to disable mouse capture.
+
 TUI commands (type, then Enter):
 
 | Command | Action |

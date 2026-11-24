@@ -81,6 +81,8 @@ enum AppAction {
 /// What the loop does after a key: redraw at once, refresh first, or switch screens / leave.
 enum Next {
     Redraw,
+    /// The event changed nothing visible: keep the current frame, no redraw.
+    Skip,
     Restart,
     /// Back to the global screen, adopting the board's (possibly changed) theme.
     Global(theme::ThemeName),
@@ -131,7 +133,7 @@ pub fn run_app(
             }
             draw(
                 &mut terminal,
-                &screen,
+                &mut screen,
                 &state,
                 &data,
                 board_cmd_focus,
@@ -183,11 +185,12 @@ pub fn run_app(
                             }
                         };
                         match next {
+                            Next::Skip => {}
                             Next::Quit => return Ok(()),
                             Next::Redraw => {
                                 draw(
                                     &mut terminal,
-                                    &screen,
+                                    &mut screen,
                                     &state,
                                     &data,
                                     board_cmd_focus,
@@ -219,9 +222,55 @@ pub fn run_app(
                             }
                         }
                     }
+                    Event::Mouse(mouse) => {
+                        let next = handle_mouse(
+                            mouse,
+                            &mut screen,
+                            store,
+                            hc,
+                            &mut state,
+                            &data,
+                            &mut board_cmd_focus,
+                            super::clock_ms(),
+                        );
+                        match next {
+                            Next::Skip => {}
+                            Next::Quit => return Ok(()),
+                            Next::Redraw => {
+                                draw(
+                                    &mut terminal,
+                                    &mut screen,
+                                    &state,
+                                    &data,
+                                    board_cmd_focus,
+                                    ascii,
+                                )?;
+                            }
+                            Next::Restart => break,
+                            Next::Global(board_theme) => {
+                                screen = Screen::Global;
+                                state.theme = board_theme;
+                                state.focus = Focus::CmdLine;
+                                board_cmd_focus = false;
+                                data.output = None;
+                                state.output_scroll = 0;
+                                break;
+                            }
+                            Next::Board(key) => {
+                                data.output = None;
+                                state.output_scroll = 0;
+                                board_cmd_focus = false;
+                                screen = Screen::Board(Box::new(BoardScreen::new(
+                                    Some(key),
+                                    state.theme,
+                                )));
+                                break;
+                            }
+                        }
+                    }
                     Event::Resize(_, _) => draw(
                         &mut terminal,
-                        &screen,
+                        &mut screen,
                         &state,
                         &data,
                         board_cmd_focus,
@@ -442,7 +491,7 @@ fn is_ctrl_c(key: &KeyEvent) -> bool {
 
 fn draw(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    screen: &Screen,
+    screen: &mut Screen,
     state: &GlobalState,
     data: &GlobalData,
     board_cmd_focus: bool,
@@ -454,7 +503,7 @@ fn draw(
 
 fn draw_frame(
     frame: &mut ratatui::Frame,
-    screen: &Screen,
+    screen: &mut Screen,
     state: &GlobalState,
     data: &GlobalData,
     board_cmd_focus: bool,
@@ -498,7 +547,7 @@ fn draw_frame(
                 width: area.width,
                 height: footer_h,
             };
-            super::view::draw_in(
+            board.hit_map = super::view::draw_in(
                 frame,
                 board_area,
                 &board.state,
@@ -515,6 +564,8 @@ fn draw_frame(
                     &palette,
                     ascii,
                 );
+                // The Output panel covers the board: nothing under it may stay hit-testable.
+                board.hit_map.begin_overlay(main_area);
             }
             let mut cursor = global_view::draw_cmdline_bar(
                 frame,
@@ -539,6 +590,11 @@ fn draw_frame(
             if let Some(pos) = global_view::draw_confirm_popup(frame, area, state, &palette, ascii)
             {
                 cursor = Some(pos);
+            }
+            if state.popup.is_some() {
+                // A confirm popup is modal: nothing on the board stays hit-testable (the empty
+                // overlay rect contains no point), matching how the board's own popups behave.
+                board.hit_map.begin_overlay(Rect::default());
             }
             if let Some(pos) = cursor {
                 let x = pos.x.min(area.right().saturating_sub(1));
@@ -573,6 +629,58 @@ fn run_board_dispatch(
         Next::Restart
     } else {
         Next::Redraw
+    }
+}
+
+/// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
+#[allow(clippy::too_many_arguments)]
+fn handle_mouse(
+    mouse: event::MouseEvent,
+    screen: &mut Screen,
+    store: &Store,
+    hc: &dyn Hc,
+    state: &mut GlobalState,
+    data: &GlobalData,
+    board_cmd_focus: &mut bool,
+    now_ms: i64,
+) -> Next {
+    match screen {
+        Screen::Board(board) => handle_board_mouse(
+            mouse,
+            board,
+            store,
+            hc,
+            state,
+            data,
+            board_cmd_focus,
+            now_ms,
+        ),
+        Screen::Global => Next::Skip,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_board_mouse(
+    mouse: event::MouseEvent,
+    board: &mut Box<BoardScreen>,
+    store: &Store,
+    hc: &dyn Hc,
+    state: &mut GlobalState,
+    data: &GlobalData,
+    board_cmd_focus: &mut bool,
+    now_ms: i64,
+) -> Next {
+    // Popups, the board command bar and the Output panel all own the mouse while they are up.
+    if state.popup.is_some() || *board_cmd_focus || data.output.is_some() {
+        return Next::Skip;
+    }
+    let redraw = board.on_mouse(mouse, store, hc, now_ms);
+    if board.needs_refresh() {
+        Next::Restart
+    } else if redraw {
+        Next::Redraw
+    } else {
+        Next::Skip
     }
 }
 
@@ -868,13 +976,13 @@ mod tests {
 
     #[test]
     fn board_in_app_shows_command_bar() {
-        let screen = Screen::Board(fake_board_screen());
+        let mut screen = Screen::Board(fake_board_screen());
         let state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
         let data = GlobalData::default();
         let backend = ratatui::backend::TestBackend::new(100, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| draw_frame(f, &screen, &state, &data, false, false))
+            .draw(|f| draw_frame(f, &mut screen, &state, &data, false, false))
             .unwrap();
         let buf = terminal.backend().buffer();
         let cmd_row: String = (0..buf.area.width).map(|x| buf[(x, 22)].symbol()).collect();
@@ -882,6 +990,211 @@ mod tests {
             cmd_row.contains("agm> "),
             "board screen in app missing command bar on row above footer: {cmd_row:?}"
         );
+    }
+
+    #[test]
+    fn output_overlay_hides_the_board_from_mouse() {
+        let mut screen = Screen::Board(fake_board_screen());
+        let state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let data = GlobalData {
+            output: Some("cleanup 1 t2".into()),
+            ..GlobalData::default()
+        };
+        let backend = ratatui::backend::TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_frame(f, &mut screen, &state, &data, false, false))
+            .unwrap();
+        let Screen::Board(board) = &screen else {
+            panic!("screen changed")
+        };
+        // The Output panel covers the board area (command bar and footer stay visible).
+        assert_eq!(board.hit_map.overlay, Some(Rect::new(0, 0, 100, 22)));
+        assert!(
+            board.hit_map.panels.is_empty() && board.hit_map.inbox_rows.is_empty(),
+            "board targets stayed hit-testable under the Output panel"
+        );
+        assert!(
+            crate::board::view::hit(&board.hit_map, 1, 1).is_none(),
+            "a click under the Output panel still reached the board"
+        );
+    }
+
+    fn mouse_ev(kind: event::MouseEventKind, column: u16, row: u16) -> event::MouseEvent {
+        event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_events_that_change_nothing_skip_the_redraw() {
+        use event::{MouseButton, MouseEventKind};
+
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let data = GlobalData::default();
+        let mut cmd_focus = false;
+
+        // The overview's mouse belongs to T3: ignoring it must not repaint the frame.
+        let mut screen = Screen::Global;
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Moved, 1, 1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                0
+            ),
+            Next::Skip
+        ));
+
+        // On the board, events the state ignores do not repaint either.
+        let mut board = fake_board_screen();
+        board.hit_map = crate::board::state::BoardHitMap {
+            panels: vec![(Rect::new(0, 0, 20, 10), crate::board::state::Panel::Detail)],
+            ..Default::default()
+        };
+        let mut screen = Screen::Board(board);
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+        ] {
+            assert!(
+                matches!(
+                    handle_mouse(
+                        mouse_ev(kind, 1, 1),
+                        &mut screen,
+                        &store,
+                        &FakeHc,
+                        &mut state,
+                        &data,
+                        &mut cmd_focus,
+                        0
+                    ),
+                    Next::Skip
+                ),
+                "{kind:?} forced a redraw"
+            );
+        }
+
+        // A click that moves the focus does repaint.
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                10
+            ),
+            Next::Redraw
+        ));
+    }
+
+    #[test]
+    fn board_mouse_is_blocked_by_a_popup_or_the_command_bar() {
+        use event::{MouseButton, MouseEventKind};
+
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        let mut board = fake_board_screen();
+        board.hit_map = crate::board::state::BoardHitMap {
+            panels: vec![
+                (Rect::new(0, 0, 20, 10), crate::board::state::Panel::Detail),
+                (Rect::new(20, 0, 20, 10), crate::board::state::Panel::Inbox),
+            ],
+            ..Default::default()
+        };
+        let mut cmd_focus = false;
+
+        // Baseline: a click on another panel moves the focus and asks for a redraw.
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                10
+            ),
+            Next::Redraw
+        ));
+        assert_eq!(board.state.panel, Panel::Detail);
+
+        // While the board command bar has the focus the mouse does nothing and nothing redraws.
+        board.state.panel = Panel::Orchestration;
+        cmd_focus = true;
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                20
+            ),
+            Next::Skip
+        ));
+        assert_eq!(board.state.panel, Panel::Orchestration);
+        cmd_focus = false;
+
+        // A global popup blocks the mouse the same way (it can only be answered by keys).
+        let popup = Popup::Confirm {
+            prompt: "kill t1?".into(),
+            input: String::new(),
+        };
+        state.popup = Some(popup.clone());
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                30
+            ),
+            Next::Skip
+        ));
+        assert_eq!(board.state.panel, Panel::Orchestration);
+        assert_eq!(state.popup, Some(popup));
+
+        // An open Output panel is modal too: `Tab` can leave the command bar while it stays open,
+        // and then a click on the panel text must not reach the board under it.
+        state.popup = None;
+        data.output = Some("cleanup 1 t2".into());
+        // A different target than every earlier click, so this is a plain (not double) click.
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 21, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                40
+            ),
+            Next::Skip
+        ));
+        assert_eq!(board.state.panel, Panel::Orchestration);
     }
 
     fn press(

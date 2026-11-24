@@ -90,3 +90,13 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - `cargo test` -> exit 0, 42 test binaries report `ok`, 0 failed.
 - `git status --short` clean; `git ls-files --eol` for all touched files (`src/board/global.rs`, `src/board/global_view.rs`, `tests/global_view_test.rs`, `.agents/log/tui-layout.md`) -> `i/lf w/lf`, no mixed endings.
 - Seven commits after the review: items 1-7, one per item, no push/merge/branch switch; no edits to `src/board/mod.rs`, `state.rs` or `view.rs`.
+
+## Fix round 2
+
+Review: `.agents/reviews/tui-layout-2.md` (CHƯA ĐẠT). TDD per item (RED → CODE → GREEN → log → commit).
+
+### Item 0 - integrate main
+
+- `git merge main`: one conflict, `CHANGELOG.md` `[Unreleased]` (ours: overview heights + compact Terminals; main: board mouse). Kept both: main's `### Thêm mới` bullet first, then our `### Thay đổi` bullet. CRLF preserved (`i/crlf w/crlf`). `src/board/{app,mod,state,view}.rs` and `tests/board_view_test.rs` merged cleanly.
+- Merge commit `24ab4a8` (both parents). Gates after the merge: `cargo fmt --check` ok; `cargo clippy --all-targets -- -D warnings` Finished with zero warnings; `cargo test` all binaries `ok`, 0 failed.
+- No push, no branch switch; tag/overview code untouched by the merge (only the board mouse files arrived).

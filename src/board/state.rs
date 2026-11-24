@@ -539,19 +539,24 @@ impl BoardState {
 }
 
 fn next_panel(panel: Panel, reverse: bool) -> Panel {
-    const ORDER: [Panel; 4] = [
-        Panel::Projects,
-        Panel::Orchestration,
-        Panel::Detail,
-        Panel::Inbox,
-    ];
-    let idx = ORDER.iter().position(|p| *p == panel).unwrap_or(0);
-    let next = if reverse {
-        (idx + ORDER.len() - 1) % ORDER.len()
-    } else {
-        (idx + 1) % ORDER.len()
-    };
-    ORDER[next]
+    const ORDER: [Panel; 3] = [Panel::Orchestration, Panel::Detail, Panel::Inbox];
+    match ORDER.iter().position(|p| *p == panel) {
+        Some(idx) => {
+            let next = if reverse {
+                (idx + ORDER.len() - 1) % ORDER.len()
+            } else {
+                (idx + 1) % ORDER.len()
+            };
+            ORDER[next]
+        }
+        None => {
+            if reverse {
+                Panel::Inbox
+            } else {
+                Panel::Orchestration
+            }
+        }
+    }
 }
 
 fn current_agent_idx(state: &BoardState, agents: &[AgentView]) -> usize {
@@ -765,9 +770,22 @@ mod tests {
         s.on_key(key(KeyCode::Tab), &d);
         assert_eq!(s.panel, Panel::Inbox);
         s.on_key(key(KeyCode::Tab), &d);
-        assert_eq!(s.panel, Panel::Projects);
+        assert_eq!(s.panel, Panel::Orchestration);
         s.on_key(key(KeyCode::BackTab), &d);
         assert_eq!(s.panel, Panel::Inbox);
+    }
+
+    #[test]
+    fn tab_skips_projects_panel() {
+        let (mut s, d) = state_with_data();
+        s.panel = Panel::Inbox;
+        s.on_key(key(KeyCode::Tab), &d);
+        assert_eq!(s.panel, Panel::Orchestration);
+        s.on_key(key(KeyCode::BackTab), &d);
+        assert_eq!(s.panel, Panel::Inbox);
+        s.panel = Panel::Projects;
+        s.on_key(key(KeyCode::Tab), &d);
+        assert_ne!(s.panel, Panel::Projects);
     }
 
     #[test]

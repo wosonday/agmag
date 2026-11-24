@@ -125,3 +125,11 @@ Review: `.agents/reviews/tui-layout-2.md` (CHƯA ĐẠT). TDD per item (RED → 
 - Tests added: `dropped_sections_have_no_hit_entries` (100×8: Terminals and Inbox dropped) asserts neither appears in `panels`, no `RowTarget::Terminal`/`Inbox` rows survive, and no `BorderId::Horizontal` for their `visible_sections` indexes exists while Messages is still drawn; `row_rects_never_overlap` checks every pair of recorded rows at 100 and 140 columns for heights 1..=10.
 - GREEN: full suite passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
 - EOL: `src/board/global.rs`, `tests/global_view_test.rs` and this log `i/lf w/lf`.
+
+### Final gates (fix round 2, all clean, recorded)
+
+- `cargo fmt --check` → exit 0, no diff.
+- `cargo clippy --all-targets -- -D warnings` → exit 0, `Finished` with zero warnings.
+- `cargo test` → exit 0, 42 test binaries `ok`, 745 tests passed, 0 failed.
+- EOL: `CHANGELOG.md` `i/crlf w/crlf` (merge conflict resolved keeping both entries); `Cargo.toml`, `src/board/global.rs`, `src/board/global_view.rs`, `tests/global_view_test.rs`, `.agents/log/tui-layout.md` all `i/lf w/lf`; no mixed endings.
+- Commits: item 0 `24ab4a8` (amended to `6f13942` with this log's item 0 entry), item 1 `6291211`, item 2 `cda95c9`, item 3 `10d7751`, one per item; no push, no branch switch; board files from main untouched after the merge.

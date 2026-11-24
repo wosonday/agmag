@@ -14,7 +14,7 @@
 
 It also lets you intervene in a controlled way: assign work with worker-count and budget limits, answer agents, stop agents (Codex/Claude only when **you** say so), automatically **rotate** OpenCode workers when their context fills up, and **hand off to a fresh session** for Claude Code/Codex without ever killing the old one automatically.
 
-> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.4.1** — see [CHANGELOG.md](CHANGELOG.md).
+> Primary platform: Windows 11 (also runs on Linux/macOS). Written in Rust — a single `agm.exe`, no runtime needed. Current version: **0.5.0** — see [CHANGELOG.md](CHANGELOG.md).
 >
 > Tables and command output are in **English**. Message types stored by `agm send` are still the Vietnamese codes listed below; `agm tui` also accepts their English names.
 
@@ -46,7 +46,7 @@ Requires [Rust](https://rustup.rs) (with `cargo`).
 git clone <this repo URL> agmag
 cd agmag
 cargo install --path .          # copies agm.exe into ~/.cargo/bin (already on PATH)
-agm --version                   # agm 0.4.1
+agm --version                   # agm 0.5.0
 ```
 
 > `cargo build --release` **only** produces `target\release\agm.exe` — typing `agm` will say "not recognized". Use `cargo install --path .`.

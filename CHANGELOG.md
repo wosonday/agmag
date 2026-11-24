@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-11-24
 
 ### Thêm mới
 
@@ -17,6 +17,7 @@
 
 ### Sửa lỗi
 
+- `agm cleanup` dọn được phiên Claude/Codex đã bàn giao: khi mở terminal, agm ghi `created_ms` thật của herdr (`hc get`) thay vì giờ của tick, và daemon sửa lại các hàng đã ghi lệch (cùng address/app/cwd, do agm mở, lệch dương tối đa 60 giây; mỗi lần sửa ghi action `resync_created_ms`). Trước đây mọi lần xoay phiên có quản lý đều bị cleanup bỏ qua vì `created_ms` lệch vài trăm mili-giây.
 - `agm tui` không còn chặn người dùng trong pane shell của herdr khi cờ reported hoặc app agent trong agm.db còn sót lại từ một agent đã thoát.
 
 ## [0.4.1] - 2026-11-23

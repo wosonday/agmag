@@ -156,3 +156,17 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
 - Các test của item 1 (`approval_delegated_actions_match_case_insensitively`,
   `approval_check_normalizes_action_lane_and_task`, `approval_revoke_grant_reports_zero_rows_and_normalizes`)
   là bằng chứng phủ lỗi. Chỉ cập nhật log; commit để đánh dấu item đã xử lý.
+
+### Item 5 — grant mới thay thế grant cũ; `--expires-ms` tuyệt đối (RED → GREEN)
+- RED: tests/actions_test.rs thêm `approval_new_grant_supersedes_older_ones` và
+  `approval_expires_ms_must_be_absolute_future_deadline`; tests/cli_test.rs thêm `approval_add_rejects_past_absolute_expiry`.
+  Chạy test → đỏ (E0599 `add_approval_grant`, E0425 `validate_expires_ms`).
+- GREEN: src/store/v2.rs đổi `upsert_approval_grant` → `add_approval_grant`, dùng `unchecked_transaction()`:
+  UPDATE các grant active cùng (lane, task, action) rồi INSERT, commit một lần (tất cả caller/test đã đổi tên);
+  src/actions.rs thêm `validate_expires_ms` (epoch ms > now); src/main.rs gọi validate trước cổng người,
+  help `--expires-ms` ghi rõ "absolute expiry deadline in epoch milliseconds (not a TTL)".
+- `cargo test --test actions_test approval_new_grant_supersedes` 1 passed;
+  `approval_expires_ms` 1 passed; `cargo test --test cli_test approval_add_rejects_past` 1 passed;
+  `cargo test --test store_v2_test` 13 passed; `cargo test --test mcp_test approval` 1 passed;
+  `cargo fmt --check` sạch. EOL không đổi.
+- Commit: `fix(approval): supersede old grants and validate absolute expiry`.

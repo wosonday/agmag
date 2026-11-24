@@ -46,7 +46,7 @@ fn delegated_grant_roundtrip_revoke_and_expiry() -> anyhow::Result<()> {
         revoked_ms: None,
         reason: "approved for task".into(),
     };
-    store.upsert_approval_grant(&grant)?;
+    store.add_approval_grant(&grant)?;
     assert!(
         store
             .approval_grant("lane-a", "task-a", "continue_review", 500)?
@@ -75,7 +75,7 @@ fn revoke_approval_grant_reports_matched_row_count() -> anyhow::Result<()> {
 
     let store = Store::open_in_memory()?;
     for lane in ["lane-a", "lane-b"] {
-        store.upsert_approval_grant(&ApprovalGrant {
+        store.add_approval_grant(&ApprovalGrant {
             lane: Some(lane.into()),
             task: Some("task-a".into()),
             action: "spawn_worker".into(),

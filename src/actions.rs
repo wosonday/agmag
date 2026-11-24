@@ -158,6 +158,18 @@ pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<Valida
     Ok(ValidatedGrant { lane, task, action })
 }
 
+/// `--expires-ms` là mốc tuyệt đối (epoch ms), không phải TTL; phải lớn hơn `now`.
+pub fn validate_expires_ms(expires_ms: Option<i64>, now: i64) -> Result<()> {
+    if let Some(expires) = expires_ms
+        && expires <= now
+    {
+        bail!(
+            "--expires-ms phải là mốc thời gian tuyệt đối (epoch ms) ở tương lai, nhận {expires} (now = {now})"
+        );
+    }
+    Ok(())
+}
+
 /// Thu hồi grant (đã chuẩn hóa đầu vào); báo lỗi nếu không có dòng nào khớp để CLI không báo thành công giả.
 pub fn revoke_grant(store: &Store, lane: &str, task: &str, action: &str, now: i64) -> Result<()> {
     let revoked = store.revoke_approval_grant(

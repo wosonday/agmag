@@ -557,8 +557,16 @@ impl Store {
         Ok(())
     }
 
-    pub fn upsert_approval_grant(&self, grant: &ApprovalGrant) -> Result<i64> {
-        self.conn.execute(
+    /// Thêm grant mới trong một transaction: thu hồi mọi grant cũ còn hiệu lực cùng lane/task/action
+    /// trước khi INSERT, để grant không hạn cũ không sống lại khi grant mới hết hạn.
+    pub fn add_approval_grant(&self, grant: &ApprovalGrant) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE approval_grants SET revoked_ms = ?4
+             WHERE lane = ?1 AND task = ?2 AND action = ?3 AND revoked_ms IS NULL",
+            params![grant.lane, grant.task, grant.action, grant.approved_ms],
+        )?;
+        tx.execute(
             "INSERT INTO approval_grants
              (lane, task, action, approved_by, approved_ms, expires_ms, revoked_ms, reason)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
@@ -572,7 +580,9 @@ impl Store {
                 grant.reason,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
     }
 
     pub fn approval_grant(

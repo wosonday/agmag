@@ -338,7 +338,7 @@ fn approval_check_tool_returns_decision_json_and_reads_global_and_grants() {
     );
 
     let id = store
-        .upsert_approval_grant(&ApprovalGrant {
+        .add_approval_grant(&ApprovalGrant {
             lane: Some("lane-a".into()),
             task: Some("task-a".into()),
             action: "spawn_worker".into(),

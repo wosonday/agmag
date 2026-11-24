@@ -20,7 +20,7 @@ fn approval_grant(
     expires_ms: Option<i64>,
 ) -> i64 {
     store
-        .upsert_approval_grant(&ApprovalGrant {
+        .add_approval_grant(&ApprovalGrant {
             lane: Some(lane.into()),
             task: Some(task.into()),
             action: action.into(),
@@ -832,6 +832,80 @@ fn non_shell_foreground_keeps_current_rules() -> Result<()> {
         Caller::Agent(_)
     ));
     Ok(())
+}
+
+#[test]
+fn approval_new_grant_supersedes_older_ones() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let old = store
+        .add_approval_grant(&ApprovalGrant {
+            lane: Some("lane-a".into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 100,
+            expires_ms: None,
+            reason: "old no-expiry grant".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{old}"))
+    );
+    let new = store
+        .add_approval_grant(&ApprovalGrant {
+            lane: Some("lane-a".into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 200,
+            expires_ms: Some(1000),
+            reason: "new time-boxed grant".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{new}"))
+    );
+    // Khi grant mới hết hạn, grant cũ (không hạn) đã bị thu hồi nên không sống lại.
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            1001
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_expires_ms_must_be_absolute_future_deadline() {
+    assert!(actions::validate_expires_ms(None, 1000).is_ok());
+    assert!(actions::validate_expires_ms(Some(1001), 1000).is_ok());
+    for expires in [Some(1000), Some(999), Some(0), Some(-1)] {
+        let err = actions::validate_expires_ms(expires, 1000).unwrap_err();
+        assert!(format!("{err:#}").contains("epoch"), "{err:#}");
+    }
 }
 
 #[test]

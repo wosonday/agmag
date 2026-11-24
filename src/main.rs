@@ -346,6 +346,7 @@ enum ApprovalCmd {
         lane: String,
         task: String,
         action: String,
+        /// Absolute expiry deadline in epoch milliseconds (not a TTL); must be in the future
         #[arg(long)]
         expires_ms: Option<i64>,
         #[arg(long, default_value = "user approved")]
@@ -735,6 +736,7 @@ fn run(cli: Cli) -> Result<()> {
                     reason,
                 },
         } => {
+            agmag::actions::validate_expires_ms(expires_ms, now)?;
             let hc = agmag::hc::HcCli::default();
             let term = ops::hc_terminal();
             agmag::actions::require_human(
@@ -746,7 +748,7 @@ fn run(cli: Cli) -> Result<()> {
             )?;
             let grant = agmag::actions::validate_new_grant(&lane, &task, &action)?;
             let (lane, task, action) = (grant.lane, grant.task, grant.action);
-            let id = store.upsert_approval_grant(&agmag::store::ApprovalGrant {
+            let id = store.add_approval_grant(&agmag::store::ApprovalGrant {
                 lane: Some(lane.clone()),
                 task: Some(task.clone()),
                 action: action.clone(),

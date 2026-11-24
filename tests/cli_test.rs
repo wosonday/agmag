@@ -1067,7 +1067,7 @@ fn approval_check_active_grant_exits_0_and_writes_nothing() {
         let store =
             agmag::store::Store::open(&tmp.path().join("home/agm.db")).expect("open agm.db");
         store
-            .upsert_approval_grant(&agmag::store::ApprovalGrant {
+            .add_approval_grant(&agmag::store::ApprovalGrant {
                 lane: Some("lane-a".into()),
                 task: Some("task-a".into()),
                 action: "spawn_worker".into(),
@@ -1114,6 +1114,27 @@ fn approval_check_empty_action_fails() {
 }
 
 #[test]
+fn approval_add_rejects_past_absolute_expiry() {
+    let tmp = sandbox(None);
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "add",
+            "lane-a",
+            "task-a",
+            "spawn_worker",
+            "--expires-ms",
+            "60000",
+            "--json",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("epoch"), "{err}");
+}
+
+#[test]
 fn approval_check_mixed_case_hard_prohibited_exits_6() {
     let tmp = sandbox(None);
     let out = agm(tmp.path(), &["approval", "check", " PuSh\n", "--json"]);
@@ -1136,7 +1157,7 @@ fn approval_check_normalizes_action_lane_and_task() {
     {
         let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
         store
-            .upsert_approval_grant(&agmag::store::ApprovalGrant {
+            .add_approval_grant(&agmag::store::ApprovalGrant {
                 lane: Some("lane-a".into()),
                 task: Some("task-a".into()),
                 action: "spawn_worker".into(),

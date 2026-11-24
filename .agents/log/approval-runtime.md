@@ -36,3 +36,17 @@
 - Xanh: `cargo test --test actions_test approval_rule` → 9 passed. `cargo fmt --check` sạch.
 - EOL: actions.rs/tests LF, main.rs CRLF (giữ nguyên).
 - Commit: `feat(approval): runtime decision rule for delegated grants`.
+
+### Step 2: `approval add` từ chối đầu vào xấu + sửa lời nhắn revoke (RED → GREEN)
+- tests/actions_test.rs: thêm `approval_grant_input_rejects_empty_fields_and_hard_prohibited` (lane/task/action
+  rỗng hoặc chỉ khoảng trắng, `push`, `"  merge  "` → lỗi nêu đúng trường; action được trim khi hợp lệ).
+- tests/cli_test.rs: thêm `approval_add_and_revoke_stay_tty_only_and_revoke_says_thu_hoi` (không TTY: add và
+  revoke đều thoát 1; câu lỗi revoke có "TTY" + "thu hồi", không còn "được tạo").
+- Đỏ: `validate_new_grant` chưa có; revoke vẫn in "…mới được tạo".
+- src/actions.rs: `validate_new_grant(lane, task, action)` chỉ kiểm tra (không ghi), trả action đã trim;
+  từ chối rỗng và hard-prohibited.
+- src/main.rs: add gọi `validate_new_grant` trước `upsert_approval_grant` (sau kiểm TTY); revoke đổi câu lỗi
+  thành "chỉ người dùng ở terminal (TTY) mới được thu hồi".
+- Xanh: `cargo test --test actions_test approval_grant_input` 1 passed;
+  `cargo test --test cli_test approval_add_and_revoke` 1 passed; `cargo fmt --check` sạch.
+- Commit: `feat(approval): validate new grants and fix revoke TTY message`.

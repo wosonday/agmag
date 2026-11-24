@@ -956,3 +956,23 @@ fn agm_mcp_answers_initialize_over_stdio() {
         serde_json::from_str::<Value>(l).unwrap();
     }
 }
+
+#[test]
+fn approval_add_and_revoke_stay_tty_only_and_revoke_says_thu_hoi() {
+    let tmp = sandbox(None);
+    let out = agm(
+        tmp.path(),
+        &["approval", "revoke", "lane-a", "task-a", "spawn_worker"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("TTY"), "{err}");
+    assert!(err.contains("thu hồi"), "{err}");
+    assert!(!err.contains("được tạo"), "{err}");
+    let out = agm(
+        tmp.path(),
+        &["approval", "add", "lane-a", "task-a", "spawn_worker"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("TTY"));
+}

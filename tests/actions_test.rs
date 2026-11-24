@@ -183,6 +183,30 @@ fn approval_rule_empty_action_is_error() {
     assert!(format!("{err:#}").contains("action"), "{err:#}");
 }
 
+#[test]
+fn approval_grant_input_rejects_empty_fields_and_hard_prohibited() {
+    for (lane, task, action, needle) in [
+        ("", "task-a", "spawn_worker", "lane"),
+        ("  ", "task-a", "spawn_worker", "lane"),
+        ("lane-a", "", "spawn_worker", "task"),
+        ("lane-a", " \t", "spawn_worker", "task"),
+        ("lane-a", "task-a", "", "action"),
+        ("lane-a", "task-a", "  ", "action"),
+        ("lane-a", "task-a", "push", "push"),
+        ("lane-a", "task-a", "  merge  ", "merge"),
+    ] {
+        let err = actions::validate_new_grant(lane, task, action).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(needle),
+            "{lane:?}/{task:?}/{action:?}: {err:#}"
+        );
+    }
+    assert_eq!(
+        actions::validate_new_grant("lane-a", "task-a", "  spawn_worker  ").unwrap(),
+        "spawn_worker"
+    );
+}
+
 fn term(store: &Store, addr: &str, app: &str, role: Option<&str>) {
     store
         .upsert_terminal(&TerminalRow {

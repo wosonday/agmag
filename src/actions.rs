@@ -89,6 +89,25 @@ pub fn decide(
     Ok(decision(ApprovalDecision::RequiresHuman, "none"))
 }
 
+/// Kiểm đầu vào `agm approval add`: lane/task/action không rỗng và action không hard-prohibited.
+/// Trả action đã trim để lưu. Chỉ kiểm tra, không ghi gì.
+pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<String> {
+    if lane.trim().is_empty() {
+        bail!("lane không được rỗng");
+    }
+    if task.trim().is_empty() {
+        bail!("task không được rỗng");
+    }
+    let action = action.trim();
+    if action.is_empty() {
+        bail!("action không được rỗng");
+    }
+    if is_hard_prohibited(action) {
+        bail!("hành động '{action}' là hard-prohibited: luôn cần người duyệt, không thể tạo grant");
+    }
+    Ok(action.to_string())
+}
+
 /// English message types shown in `agm tui`, paired with the stored code (SQLite, forwarded text, `agm send --type`).
 pub const KINDS_EN: [(&str, &str); 7] = [
     ("ASSIGN", "GIAO"),

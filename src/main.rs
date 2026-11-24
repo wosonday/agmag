@@ -727,9 +727,7 @@ fn run(cli: Cli) -> Result<()> {
             if !std::io::stdin().is_terminal() {
                 anyhow::bail!("approval add chỉ người dùng TTY mới được tạo");
             }
-            if agmag::actions::is_hard_prohibited(action.trim()) {
-                anyhow::bail!("approval add bị từ chối: {action} là hành động hard-prohibited");
-            }
+            let action = agmag::actions::validate_new_grant(&lane, &task, &action)?;
             let id = store.upsert_approval_grant(&agmag::store::ApprovalGrant {
                 lane: Some(lane.clone()),
                 task: Some(task.clone()),
@@ -769,7 +767,7 @@ fn run(cli: Cli) -> Result<()> {
             cmd: ApprovalCmd::Revoke { lane, task, action },
         } => {
             if !std::io::stdin().is_terminal() {
-                anyhow::bail!("approval revoke chỉ người dùng TTY mới được tạo");
+                anyhow::bail!("approval revoke chỉ người dùng ở terminal (TTY) mới được thu hồi");
             }
             store.revoke_approval_grant(&lane, &task, &action, now)?;
             store.log_action(

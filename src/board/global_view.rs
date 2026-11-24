@@ -1248,22 +1248,22 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
     let mut top = 0usize;
     for (i, rows) in message_rows.iter().enumerate() {
         let bottom = top + rows;
-        if bottom > scroll_rows {
-            let visible_top = top.saturating_sub(scroll_rows);
-            if visible_top >= view_rows {
-                break; // later messages are even further down
-            }
-            let visible_bottom = bottom.min(scroll_rows + view_rows);
-            state.push_row(
-                Rect {
-                    x: inner.x,
-                    y: inner.y + visible_top as u16,
-                    width: inner.width,
-                    height: (visible_bottom - visible_top) as u16,
-                },
-                RowTarget::Message(i),
-            );
+        if bottom <= scroll_rows || top >= scroll_rows + view_rows {
+            top = bottom;
+            continue; // entirely above or below the scrolled viewport
         }
+        // Both edges are measured in the viewport (0..view_rows), never in message space.
+        let top_v = top.saturating_sub(scroll_rows);
+        let bottom_v = bottom.min(scroll_rows + view_rows) - scroll_rows;
+        state.push_row(
+            Rect {
+                x: inner.x,
+                y: inner.y + top_v as u16,
+                width: inner.width,
+                height: (bottom_v - top_v) as u16,
+            },
+            RowTarget::Message(i),
+        );
         top = bottom;
     }
     let paragraph = Paragraph::new(lines).scroll((scroll, 0));

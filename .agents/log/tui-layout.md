@@ -100,3 +100,10 @@ Review: `.agents/reviews/tui-layout-2.md` (CHƯA ĐẠT). TDD per item (RED → 
 - `git merge main`: one conflict, `CHANGELOG.md` `[Unreleased]` (ours: overview heights + compact Terminals; main: board mouse). Kept both: main's `### Thêm mới` bullet first, then our `### Thay đổi` bullet. CRLF preserved (`i/crlf w/crlf`). `src/board/{app,mod,state,view}.rs` and `tests/board_view_test.rs` merged cleanly.
 - Merge commit `24ab4a8` (both parents). Gates after the merge: `cargo fmt --check` ok; `cargo clippy --all-targets -- -D warnings` Finished with zero warnings; `cargo test` all binaries `ok`, 0 failed.
 - No push, no branch switch; tag/overview code untouched by the merge (only the board mouse files arrived).
+
+### Item 1 - message row rects when scrolled
+
+- RED: `scrolled_message_row_rects_match_drawn_lines` (4 wrapped messages, 100×30, `scroll` 1..=12): at `scroll = 1` the message rects overlapped (`height: 8` for a 7-row message) and one rect left the Messages inner area. The test asserts, per scroll: message rects stay inside Messages, never overlap, and every drawn row (identified by its `from<i>`/`P<i>`/filler text) hits `RowTarget::Message(i)` for that message.
+- CODE: `draw_messages` now computes both edges in the viewport system exactly as specified: `top_v = top.saturating_sub(scroll)`, `bottom_v = bottom.min(scroll + view) - scroll`, skipping a message when `bottom <= scroll` or `top >= scroll + view`; `height = bottom_v - top_v`; `y = inner.y + top_v`.
+- GREEN: the scrolled test and the full suite pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+- EOL: `tests/global_view_test.rs`, `src/board/global_view.rs` and this log remain `i/lf w/lf`.

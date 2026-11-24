@@ -1231,6 +1231,85 @@ fn output_overlay_hides_covered_hit_entries() {
 }
 
 #[test]
+fn scrolled_message_row_rects_match_drawn_lines() {
+    let mut d = data(&[Section::Terminals]);
+    let snap = d.snap.as_mut().unwrap();
+    let fillers = ['q', 'w', 'x', 'z'];
+    for (i, filler) in fillers.iter().enumerate() {
+        snap.messages.push(MessageRow {
+            id: i as i64 + 1,
+            ts_ms: NOW,
+            from: format!("from{i}"),
+            to: format!("to{i}"),
+            kind: "BÁO CÁO".into(),
+            text: format!("P{i} {}", filler.to_string().repeat(500)),
+            ..MessageRow::default()
+        });
+    }
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    for scroll in 1..=12u16 {
+        state.scroll.insert(Section::Messages, scroll);
+        let buf = render((100, 30), &state, &d, false);
+        let map = state.hit_map();
+        let (left, top, width, height) = panel_rect(&buf, "Messages");
+        let inner = ratatui::layout::Rect::new(left + 1, top + 1, width - 2, height - 2);
+        let rows: Vec<(ratatui::layout::Rect, &RowTarget)> = map
+            .rows
+            .iter()
+            .filter(|(_, target)| matches!(target, RowTarget::Message(_)))
+            .map(|(rect, target)| (*rect, target))
+            .collect();
+        assert!(
+            !rows.is_empty(),
+            "scroll {scroll}: no message rows recorded:\n{}",
+            text(&buf)
+        );
+        for (i, (rect, _)) in rows.iter().enumerate() {
+            assert!(
+                rect_inside(inner, *rect),
+                "scroll {scroll}: message rect {rect:?} leaves Messages inner {inner:?}:\n{}",
+                text(&buf)
+            );
+            for (other, _) in rows.iter().skip(i + 1) {
+                assert!(
+                    !rects_overlap(*rect, *other),
+                    "scroll {scroll}: message rects {rect:?} and {other:?} overlap:\n{}",
+                    text(&buf)
+                );
+            }
+        }
+        // Each drawn row carries a message header (`from{i}`) or nothing but that message's filler
+        // character, so the row itself says which message must own it.
+        for y in inner.y..inner.y + inner.height {
+            let line = row_text(&buf, y);
+            let content: String = line
+                .chars()
+                .skip(inner.x as usize)
+                .take(inner.width as usize)
+                .collect();
+            if content.trim().is_empty() {
+                continue;
+            }
+            let expected = (0..fillers.len())
+                .find(|i| content.contains(&format!("from{i}")))
+                .or_else(|| (0..fillers.len()).find(|i| content.contains(&format!("P{i}"))))
+                .or_else(|| {
+                    (0..fillers.len()).find(|i| content.chars().any(|c| c == fillers[*i]))
+                });
+            let Some(i) = expected else {
+                panic!("scroll {scroll}: row {y} belongs to no message: {content:?}\n{}", text(&buf));
+            };
+            assert_eq!(
+                hit(&map, inner.x + 1, y),
+                Some(Hit::Row(RowTarget::Message(i))),
+                "scroll {scroll}: row {y} was drawn for message {i} but hit another target: {content:?}\n{}",
+                text(&buf)
+            );
+        }
+    }
+}
+
+#[test]
 fn message_row_rects_follow_wrapped_height() {
     let mut d = data(&Section::DEFAULT);
     let snap = d.snap.as_mut().unwrap();

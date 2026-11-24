@@ -617,19 +617,19 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Thu hồi mọi grant còn hiệu lực khớp đúng lane/task/action; trả số dòng đã cập nhật.
     pub fn revoke_approval_grant(
         &self,
         lane: &str,
         task: &str,
         action: &str,
         now: i64,
-    ) -> Result<()> {
-        self.conn.execute(
+    ) -> Result<usize> {
+        Ok(self.conn.execute(
             "UPDATE approval_grants SET revoked_ms = ?4
              WHERE lane = ?1 AND task = ?2 AND action = ?3 AND revoked_ms IS NULL",
             params![lane, task, action, now],
-        )?;
-        Ok(())
+        )?)
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>> {

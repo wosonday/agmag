@@ -158,6 +158,20 @@ pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<Valida
     Ok(ValidatedGrant { lane, task, action })
 }
 
+/// Thu hồi grant (đã chuẩn hóa đầu vào); báo lỗi nếu không có dòng nào khớp để CLI không báo thành công giả.
+pub fn revoke_grant(store: &Store, lane: &str, task: &str, action: &str, now: i64) -> Result<()> {
+    let revoked = store.revoke_approval_grant(
+        &normalize_key(lane),
+        &normalize_key(task),
+        &normalize_action(action),
+        now,
+    )?;
+    if revoked == 0 {
+        bail!("không có grant còn hiệu lực cho {lane}/{task}:{action} để thu hồi");
+    }
+    Ok(())
+}
+
 /// English message types shown in `agm tui`, paired with the stored code (SQLite, forwarded text, `agm send --type`).
 pub const KINDS_EN: [(&str, &str); 7] = [
     ("ASSIGN", "GIAO"),

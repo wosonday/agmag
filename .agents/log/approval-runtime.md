@@ -137,3 +137,15 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
   `cargo test --test cli_test approval_add_and_revoke` 1 passed; `cargo test --test board_runtime_test` 6 passed;
   `cargo fmt --check` sạch. EOL: main.rs CRLF, các tệp khác LF.
 - Commit: `fix(approval): require human caller for add and revoke`.
+
+### Item 3 — revoke báo đúng thực tế (RED → GREEN)
+- RED: tests/store_v2_test.rs thêm `revoke_approval_grant_reports_matched_row_count` (1 dòng khớp → 1, gọi lại → 0,
+  sai lane → 0, grant lane khác vẫn sống); tests/actions_test.rs thêm `approval_revoke_grant_reports_zero_rows_and_normalizes`.
+  Chạy test → đỏ (`expected (), found integer`, `revoke_grant` chưa có).
+- GREEN: src/store/v2.rs `revoke_approval_grant` trả `Result<usize>` (số dòng UPDATE); src/actions.rs thêm
+  `revoke_grant` chuẩn hóa lane/task/action rồi báo lỗi khi 0 dòng; src/main.rs gọi helper trước khi log/emit —
+  với 0 dòng thì thoát 1, không ghi `approval_revoke ok=true`, không in `{"revoked": true}`.
+- `cargo test --test store_v2_test revoke_approval_grant_reports` 1 passed;
+  `cargo test --test actions_test approval_revoke` 1 passed; `approval_rule_revoked` 1 passed;
+  `cargo fmt --check` sạch. EOL không đổi (main.rs CRLF, còn lại LF).
+- Commit: `fix(approval): report zero matched rows when revoking`.

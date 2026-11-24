@@ -796,7 +796,7 @@ fn run(cli: Cli) -> Result<()> {
             let lane = agmag::actions::normalize_key(&lane);
             let task = agmag::actions::normalize_key(&task);
             let action = agmag::actions::normalize_action(&action);
-            store.revoke_approval_grant(&lane, &task, &action, now)?;
+            agmag::actions::revoke_grant(&store, &lane, &task, &action, now)?;
             store.log_action(
                 "user",
                 "approval_revoke",

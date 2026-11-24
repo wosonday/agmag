@@ -835,6 +835,30 @@ fn non_shell_foreground_keeps_current_rules() -> Result<()> {
 }
 
 #[test]
+fn approval_revoke_grant_reports_zero_rows_and_normalizes() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let cfg = approval_cfg(&[]);
+    let input = actions::validate_new_grant(" lane-a ", " task-a ", " Spawn_Worker ").unwrap();
+    approval_grant(&store, &input.lane, &input.task, &input.action, None);
+    // Lane/task/action của lệnh revoke được chuẩn hóa trước khi khớp với grant đã lưu.
+    actions::revoke_grant(&store, " lane-a ", " task-a ", " SPAWN_WORKER ", 200)?;
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+    let err = actions::revoke_grant(&store, "lane-a", "task-a", "spawn_worker", 300).unwrap_err();
+    assert!(format!("{err:#}").contains("không có grant"), "{err:#}");
+    Ok(())
+}
+
+#[test]
 fn approval_add_revoke_require_human_and_refuse_agent_in_hc_pty() -> Result<()> {
     let store = Store::open_in_memory()?;
     // Agent chạy trong PTY của hc: có TTY nhưng terminal là app agent → vẫn là agent.

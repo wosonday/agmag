@@ -69,6 +69,47 @@ fn delegated_grant_roundtrip_revoke_and_expiry() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn revoke_approval_grant_reports_matched_row_count() -> anyhow::Result<()> {
+    use agmag::store::ApprovalGrant;
+
+    let store = Store::open_in_memory()?;
+    for lane in ["lane-a", "lane-b"] {
+        store.upsert_approval_grant(&ApprovalGrant {
+            lane: Some(lane.into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 100,
+            reason: "test".into(),
+            ..Default::default()
+        })?;
+    }
+    assert_eq!(
+        store.revoke_approval_grant("lane-a", "task-a", "spawn_worker", 200)?,
+        1
+    );
+    assert_eq!(
+        store.revoke_approval_grant("lane-a", "task-a", "spawn_worker", 300)?,
+        0
+    );
+    assert_eq!(
+        store.revoke_approval_grant("lane-z", "task-a", "spawn_worker", 300)?,
+        0
+    );
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "spawn_worker", 500)?
+            .is_none()
+    );
+    assert!(
+        store
+            .approval_grant("lane-b", "task-a", "spawn_worker", 500)?
+            .is_some()
+    );
+    Ok(())
+}
+
 fn term(addr: &str) -> TerminalRow {
     TerminalRow {
         address: addr.into(),

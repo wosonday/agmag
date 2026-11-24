@@ -1078,6 +1078,74 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn board_mouse_is_blocked_by_a_popup_or_the_command_bar() {
+        use event::{MouseButton, MouseEventKind};
+
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut board = fake_board_screen();
+        board.hit_map = crate::board::state::BoardHitMap {
+            panels: vec![(Rect::new(0, 0, 20, 10), crate::board::state::Panel::Detail)],
+            ..Default::default()
+        };
+        let mut cmd_focus = false;
+
+        // Baseline: a click on another panel moves the focus and asks for a redraw.
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &mut cmd_focus,
+                10
+            ),
+            Next::Redraw
+        ));
+        assert_eq!(board.state.panel, Panel::Detail);
+
+        // While the board command bar has the focus the mouse does nothing and nothing redraws.
+        board.state.panel = Panel::Orchestration;
+        cmd_focus = true;
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &mut cmd_focus,
+                20
+            ),
+            Next::Skip
+        ));
+        assert_eq!(board.state.panel, Panel::Orchestration);
+        cmd_focus = false;
+
+        // A global popup blocks the mouse the same way (it can only be answered by keys).
+        let popup = Popup::Confirm {
+            prompt: "kill t1?".into(),
+            input: String::new(),
+        };
+        state.popup = Some(popup.clone());
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &mut cmd_focus,
+                30
+            ),
+            Next::Skip
+        ));
+        assert_eq!(board.state.panel, Panel::Orchestration);
+        assert_eq!(state.popup, Some(popup));
+    }
+
     fn press(
         code: KeyCode,
         board: &mut Box<BoardScreen>,

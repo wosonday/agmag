@@ -1398,3 +1398,116 @@ fn picker_popup_makes_the_board_behind_it_unreachable() {
         "a click behind the picker must not move the project selection"
     );
 }
+
+#[test]
+fn inbox_hit_map_follows_the_rendered_scroll() {
+    // 10 items in a 3-row inbox: selecting the last item scrolls the first ones out.
+    let mut state = BoardState::new(Some(key()), ThemeName::CatppuccinMocha);
+    state.sel_inbox = Some(10);
+    let mut d = data(vec![agent("ceo", "ceo-card", 0)]);
+    d.view.as_mut().unwrap().inbox = (1..=10)
+        .map(|id| InboxRow {
+            id,
+            ts_ms: NOW,
+            terminal: Some("t1".into()),
+            source: "agent".into(),
+            kind: Some("done".into()),
+            text: format!("item {id}"),
+            ..InboxRow::default()
+        })
+        .collect();
+
+    let backend = TestBackend::new(140, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let th = theme(state.theme);
+    let mut map = BoardHitMap::default();
+    terminal
+        .draw(|f| {
+            map = draw_in(f, f.area(), &state, &d, &th, false);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    assert!(!map.inbox_rows.is_empty(), "no inbox rows recorded");
+    assert!(
+        map.inbox_rows.iter().all(|(_, id)| *id > 1),
+        "the first item is scrolled out but still hit-testable: {:?}",
+        map.inbox_rows
+    );
+    for (rect, id) in &map.inbox_rows {
+        assert!(
+            row_text(&buf, rect.y).contains(&format!("#{id} ")),
+            "inbox row #{} is not at the recorded y {}:\n{}",
+            id,
+            rect.y,
+            text(&buf)
+        );
+        assert_eq!(
+            hit(&map, rect.x + 1, rect.y),
+            Some(HitTarget::InboxRow(*id))
+        );
+    }
+}
+
+#[test]
+fn narrow_orchestration_hit_map_follows_the_rendered_scroll() {
+    // One CEO and 10 workers at 70x24: the list scrolls to the selected last worker.
+    let mut labels = vec![("ceo".to_string(), "ceo-card".to_string())];
+    for i in 0..10 {
+        labels.push((format!("w{i}"), format!("worker-{i:02}")));
+    }
+    let agents = labels
+        .iter()
+        .map(|(addr, label)| agent(addr, label, if addr == "ceo" { 0 } else { 1 }))
+        .collect();
+    let mut state = BoardState::new(Some(key()), ThemeName::CatppuccinMocha);
+    state.sel_agent = Some("w9".into());
+    let d = data(agents);
+
+    let backend = TestBackend::new(70, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let th = theme(state.theme);
+    let mut map = BoardHitMap::default();
+    terminal
+        .draw(|f| {
+            map = draw_in(f, f.area(), &state, &d, &th, false);
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer().clone();
+
+    assert_eq!(
+        layout_mode(buf.area.width, buf.area.height),
+        LayoutMode::Narrow
+    );
+    assert!(!map.agent_cards.is_empty(), "no agent rows recorded");
+    assert!(
+        map.agent_cards
+            .iter()
+            .all(|(_, addr)| addr != "ceo" && addr != "w0"),
+        "scrolled-away agents stayed hit-testable: {:?}",
+        map.agent_cards
+    );
+    for (rect, addr) in &map.agent_cards {
+        let label = labels
+            .iter()
+            .find(|(a, _)| a == addr)
+            .map(|(_, label)| label)
+            .unwrap_or_else(|| panic!("unknown agent {addr} in the hit map"));
+        assert!(
+            row_text(&buf, rect.y).contains(label),
+            "agent {addr} is not drawn at the recorded y {}:\n{}",
+            rect.y,
+            text(&buf)
+        );
+        assert_eq!(
+            hit(&map, rect.x + 1, rect.y),
+            Some(HitTarget::AgentCard(addr.clone()))
+        );
+    }
+    // The row the hidden CEO would occupy is the panel, never the hidden card.
+    let first_y = map.agent_cards[0].0.y;
+    assert_eq!(
+        hit(&map, 1, first_y.saturating_sub(1)),
+        Some(HitTarget::Panel(Panel::Orchestration))
+    );
+}

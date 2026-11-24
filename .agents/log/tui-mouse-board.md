@@ -78,3 +78,20 @@
 - TDD evidence (temporary mutations, reverted): removing the modal-mode guard made
   `mouse_is_ignored_in_every_modal_mode` fail; setting `DOUBLE_CLICK_MS = 4000` made `double_click_edges` fail.
 - Status: green
+
+### Item 4 - Tests on the real hit map + unit tests for the app/board wrappers
+- `inbox_hit_map_follows_the_rendered_scroll` (draw_in, 140x24, 10 items, last selected): every recorded
+  `InboxRow` sits on the buffer row that actually renders `#id`, the scrolled-out first item is not hit-testable,
+  and `hit()` returns that item.
+- `narrow_orchestration_hit_map_follows_the_rendered_scroll` (draw_in, 70x24, CEO + 10 workers, last selected):
+  recorded `AgentCard`s match the rendered label rows after scrolling, `ceo`/`w0` are gone from the map, and the
+  hidden row is `Panel(Orchestration)`.
+- `board_mouse_is_blocked_by_a_popup_or_the_command_bar` (app::handle_board_mouse): baseline click → `Redraw`;
+  command bar focused / global popup → `Skip`, panel untouched.
+- `board_screen_mouse_selecting_another_agent_reloads_the_conversation` (BoardScreen::on_mouse): click on another
+  card switches `sel_agent` and replaces the conversation with that agent's.
+- The picker-popup real-map test was added with item 1 (its map is the one `draw_in` produced).
+- The Output-open blocked case is added with item 5 (its guard lands there).
+- TDD evidence (temporary mutation, reverted): dropping the inbox scroll offset from the recorded rows made
+  `inbox_hit_map_follows_the_rendered_scroll` fail.
+- Status: green

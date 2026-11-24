@@ -776,6 +776,74 @@ mod tests {
     }
 
     #[test]
+    fn board_screen_mouse_selecting_another_agent_reloads_the_conversation() -> Result<()> {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let store = Store::open_in_memory()?;
+        store.add_message(&MessageRow {
+            ts_ms: 1,
+            from: "a".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for a".into(),
+            ..MessageRow::default()
+        })?;
+        store.add_message(&MessageRow {
+            ts_ms: 2,
+            from: "b".into(),
+            to: "user".into(),
+            kind: "GIAO".into(),
+            text: "for b".into(),
+            ..MessageRow::default()
+        })?;
+
+        let mut screen = BoardScreen::new(
+            Some(ProjectKey {
+                root: "/repo/agmag".into(),
+                name: "agmag".into(),
+            }),
+            theme::ThemeName::default(),
+        );
+        screen.data = BoardData {
+            view: Some(ProjectView {
+                key: ProjectKey {
+                    root: "/repo/agmag".into(),
+                    name: "agmag".into(),
+                },
+                agents: vec![board_agent("a"), board_agent("b")],
+                inbox: Vec::new(),
+                messages: Vec::new(),
+            }),
+            ..BoardData::default()
+        };
+        screen.state.sel_agent = Some("a".into());
+        reload_conversation(&store, &screen.state, &mut screen.data)?;
+        assert_eq!(screen.data.conversation[0].text, "for a");
+
+        screen.hit_map = state::BoardHitMap {
+            agent_cards: vec![(ratatui::layout::Rect::new(1, 1, 20, 3), "b".to_string())],
+            ..state::BoardHitMap::default()
+        };
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(
+            screen.on_mouse(click, &store, &NoHc, 1_000),
+            "selecting another agent must redraw"
+        );
+        assert_eq!(screen.state.sel_agent.as_deref(), Some("b"));
+        assert_eq!(screen.data.conversation.len(), 1);
+        assert_eq!(
+            screen.data.conversation[0].text, "for b",
+            "the conversation of the previous agent survived the click"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn conversation_follows_selected_agent() -> Result<()> {
         let store = Store::open_in_memory()?;
         store.add_message(&MessageRow {

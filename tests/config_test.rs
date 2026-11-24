@@ -336,7 +336,12 @@ fn invalid_ctx_thresholds_are_rejected() {
     ] {
         std::fs::write(&path, format!("[policy]\n{policy}\n")).unwrap();
         let err = Config::load(&path).expect_err(policy);
-        assert!(format!("{err:#}").contains("ctx_"), "{policy}: {err:#}");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Invalid [policy]"), "{policy}: {msg}");
+        assert!(
+            msg.contains("must be a number in (0, 100]") || msg.contains("must not exceed"),
+            "{policy}: {msg}"
+        );
     }
     for policy in [
         "interactive_ctx_warn = 30\ninteractive_ctx_rotate = 35",

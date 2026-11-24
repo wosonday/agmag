@@ -162,4 +162,14 @@ test-only items say so explicitly).
 5. Modal mouse state — new test `mouse_popup_and_output_overlay_drop_a_pending_drag_and_click`
    (red: a drag armed before a popup resumed after it closed; green after clearing `drag` in the
    popup guard and `last_click` + `drag` in the Output-overlay guard).
+6. Coverage tests from the review (test-only, no production change):
+   - `layout_override_survives_window_shrinks_end_to_end` (integration): the same `w`/`h2`/`h3`
+     override drawn at 140x40 then 100x17 and 40x10; every rect stays inside main, no panel
+     overlaps, and the stored ratios survive.
+   - `horizontal_borders_match_the_group_above_them` also renders the narrow 100x40 layout and
+     asserts `Horizontal(1..=3)` each sits below its group.
+   - `mouse_ignored_while_popup_or_output_overlay` also sends Down → Drag → Up on
+     `BorderId::OutputTop` and asserts `(false, GEffect::None)` every time.
+   - `overview_mouse_never_dispatches_or_confirms` now also checks the `GEffect` of every
+     double-click pair (not only `Next`) and adds a Down → Drag → Up sweep over every target.
 

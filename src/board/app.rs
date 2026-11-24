@@ -1910,6 +1910,18 @@ mod tests {
             let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
             let mut screen = draw_overview(&state, &data);
             for now in [1_000, 1_200] {
+                let (_, effect) = state.clone().on_mouse(
+                    mouse_ev(MouseEventKind::Down(MouseButton::Left), column, row),
+                    &data,
+                    now,
+                );
+                assert!(
+                    !matches!(
+                        effect,
+                        GEffect::Run(_) | GEffect::Quit | GEffect::SaveTheme(_)
+                    ),
+                    "a double-click at {column},{row} produced {effect:?}"
+                );
                 let next = handle_mouse(
                     mouse_ev(MouseEventKind::Down(MouseButton::Left), column, row),
                     &mut screen,
@@ -1929,6 +1941,46 @@ mod tests {
                 state.popup.is_none(),
                 "a double-click at {column},{row} opened a confirmation popup"
             );
+        }
+
+        // Down → Drag → Up on every target: still no dispatch (a border may only save the layout).
+        for &(column, row) in &coords {
+            let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+            let mut screen = draw_overview(&state, &data);
+            for (kind, now) in [
+                (MouseEventKind::Down(MouseButton::Left), 3_000),
+                (MouseEventKind::Drag(MouseButton::Left), 3_100),
+                (MouseEventKind::Up(MouseButton::Left), 3_200),
+            ] {
+                let (_, effect) = state
+                    .clone()
+                    .on_mouse(mouse_ev(kind, column, row), &data, now);
+                assert!(
+                    !matches!(
+                        effect,
+                        GEffect::Run(_) | GEffect::Quit | GEffect::SaveTheme(_)
+                    ),
+                    "{kind:?} at {column},{row} produced {effect:?}"
+                );
+                let next = handle_mouse(
+                    mouse_ev(kind, column, row),
+                    &mut screen,
+                    &store,
+                    &FakeHc,
+                    &mut state,
+                    &data,
+                    &mut false,
+                    now,
+                );
+                assert!(
+                    !matches!(next, Next::Quit | Next::Restart),
+                    "{kind:?} at {column},{row} quit or restarted the loop"
+                );
+                assert!(
+                    state.popup.is_none(),
+                    "{kind:?} at {column},{row} opened a confirmation popup"
+                );
+            }
         }
     }
 

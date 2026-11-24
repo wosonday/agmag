@@ -2070,6 +2070,17 @@ mod tests {
         assert_eq!(st.output_scroll, 0);
         let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollUp, 5, 10), &data, 5_000);
         assert!(!changed, "the Output border must not scroll");
+
+        // The Output border is not a drag handle: Down → Drag → Up is ignored.
+        for (kind, now) in [
+            (MouseEventKind::Down(MouseButton::Left), 6_000),
+            (MouseEventKind::Drag(MouseButton::Left), 6_100),
+            (MouseEventKind::Up(MouseButton::Left), 6_200),
+        ] {
+            let (changed, eff) = st.on_mouse(mouse(kind, 5, 10), &data, now);
+            assert!(!changed, "{kind:?} on the Output border moved something");
+            assert_eq!(eff, GEffect::None);
+        }
     }
 
     #[test]

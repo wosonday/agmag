@@ -1564,6 +1564,8 @@ fn up(column: u16, row: u16) -> MouseEvent {
 #[test]
 fn horizontal_borders_match_the_group_above_them() {
     let d = dense_overview_data();
+
+    // Wide: the first two sections are one group, so its boundary is Horizontal(2).
     let state = GlobalState::new(ThemeName::CatppuccinMocha);
     let buf = render((140, 40), &state, &d, false);
     let map = state.hit_map();
@@ -1593,6 +1595,38 @@ fn horizontal_borders_match_the_group_above_them() {
     );
     assert_eq!(iy, qy + qh, "Inbox starts on the pair's lower boundary");
     assert_eq!(my, iy + ih, "Messages starts on Inbox's lower boundary");
+
+    // Narrow: every stacked group gets its own boundary: Horizontal(1) above Terminals,
+    // Horizontal(2) above Inbox and Horizontal(3) above Messages.
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((100, 40), &state, &d, false);
+    let map = state.hit_map();
+    let (_, qy, _, qh) = panel_rect(&buf, "Quota");
+    let (_, ty, _, th) = panel_rect(&buf, "Terminals");
+    let (_, iy, _, ih) = panel_rect(&buf, "Inbox");
+    let (_, my, _, _) = panel_rect(&buf, "Messages");
+    assert_eq!(ty, qy + qh, "Terminals starts below Quota");
+    assert_eq!(iy, ty + th, "Inbox starts below Terminals");
+    assert_eq!(my, iy + ih, "Messages starts below Inbox");
+
+    let mut borders: Vec<(u16, BorderId)> = map
+        .borders
+        .iter()
+        .filter_map(|(rect, id)| match id {
+            BorderId::Horizontal(i) => Some((rect.y, BorderId::Horizontal(*i))),
+            _ => None,
+        })
+        .collect();
+    borders.sort_by_key(|(y, _)| *y);
+    assert_eq!(
+        borders,
+        vec![
+            (ty, BorderId::Horizontal(1)),
+            (iy, BorderId::Horizontal(2)),
+            (my, BorderId::Horizontal(3)),
+        ],
+        "the narrow layout has a boundary above every stacked group"
+    );
 }
 
 #[test]
@@ -1717,4 +1751,58 @@ fn border_drag_is_ignored_in_a_window_too_short_for_the_floors() {
         before,
         "the cramped frame changed after an ignored drag"
     );
+}
+
+#[test]
+fn layout_override_survives_window_shrinks_end_to_end() {
+    let d = dense_overview_data();
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.layout.set_top_pair_width(0.4);
+    state.layout.set_height(2, 0.5);
+    state.layout.set_height(3, 0.3);
+
+    // The stored ratios are applied to the drawn frame, not just to a unit-test vector.
+    let buf = render((140, 40), &state, &d, false);
+    let (_, qy, qw, qh) = panel_rect(&buf, "Quota");
+    let (_, my, _, mh) = panel_rect(&buf, "Messages");
+    assert_eq!(qw, 56, "40 % of 140 columns goes to the left panel");
+    assert_eq!(qh, 19, "half of the 38-row content area goes to the pair");
+    assert_eq!(my, qy + qh + (panel_rect(&buf, "Inbox").3));
+    assert!(mh >= 4, "Messages keeps its floor: {mh}");
+
+    // A much shorter, narrower window recomputes the same ratios instead of replaying rows.
+    for size in [(100, 17), (40, 10)] {
+        let buf = render(size, &state, &d, false);
+        let main = ratatui::layout::Rect::new(0, 0, size.0, size.1.saturating_sub(2));
+        let map = state.hit_map();
+        let rects = map
+            .panels
+            .iter()
+            .filter(|(_, panel)| !matches!(panel, HitPanel::CmdLine))
+            .map(|(rect, _)| *rect)
+            .chain(map.borders.iter().map(|(rect, _)| *rect))
+            .chain(map.rows.iter().map(|(rect, _)| *rect));
+        for rect in rects {
+            assert!(
+                rect_inside(main, rect),
+                "{rect:?} leaves main {main:?} at {size:?}:\n{}",
+                text(&buf)
+            );
+        }
+        for i in 0..map.panels.len() {
+            for j in i + 1..map.panels.len() {
+                assert!(
+                    !rects_overlap(map.panels[i].0, map.panels[j].0),
+                    "panels {:?} and {:?} overlap at {size:?}:\n{}",
+                    map.panels[i],
+                    map.panels[j],
+                    text(&buf)
+                );
+            }
+        }
+        // Rendering a smaller frame never drops the user's ratios.
+        assert_eq!(state.layout.top_pair_width, Some(0.4));
+        assert_eq!(state.layout.height(2), Some(0.5));
+        assert_eq!(state.layout.height(3), Some(0.3));
+    }
 }

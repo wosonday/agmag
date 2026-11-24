@@ -697,6 +697,106 @@ fn wide_overview_fits_content_and_inbox_is_three_rows() {
     }
 }
 
+fn shell(address: &str, name: &str, app: &str) -> TermView {
+    TermView {
+        app: app.into(),
+        model: String::new(),
+        effort: String::new(),
+        ..terminal(address, name)
+    }
+}
+
+#[test]
+fn terminals_title_counts_agents_and_shells() {
+    let mut d = data(&[Section::Terminals]);
+    for i in 0..8 {
+        d.snap
+            .as_mut()
+            .unwrap()
+            .terminals
+            .push(terminal(&format!("a{i}"), &format!("agent-{i}")));
+    }
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    assert!(has(&buf, "Terminals (8 agents)"), "{}", text(&buf));
+
+    d.snap
+        .as_mut()
+        .unwrap()
+        .terminals
+        .push(shell("s1", "shell-1", "bash"));
+    d.snap
+        .as_mut()
+        .unwrap()
+        .terminals
+        .push(shell("s2", "shell-2", "pwsh"));
+    let buf = render((140, 40), &state, &d, false);
+    assert!(
+        has(&buf, "Terminals (8 agents · 2 shells)"),
+        "{}",
+        text(&buf)
+    );
+
+    d.snap
+        .as_mut()
+        .unwrap()
+        .terminals
+        .retain(|t| t.app == "bash" || t.app == "pwsh");
+    let buf = render((140, 40), &state, &d, false);
+    assert!(has(&buf, "Terminals (2 shells)"), "{}", text(&buf));
+}
+
+#[test]
+fn terminals_hides_columns_that_are_all_dashes() {
+    let mut d = data(&[Section::Terminals]);
+    let snap = d.snap.as_mut().unwrap();
+    for i in 0..3 {
+        snap.terminals
+            .push(empty_terminal(&format!("t{i}"), &format!("plain-{i}")));
+    }
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    let header = (0..buf.area.height)
+        .map(|y| row_text(&buf, y))
+        .find(|row| row.contains("name"))
+        .expect("terminals header row");
+    let headers: Vec<&str> = header
+        .split(|c: char| c.is_whitespace() || c == '│')
+        .filter(|t| !t.is_empty())
+        .collect();
+    for hidden in ["app", "model", "st", "ctx", "tok", "last", "task"] {
+        assert!(
+            !headers.contains(&hidden),
+            "all-dash column {hidden:?} still shown: {header:?}"
+        );
+    }
+    assert!(headers.contains(&"name"), "name column is always shown");
+}
+
+#[test]
+fn terminals_agents_first_and_shells_dimmed() {
+    let mut d = data(&[Section::Terminals]);
+    let snap = d.snap.as_mut().unwrap();
+    snap.terminals.push(shell("s1", "shell-one", "bash"));
+    snap.terminals.push(terminal("a1", "agent-one"));
+    snap.terminals.push(shell("s2", "shell-two", "zsh"));
+    snap.terminals.push(terminal("a2", "agent-two"));
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.sel_terminal = Some("s2".into());
+    let buf = render((140, 40), &state, &d, false);
+    let (_, agent1) = find(&buf, "agent-one");
+    let (_, shell1) = find(&buf, "shell-one");
+    let (_, agent2) = find(&buf, "agent-two");
+    let (_, shell2) = find(&buf, "shell-two");
+    assert!(
+        agent1 < agent2 && agent2 < shell1 && shell1 < shell2,
+        "visual order must be agents first, shells last: {agent1} {agent2} {shell1} {shell2}"
+    );
+    let th = theme(ThemeName::CatppuccinMocha);
+    assert_eq!(fg_of(&buf, "shell-one"), th.muted, "shell row not dimmed");
+    assert_ne!(fg_of(&buf, "agent-one"), th.muted, "agent row was dimmed");
+}
+
 #[test]
 fn narrow_overview_stacks_content_fitted_panels() {
     let mut d = many_terminals_no_inbox();

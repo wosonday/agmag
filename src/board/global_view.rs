@@ -15,7 +15,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
-use super::global::{CmdLine, Focus, GlobalData, GlobalState, Popup, visible_sections};
+use super::global::{
+    CmdLine, Focus, GlobalData, GlobalState, Popup, is_plain_shell, ordered_terminals,
+    visible_sections,
+};
 use super::theme::Theme;
 use crate::actions::kind_to_english;
 use crate::dashboard::{Section, Snapshot, TermView, render_section_body, sanitize_one_line};
@@ -583,33 +586,73 @@ fn columns_width(widths: &[u16], highlight: usize) -> usize {
     widths.iter().map(|w| *w as usize).sum::<usize>() + highlight + widths.len()
 }
 
+fn terminals_title(agents: usize, shells: usize) -> String {
+    let noun = |n: usize, one: &'static str, many: &'static str| if n == 1 { one } else { many };
+    match (agents, shells) {
+        (0, 0) => " Terminals ".to_string(),
+        (a, 0) => format!(" Terminals ({a} {}) ", noun(a, "agent", "agents")),
+        (0, s) => format!(" Terminals ({s} {}) ", noun(s, "shell", "shells")),
+        (a, s) => format!(
+            " Terminals ({a} {} · {s} {}) ",
+            noun(a, "agent", "agents"),
+            noun(s, "shell", "shells")
+        ),
+    }
+}
+
 fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
-    let block = panel(
-        format!(" {} ", section_title(Section::Terminals)),
-        ctx.theme.border,
-        ctx,
-    );
+    // One ordering for the rows, the title counts and the ↑↓ navigation (in `global.rs`).
+    let ordered = data
+        .snap
+        .as_ref()
+        .map(ordered_terminals)
+        .unwrap_or_default();
+    let shells = ordered.iter().filter(|t| is_plain_shell(t)).count();
+    let agents = ordered.len() - shells;
+    let block = panel(terminals_title(agents, shells), ctx.theme.border, ctx);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let Some(snap) = &data.snap else {
-        render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
-        return;
-    };
-    if snap.terminals.is_empty() {
+    if ordered.is_empty() {
         render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
         return;
     }
 
     let width = inner.width;
-    let terms = &snap.terminals;
-    // Size columns from content: a long name must not squeeze app/model out, and each column has
-    // a cap so one hostile value cannot eat the row.
-    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 4, 20);
+    let terms = &ordered;
+    let values = |header: &'static str| -> Vec<String> {
+        match header {
+            "app" => terms.iter().map(|t| dash_value(&t.app)).collect(),
+            "model" => terms.iter().map(|t| model_label(t)).collect(),
+            "st" => terms
+                .iter()
+                .map(|t| status_label(&t.status, ctx).0)
+                .collect(),
+            "ctx" => terms
+                .iter()
+                .map(|t| {
+                    if t.context_pct.is_some_and(|p| p.is_finite()) {
+                        "ctx".to_string()
+                    } else {
+                        "-".to_string()
+                    }
+                })
+                .collect(),
+            "tok" => terms.iter().map(|t| tokens_label(t.tokens)).collect(),
+            "last" => terms.iter().map(|t| last_msg_label(t, ctx)).collect(),
+            "task" => terms.iter().map(|t| dash_value(&t.task)).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let has_data = |header: &'static str| values(header).iter().any(|v| v != "-");
+
+    // Size name/model from their content first (with generous caps); the `task` column, when it
+    // exists, shows all dashes and is dropped, otherwise it takes the leftover width.
+    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 4, 32);
     let app_w = content_width(terms.iter().map(|t| dash_value(&t.app).width()), 3, 12);
-    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 22);
+    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 32);
     let status_w = content_width(
         terms.iter().map(|t| status_label(&t.status, ctx).0.width()),
         2,
@@ -620,6 +663,8 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
 
     const HIGHLIGHT_W: usize = 2; // `▸ ` / `> `
     const TASK_MIN: usize = 6;
+    let show_task = has_data("task");
+    let reserve = if show_task { 1 + TASK_MIN } else { 0 };
     let mut columns: Vec<(&'static str, u16)> = vec![("", 1), ("name", name_w)];
     let optional = [
         ("app", app_w),
@@ -630,14 +675,18 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         ("last", last_w),
     ];
     for (header, col_width) in optional {
+        if !has_data(header) {
+            continue; // a column that is `-` for every row only wastes cells
+        }
         let mut trial: Vec<u16> = columns.iter().map(|(_, w)| *w).collect();
         trial.push(col_width);
-        // Keep the flexible task column at least `TASK_MIN` cells wide.
-        if columns_width(&trial, HIGHLIGHT_W) + 1 + TASK_MIN <= width as usize {
+        if columns_width(&trial, HIGHLIGHT_W) + reserve <= width as usize {
             columns.push((header, col_width));
         }
     }
-    columns.push(("task", 0));
+    if show_task {
+        columns.push(("task", 0));
+    }
 
     let show_app = columns.iter().any(|(h, _)| *h == "app");
     let show_model = columns.iter().any(|(h, _)| *h == "model");
@@ -647,7 +696,7 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     let show_last = columns.iter().any(|(h, _)| *h == "last");
 
     let mut rows: Vec<Row<'static>> = Vec::new();
-    for t in &snap.terminals {
+    for t in &ordered {
         let mut cells = vec![status_cell(t, ctx), Cell::from(display_name(t))];
         if show_app {
             cells.push(Cell::from(dash_value(&t.app)));
@@ -668,9 +717,16 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         if show_last {
             cells.push(Cell::from(last_msg_label(t, ctx)));
         }
-        // `task` is the last column (it takes the remaining width), same order as `columns`.
-        cells.push(Cell::from(dash_value(&t.task)));
-        rows.push(Row::new(cells));
+        if show_task {
+            cells.push(Cell::from(dash_value(&t.task)));
+        }
+        // Plain shells sit last and are dimmed; the highlight style still wins for the selection.
+        let row_style = if is_plain_shell(t) {
+            Style::new().fg(ctx.theme.muted)
+        } else {
+            Style::new()
+        };
+        rows.push(Row::new(cells).style(row_style));
     }
 
     let header = Row::new(columns.iter().map(|(h, _)| Cell::from(*h)))
@@ -688,7 +744,7 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     let selected = state
         .sel_terminal
         .as_deref()
-        .and_then(|address| snap.terminals.iter().position(|t| t.address == address));
+        .and_then(|address| ordered.iter().position(|t| t.address == address));
     let mut table_state = TableState::default().with_selected(selected);
     let table = Table::new(rows, constraints)
         .header(header)

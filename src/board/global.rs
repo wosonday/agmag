@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::cmd::NoteKind;
 use super::theme::ThemeName;
-use crate::dashboard::{Section, Snapshot, sanitize_one_line};
+use crate::dashboard::{Section, Snapshot, TermView, sanitize_one_line};
 use crate::project::ProjectKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +250,7 @@ impl GlobalState {
         // Keep terminal selection by address; when it disappears, take the row that slid into its
         // previous index (the nearest neighbour) instead of jumping to the last row.
         if let Some(snap) = data.snap.as_ref() {
-            let terms = &snap.terminals;
+            let terms = ordered_terminals(snap);
             if terms.is_empty() {
                 self.sel_terminal = None;
                 self.prev_terminal_idx = None;
@@ -520,7 +520,7 @@ impl GlobalState {
                 let Some(snap) = data.snap.as_ref() else {
                     return;
                 };
-                let terms = &snap.terminals;
+                let terms = ordered_terminals(snap);
                 if terms.is_empty() {
                     self.sel_terminal = None;
                     return;
@@ -564,7 +564,7 @@ impl GlobalState {
                 let Some(snap) = data.snap.as_ref() else {
                     return;
                 };
-                let terms = &snap.terminals;
+                let terms = ordered_terminals(snap);
                 if terms.is_empty() {
                     self.sel_terminal = None;
                     return;
@@ -621,6 +621,27 @@ pub(crate) fn visible_sections(view: &[Section]) -> Vec<Section> {
     }
     sections.push(Section::Messages);
     sections
+}
+
+/// Apps that count as a plain shell only when no session/model is linked.
+const SHELL_APPS: [&str; 7] = ["pwsh", "powershell", "bash", "sh", "zsh", "cmd", "fish"];
+
+pub(crate) fn is_plain_shell(t: &TermView) -> bool {
+    let app = sanitize_one_line(&t.app).trim().to_ascii_lowercase();
+    SHELL_APPS.contains(&app.as_str())
+        && sanitize_one_line(&t.model).trim().is_empty()
+        && sanitize_one_line(&t.effort).trim().is_empty()
+}
+
+/// The one visual order of the Terminals panel: agents in their existing order, then plain shells
+/// in their existing order. Both the renderer and ↑↓ navigation use it, so selection by address
+/// keeps working while the arrows follow what the user sees.
+pub fn ordered_terminals(snap: &Snapshot) -> Vec<&TermView> {
+    snap.terminals
+        .iter()
+        .filter(|t| !is_plain_shell(t))
+        .chain(snap.terminals.iter().filter(|t| is_plain_shell(t)))
+        .collect()
 }
 
 fn char_to_byte(s: &str, char_idx: usize) -> usize {
@@ -723,6 +744,65 @@ mod tests {
             output: None,
             now_ms: 0,
         }
+    }
+
+    #[test]
+    fn ordered_terminals_puts_plain_shells_last() {
+        let shell = |address: &str, app: &str| TermView {
+            app: app.into(),
+            model: String::new(),
+            effort: String::new(),
+            ..term(address, address)
+        };
+        let linked_shell = TermView {
+            model: "opus".into(),
+            ..shell("linked", "bash")
+        };
+        let snap = snap(
+            vec![
+                shell("s1", "bash"),
+                term("a1", "agent-1"),
+                shell("s2", "POWERSHELL"),
+                linked_shell,
+                term("a2", "agent-2"),
+            ],
+            vec![],
+        );
+        let addresses: Vec<&str> = ordered_terminals(&snap)
+            .iter()
+            .map(|t| t.address.as_str())
+            .collect();
+        assert_eq!(
+            addresses,
+            vec!["a1", "linked", "a2", "s1", "s2"],
+            "agents first, plain shells last, original order kept inside each group"
+        );
+    }
+
+    #[test]
+    fn down_follows_the_visual_terminal_order() {
+        let shell = TermView {
+            app: "bash".into(),
+            model: String::new(),
+            effort: String::new(),
+            ..term("s1", "shell-1")
+        };
+        let data = data_with(
+            vec![Section::Terminals],
+            vec![shell, term("a1", "agent-1"), term("a2", "agent-2")],
+            vec![],
+        );
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        st.focus = Focus::Panel(Section::Terminals);
+        st.sel_terminal = Some("a1".into());
+        st.sync(&data);
+
+        st.panel_down(&data, Section::Terminals);
+        assert_eq!(st.sel_terminal.as_deref(), Some("a2"));
+        st.panel_down(&data, Section::Terminals);
+        assert_eq!(st.sel_terminal.as_deref(), Some("s1"));
+        st.panel_up(&data, Section::Terminals);
+        assert_eq!(st.sel_terminal.as_deref(), Some("a2"));
     }
 
     #[test]

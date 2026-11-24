@@ -71,8 +71,8 @@ The shared fallback can remain:
 
 ```toml
 [policy]
-ctx_warn = 50
-ctx_rotate = 70
+ctx_warn = 40
+ctx_rotate = 50
 ```
 
 This snippet is the ordinary worker/global fallback, **not** the CEO/Codex High target. Do not add guessed keys such as `ceo_ctx_rotate` or unsupported `agm manage --ctx-rotate` flags. A future daemon-enforced per-role threshold requires an AGM implementation change and tests; the current policy uses the verified `agm rotate` path.

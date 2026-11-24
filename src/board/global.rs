@@ -28,6 +28,141 @@ pub struct CmdLine {
     draft: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CmdKey {
+    Edited,
+    Submit(String),
+    SubmitEmpty,
+    Esc,
+    Unhandled,
+}
+
+impl CmdLine {
+    pub(crate) fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+        self.hist_pos = None;
+        self.draft = None;
+    }
+
+    pub(crate) fn on_key(&mut self, key: KeyEvent) -> CmdKey {
+        match key.code {
+            KeyCode::Enter => {
+                let text = self.text.clone();
+                if text.trim().is_empty() {
+                    return CmdKey::SubmitEmpty;
+                }
+                self.push_history(text.clone());
+                self.clear();
+                CmdKey::Submit(text)
+            }
+            KeyCode::Esc => {
+                self.clear();
+                CmdKey::Esc
+            }
+            KeyCode::Backspace => {
+                if self.cursor > 0 {
+                    let idx = char_to_byte(&self.text, self.cursor - 1);
+                    let next = char_to_byte(&self.text, self.cursor);
+                    self.text.drain(idx..next);
+                    self.cursor -= 1;
+                }
+                CmdKey::Edited
+            }
+            KeyCode::Delete => {
+                let len = self.text.chars().count();
+                if self.cursor < len {
+                    let idx = char_to_byte(&self.text, self.cursor);
+                    let next = char_to_byte(&self.text, self.cursor + 1);
+                    self.text.drain(idx..next);
+                }
+                CmdKey::Edited
+            }
+            KeyCode::Left => {
+                self.cursor = self.cursor.saturating_sub(1);
+                CmdKey::Edited
+            }
+            KeyCode::Right => {
+                let len = self.text.chars().count();
+                if self.cursor < len {
+                    self.cursor += 1;
+                }
+                CmdKey::Edited
+            }
+            KeyCode::Home => {
+                self.cursor = 0;
+                CmdKey::Edited
+            }
+            KeyCode::End => {
+                self.cursor = self.text.chars().count();
+                CmdKey::Edited
+            }
+            KeyCode::Up => {
+                self.history_up();
+                CmdKey::Edited
+            }
+            KeyCode::Down => {
+                self.history_down();
+                CmdKey::Edited
+            }
+            KeyCode::Char(c)
+                if !c.is_control()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                let idx = char_to_byte(&self.text, self.cursor);
+                self.text.insert(idx, c);
+                self.cursor += 1;
+                CmdKey::Edited
+            }
+            _ => CmdKey::Unhandled,
+        }
+    }
+
+    fn push_history(&mut self, text: String) {
+        if self.history.last().is_some_and(|last| last == &text) {
+            return;
+        }
+        self.history.push(text);
+        if self.history.len() > 50 {
+            let drop = self.history.len() - 50;
+            self.history.drain(0..drop);
+        }
+    }
+
+    fn history_up(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let pos = match self.hist_pos {
+            Some(p) => p.saturating_sub(1),
+            None => {
+                self.draft = Some(self.text.clone());
+                self.history.len() - 1
+            }
+        };
+        self.hist_pos = Some(pos);
+        self.text = self.history[pos].clone();
+        self.cursor = self.text.chars().count();
+    }
+
+    fn history_down(&mut self) {
+        let Some(pos) = self.hist_pos else {
+            return;
+        };
+        if pos + 1 < self.history.len() {
+            let next = pos + 1;
+            self.hist_pos = Some(next);
+            self.text = self.history[next].clone();
+            self.cursor = self.text.chars().count();
+        } else {
+            self.hist_pos = None;
+            self.text = self.draft.take().unwrap_or_default();
+            self.cursor = self.text.chars().count();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Popup {
     Confirm { prompt: String, input: String },
@@ -171,6 +306,14 @@ impl GlobalState {
         }
     }
 
+    pub(crate) fn handle_popup_key(&mut self, key: KeyEvent) -> GEffect {
+        if let Some(popup) = self.popup.clone() {
+            self.on_key_popup(key, popup)
+        } else {
+            GEffect::None
+        }
+    }
+
     fn on_key_popup(&mut self, key: KeyEvent, popup: Popup) -> GEffect {
         let Popup::Confirm { prompt, mut input } = popup;
         match key.code {
@@ -205,109 +348,38 @@ impl GlobalState {
     }
 
     fn on_key_cmdline(&mut self, key: KeyEvent, data: &GlobalData) -> GEffect {
-        match key.code {
-            KeyCode::Enter => {
-                let text = self.cmd.text.clone();
-                if text.trim().is_empty() {
-                    return GEffect::None;
+        match self.cmd.on_key(key) {
+            CmdKey::Submit(text) => GEffect::Run(text),
+            CmdKey::Edited | CmdKey::SubmitEmpty | CmdKey::Esc => GEffect::None,
+            CmdKey::Unhandled => match key.code {
+                KeyCode::PageUp => {
+                    if data.output.is_some() {
+                        self.output_scroll = self.output_scroll.saturating_sub(5);
+                    }
+                    GEffect::None
                 }
-                self.push_history(text.clone());
-                self.cmd.text.clear();
-                self.cmd.cursor = 0;
-                self.cmd.hist_pos = None;
-                self.cmd.draft = None;
-                GEffect::Run(text)
-            }
-            KeyCode::Esc => {
-                self.cmd.text.clear();
-                self.cmd.cursor = 0;
-                self.cmd.hist_pos = None;
-                self.cmd.draft = None;
-                GEffect::None
-            }
-            KeyCode::Backspace => {
-                if self.cmd.cursor > 0 {
-                    let idx = char_to_byte(&self.cmd.text, self.cmd.cursor - 1);
-                    let next = char_to_byte(&self.cmd.text, self.cmd.cursor);
-                    self.cmd.text.drain(idx..next);
-                    self.cmd.cursor -= 1;
+                KeyCode::PageDown => {
+                    if data.output.is_some() {
+                        self.output_scroll = self.output_scroll.saturating_add(5);
+                    }
+                    GEffect::None
                 }
-                GEffect::None
-            }
-            KeyCode::Delete => {
-                let len = self.cmd.text.chars().count();
-                if self.cmd.cursor < len {
-                    let idx = char_to_byte(&self.cmd.text, self.cmd.cursor);
-                    let next = char_to_byte(&self.cmd.text, self.cmd.cursor + 1);
-                    self.cmd.text.drain(idx..next);
+                KeyCode::Tab => {
+                    let panels = visible_panels(data);
+                    if let Some(first) = panels.first().copied() {
+                        self.focus = Focus::Panel(first);
+                    }
+                    GEffect::None
                 }
-                GEffect::None
-            }
-            KeyCode::Left => {
-                self.cmd.cursor = self.cmd.cursor.saturating_sub(1);
-                GEffect::None
-            }
-            KeyCode::Right => {
-                let len = self.cmd.text.chars().count();
-                if self.cmd.cursor < len {
-                    self.cmd.cursor += 1;
+                KeyCode::BackTab => {
+                    let panels = visible_panels(data);
+                    if let Some(last) = panels.last().copied() {
+                        self.focus = Focus::Panel(last);
+                    }
+                    GEffect::None
                 }
-                GEffect::None
-            }
-            KeyCode::Home => {
-                self.cmd.cursor = 0;
-                GEffect::None
-            }
-            KeyCode::End => {
-                self.cmd.cursor = self.cmd.text.chars().count();
-                GEffect::None
-            }
-            KeyCode::Up => {
-                self.history_up();
-                GEffect::None
-            }
-            KeyCode::Down => {
-                self.history_down();
-                GEffect::None
-            }
-            KeyCode::PageUp => {
-                if data.output.is_some() {
-                    self.output_scroll = self.output_scroll.saturating_sub(5);
-                }
-                GEffect::None
-            }
-            KeyCode::PageDown => {
-                if data.output.is_some() {
-                    self.output_scroll = self.output_scroll.saturating_add(5);
-                }
-                GEffect::None
-            }
-            KeyCode::Tab => {
-                let panels = visible_panels(data);
-                if let Some(first) = panels.first().copied() {
-                    self.focus = Focus::Panel(first);
-                }
-                GEffect::None
-            }
-            KeyCode::BackTab => {
-                let panels = visible_panels(data);
-                if let Some(last) = panels.last().copied() {
-                    self.focus = Focus::Panel(last);
-                }
-                GEffect::None
-            }
-            KeyCode::Char(c) => {
-                if !c.is_control()
-                    && !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT)
-                {
-                    let idx = char_to_byte(&self.cmd.text, self.cmd.cursor);
-                    self.cmd.text.insert(idx, c);
-                    self.cmd.cursor += 1;
-                }
-                GEffect::None
-            }
-            _ => GEffect::None,
+                _ => GEffect::None,
+            },
         }
     }
 
@@ -440,49 +512,6 @@ impl GlobalState {
         self.cmd.cursor = self.cmd.text.chars().count();
         self.cmd.hist_pos = None;
         self.cmd.draft = None;
-    }
-
-    fn push_history(&mut self, text: String) {
-        if self.cmd.history.last().is_some_and(|last| last == &text) {
-            return;
-        }
-        self.cmd.history.push(text);
-        if self.cmd.history.len() > 50 {
-            let drop = self.cmd.history.len() - 50;
-            self.cmd.history.drain(0..drop);
-        }
-    }
-
-    fn history_up(&mut self) {
-        if self.cmd.history.is_empty() {
-            return;
-        }
-        let pos = match self.cmd.hist_pos {
-            Some(p) => p.saturating_sub(1),
-            None => {
-                self.cmd.draft = Some(self.cmd.text.clone());
-                self.cmd.history.len() - 1
-            }
-        };
-        self.cmd.hist_pos = Some(pos);
-        self.cmd.text = self.cmd.history[pos].clone();
-        self.cmd.cursor = self.cmd.text.chars().count();
-    }
-
-    fn history_down(&mut self) {
-        let Some(pos) = self.cmd.hist_pos else {
-            return;
-        };
-        if pos + 1 < self.cmd.history.len() {
-            let next = pos + 1;
-            self.cmd.hist_pos = Some(next);
-            self.cmd.text = self.cmd.history[next].clone();
-            self.cmd.cursor = self.cmd.text.chars().count();
-        } else {
-            self.cmd.hist_pos = None;
-            self.cmd.text = self.cmd.draft.take().unwrap_or_default();
-            self.cmd.cursor = self.cmd.text.chars().count();
-        }
     }
 
     fn panel_up(&mut self, data: &GlobalData, sec: Section) {

@@ -530,3 +530,69 @@ fn terminals_task_sits_under_task_header() {
         "task value not under its header:\n{header}\n{data_row}"
     );
 }
+
+#[test]
+fn quota_panel_fits_content_not_half() {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    let mut q = quota("opencode-go", 43_200, 49.0);
+    q.resets_at_s = NOW / 1000 + 626 * 3_600 + 24 * 60;
+    snap.quota.push(q);
+    snap.terminals.push(terminal("t1", "worker-1"));
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((150, 40), &state, &d, false);
+    let top = row_text(&buf, 0);
+    let (term_x, _) = find(&buf, "Terminals");
+    assert!(
+        term_x < 75,
+        "Quota should be narrower than 75 cols (Terminals started at {term_x}):\n{top}"
+    );
+    assert!(
+        has(&buf, "opencode-go  mo ") && has(&buf, "49% left resets in 626h24m"),
+        "quota row was cut:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn terminals_gets_remaining_width() {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    snap.quota.push(quota("claude", 300, 80.0));
+    snap.terminals.push(terminal("t1", "worker-1"));
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.sel_terminal = Some("t1".into());
+    let buf = render((150, 40), &state, &d, false);
+    let top = row_text(&buf, 0);
+    let quota_end = top.find("╮").map(|b| top[..b].chars().count()).unwrap();
+    let term_start = top
+        .match_indices("╭")
+        .nth(1)
+        .map(|(b, _)| top[..b].chars().count())
+        .unwrap();
+    assert_eq!(
+        term_start,
+        quota_end + 1,
+        "Terminals must start right after Quota:\n{top}"
+    );
+    assert!(
+        150 - term_start > 75,
+        "Terminals should get more than half the width:\n{top}"
+    );
+    // Whole header tokens of the Terminals table (a substring check would let `last` satisfy `st`).
+    let header = (0..buf.area.height)
+        .map(|y| row_text(&buf, y))
+        .find(|row| row.contains(" name ") && row.contains(" model "))
+        .expect("terminals header row");
+    let tokens: Vec<&str> = header
+        .split(|c: char| c.is_whitespace() || c == '│')
+        .filter(|t| !t.is_empty())
+        .collect();
+    for hdr in ["name", "app", "model", "st", "ctx", "tok", "task"] {
+        assert!(
+            tokens.contains(&hdr),
+            "missing short header {hdr:?}: {header:?}"
+        );
+    }
+    assert!(!tokens.contains(&"status"), "long header left: {header:?}");
+}

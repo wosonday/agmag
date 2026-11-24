@@ -10,7 +10,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::BoardData;
 use super::flows::{self, Edge};
-use super::state::{BoardState, Mode, Panel};
+use super::layout::{self, BlockKind};
+use super::state::{BoardState, Mode};
 use super::theme::Theme;
 use crate::actions::{KINDS_EN, kind_to_english};
 use crate::dashboard::{format_status, sanitize_one_line};
@@ -38,7 +39,18 @@ pub fn layout_mode(width: u16, height: u16) -> LayoutMode {
 }
 
 pub fn draw(frame: &mut Frame, state: &BoardState, data: &BoardData, theme: &Theme, ascii: bool) {
-    let area = frame.area();
+    draw_in(frame, frame.area(), state, data, theme, ascii);
+}
+
+pub fn draw_in(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    theme: &Theme,
+    ascii: bool,
+) {
+    let area = area.intersection(frame.area());
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -57,12 +69,12 @@ struct Ctx<'a> {
     ascii: bool,
 }
 
-const LEFT_W: u16 = 20;
+const STATUS_MIN_W: u16 = 14;
 const RIGHT_W: u16 = 34;
 const CARD_MIN_W: u16 = 16;
 const CARD_MAX_W: u16 = 32;
 const CARD_GAP: u16 = 1;
-const CARD_H: u16 = 4;
+const CARD_H: u16 = 6;
 /// Two connector rows sit between card rows: the bus and the drop/label line.
 const CONNECTOR_ROWS: u16 = 2;
 const INBOX_H: u16 = 5;
@@ -131,17 +143,16 @@ fn split_inbox(main: Rect) -> (Rect, Rect) {
 fn draw_wide(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
     let (main, footer) = split_frame(area);
     let (content, inbox) = split_inbox(main);
+    let left_w = status_panel_width(data, ctx).min(content.width);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(LEFT_W),
+            Constraint::Length(left_w),
             Constraint::Min(0),
             Constraint::Length(RIGHT_W),
         ])
         .split(content);
-    let left = Layout::vertical([Constraint::Length(8), Constraint::Min(0)]).split(cols[0]);
-    draw_projects(frame, left[0], state, data, ctx);
-    draw_status(frame, left[1], data, ctx);
+    draw_status(frame, cols[0], data, ctx);
     draw_orchestration(frame, cols[1], state, data, ctx);
     let right = Layout::vertical([Constraint::Percentage(55), Constraint::Min(0)]).split(cols[2]);
     draw_detail(frame, right[0], state, data, ctx);
@@ -218,52 +229,42 @@ fn muted_line(text: impl Into<String>, ctx: Ctx) -> Line<'static> {
     Line::from(Span::styled(text.into(), Style::new().fg(ctx.theme.muted)))
 }
 
-fn draw_projects(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
-    let block = panel(" Projects ".into(), ctx.theme.border, ctx);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.width == 0 || inner.height == 0 {
-        return;
+fn status_lines(data: &BoardData, ctx: Ctx) -> Vec<Line<'static>> {
+    let Some(view) = &data.view else {
+        return Vec::new();
+    };
+    let mut counts = [0usize; 5];
+    for agent in &view.agents {
+        counts[status_kind(agent) as usize] += 1;
     }
-    if data.projects.is_empty() {
-        render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
-        return;
+    const KINDS: [(StatusKind, &str); 5] = [
+        (StatusKind::Working, "working"),
+        (StatusKind::Blocked, "blocked"),
+        (StatusKind::Done, "done"),
+        (StatusKind::Error, "exited"),
+        (StatusKind::Unknown, "unknown"),
+    ];
+    let mut lines = Vec::new();
+    for (kind, label) in KINDS {
+        let count = counts[kind as usize];
+        if count == 0 {
+            continue;
+        }
+        lines.push(Line::from(Span::styled(
+            format!("{} {label} {count}", status_symbol(kind, ctx.ascii)),
+            Style::new().fg(status_color(kind, ctx.theme)),
+        )));
     }
-    let marker = if ctx.ascii { ">" } else { "▸" };
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for (i, project) in data.projects.iter().enumerate() {
-        let selected = state.panel == Panel::Projects && i == state.sel_project;
-        let style = if selected {
-            Style::new()
-                .fg(ctx.theme.selected)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::new()
-        };
-        let name = sanitize_one_line(&project.key.name);
-        lines.push(Line::from(vec![
-            Span::styled(format!("{} ", if selected { marker } else { " " }), style),
-            Span::styled(name, style),
-            Span::styled(
-                format!(" {}", project.live_agents),
-                if selected {
-                    style
-                } else {
-                    Style::new().fg(ctx.theme.working)
-                },
-            ),
-            Span::styled(
-                format!("●{}", project.open_inbox),
-                if selected {
-                    style
-                } else {
-                    Style::new().fg(ctx.theme.warn)
-                },
-            ),
-        ]));
-    }
-    let offset = scroll_offset(state.sel_project, inner.height, data.projects.len());
-    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
+    lines
+}
+
+fn status_panel_width(data: &BoardData, ctx: Ctx) -> u16 {
+    let max_line = status_lines(data, ctx)
+        .iter()
+        .map(|l| l.width() as u16)
+        .max()
+        .unwrap_or(1);
+    max_line.saturating_add(2).max(STATUS_MIN_W)
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, data: &BoardData, ctx: Ctx) {
@@ -273,35 +274,12 @@ fn draw_status(frame: &mut Frame, area: Rect, data: &BoardData, ctx: Ctx) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let Some(view) = &data.view else {
+    let lines = status_lines(data, ctx);
+    if lines.is_empty() {
         render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
         return;
-    };
-    let mut counts = [0usize; 5];
-    for agent in &view.agents {
-        counts[status_kind(agent) as usize] += 1;
     }
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    for kind in [
-        StatusKind::Done,
-        StatusKind::Working,
-        StatusKind::Blocked,
-        StatusKind::Error,
-        StatusKind::Unknown,
-    ] {
-        if !spans.is_empty() {
-            spans.push(Span::raw(" "));
-        }
-        spans.push(Span::styled(
-            format!(
-                "{}{}",
-                status_symbol(kind, ctx.ascii),
-                counts[kind as usize]
-            ),
-            Style::new().fg(status_color(kind, ctx.theme)),
-        ));
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// One card placed on the orchestration panel.
@@ -358,73 +336,111 @@ fn draw_narrow_orchestration(
         .sel_agent
         .as_deref()
         .and_then(|address| view.agents.iter().position(|a| a.address == address));
-    let offset = scroll_offset(selected.unwrap_or(0), inner.height, view.agents.len());
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for (index, agent) in view.agents.iter().enumerate() {
-        let is_selected = selected == Some(index);
-        let exited = agent.state == "exited";
-        let kind = status_kind(agent);
-        let base = if is_selected {
-            Style::new()
-                .fg(ctx.theme.selected)
-                .add_modifier(Modifier::BOLD)
-        } else if exited {
-            Style::new().fg(ctx.theme.muted)
-        } else {
-            Style::new()
-        };
-        let symbol_style = if is_selected {
-            base
-        } else {
-            Style::new().fg(status_color(kind, ctx.theme))
-        };
-        let mut spans = vec![
-            Span::styled(
-                format!(
-                    "{}{} ",
-                    "  ".repeat(agent.depth),
-                    status_symbol(kind, ctx.ascii)
-                ),
-                symbol_style,
-            ),
-            Span::styled(sanitize_one_line(&agent.label), base),
-        ];
-        if let Some(edge) = data
-            .edges
-            .iter()
-            .find(|e| e.child == index && parents.get(index).copied().flatten() == Some(e.parent))
-        {
-            let color = if flows::is_live(edge, data.now_ms) {
-                ctx.theme.accent
-            } else {
-                ctx.theme.muted
-            };
-            let mut style = Style::new().fg(color);
-            if is_selected {
-                style = style.add_modifier(Modifier::BOLD);
+    let nodes = agent_nodes(&view.agents);
+    let blocks = layout::ceo_blocks(&nodes);
+    let mut is_orphan = vec![false; view.agents.len()];
+    if let Some(no_ceo) = blocks.iter().find(|b| b.kind == BlockKind::NoCeo) {
+        for lvl in &no_ceo.levels {
+            for &idx in lvl {
+                if let Some(slot) = is_orphan.get_mut(idx) {
+                    *slot = true;
+                }
             }
-            spans.push(Span::styled(
-                format!(
-                    " {} {}",
-                    sanitize_one_line(&edge.kind),
-                    age_since(data.now_ms, edge.ts_ms)
-                ),
-                style,
-            ));
         }
-        let app = sanitize_one_line(&agent.app);
-        let model = sanitize_one_line(&agent.model);
-        let ident = match (app.is_empty(), model.is_empty()) {
-            (true, true) => String::new(),
-            (true, false) => model,
-            (false, true) => app,
-            (false, false) => format!("{app}/{model}"),
-        };
-        if !ident.is_empty() {
-            spans.push(Span::styled(format!(" {ident}"), base));
-        }
-        lines.push(Line::from(spans));
     }
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut selected_line = None;
+    let push_agent =
+        |index: usize, lines: &mut Vec<Line<'static>>, selected_line: &mut Option<usize>| {
+            let agent = &view.agents[index];
+            let is_selected = selected == Some(index);
+            if is_selected {
+                *selected_line = Some(lines.len());
+            }
+            let exited = agent.state == "exited";
+            let kind = status_kind(agent);
+            let base = if is_selected {
+                Style::new()
+                    .fg(ctx.theme.selected)
+                    .add_modifier(Modifier::BOLD)
+            } else if exited {
+                Style::new().fg(ctx.theme.muted)
+            } else {
+                Style::new()
+            };
+            let symbol_style = if is_selected {
+                base
+            } else {
+                Style::new().fg(status_color(kind, ctx.theme))
+            };
+            let mut spans = vec![
+                Span::styled(
+                    format!(
+                        "{}{} ",
+                        "  ".repeat(agent.depth),
+                        status_symbol(kind, ctx.ascii)
+                    ),
+                    symbol_style,
+                ),
+                Span::styled(sanitize_one_line(&agent.label), base),
+            ];
+            if let Some(edge) = data.edges.iter().find(|e| {
+                e.child == index && parents.get(index).copied().flatten() == Some(e.parent)
+            }) {
+                let color = if flows::is_live(edge, data.now_ms) {
+                    ctx.theme.accent
+                } else {
+                    ctx.theme.muted
+                };
+                let mut style = Style::new().fg(color);
+                if is_selected {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                spans.push(Span::styled(
+                    format!(
+                        " {} {}",
+                        sanitize_one_line(&edge.kind),
+                        age_since(data.now_ms, edge.ts_ms)
+                    ),
+                    style,
+                ));
+            }
+            let app = sanitize_one_line(&agent.app);
+            let model = sanitize_one_line(&agent.model);
+            let ident = match (app.is_empty(), model.is_empty()) {
+                (true, true) => String::new(),
+                (true, false) => model,
+                (false, true) => app,
+                (false, false) => format!("{app}/{model}"),
+            };
+            if !ident.is_empty() {
+                spans.push(Span::styled(format!(" {ident}"), base));
+            }
+            lines.push(Line::from(spans));
+        };
+
+    for (index, &orphan) in is_orphan.iter().enumerate() {
+        if !orphan {
+            push_agent(index, &mut lines, &mut selected_line);
+        }
+    }
+    if is_orphan.iter().any(|&o| o) {
+        lines.push(muted_line(
+            if ctx.ascii {
+                "-- no CEO"
+            } else {
+                "── no CEO"
+            },
+            ctx,
+        ));
+        for (index, &orphan) in is_orphan.iter().enumerate() {
+            if orphan {
+                push_agent(index, &mut lines, &mut selected_line);
+            }
+        }
+    }
+    let offset = scroll_offset(selected_line.unwrap_or(0), inner.height, lines.len());
     frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
 
@@ -438,28 +454,32 @@ fn row_card_width(inner_width: u16, count: usize) -> u16 {
         .max(CARD_MIN_W.min(inner_width))
 }
 
-/// Place cards row by row, wrapping only when a card would be narrower than the minimum.
-fn card_rows(inner: Rect, agents: &[AgentView]) -> Vec<CardRow> {
-    let max_depth = agents.iter().map(|a| a.depth).max().unwrap_or(0);
+fn agent_nodes(agents: &[AgentView]) -> Vec<layout::Node> {
+    agents
+        .iter()
+        .map(|a| layout::Node {
+            depth: a.depth,
+            worker: a.role.as_deref() == Some("worker"),
+        })
+        .collect()
+}
+
+/// Place cards row by row for one block's levels, wrapping when a card would be narrower than CARD_MIN_W.
+fn block_card_rows(inner: Rect, levels: &[Vec<usize>]) -> (Vec<CardRow>, u16) {
     let per_row = usize::from((inner.width + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).max(1);
     let mut rows = Vec::new();
     let mut y = inner.y;
     let mut first = true;
-    for depth in 0..=max_depth {
-        let indices: Vec<usize> = agents
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.depth == depth)
-            .map(|(i, _)| i)
-            .collect();
+    for indices in levels {
+        if indices.is_empty() {
+            continue;
+        }
         for chunk in indices.chunks(per_row) {
-            // Every row after the first gets its own two connector rows, so a wrapped
-            // continuation row also has room for its bus, drops and edge labels.
             if !first {
                 y = y.saturating_add(CONNECTOR_ROWS);
             }
             if y >= inner.bottom() {
-                return rows;
+                return (rows, y);
             }
             let width = row_card_width(inner.width, chunk.len());
             let mut cards = Vec::new();
@@ -480,14 +500,14 @@ fn card_rows(inner: Rect, agents: &[AgentView]) -> Vec<CardRow> {
                 cards.push(CardSlot { index, rect });
             }
             if cards.is_empty() {
-                return rows;
+                return (rows, y);
             }
             rows.push(CardRow { cards });
             y = y.saturating_add(CARD_H);
             first = false;
         }
     }
-    rows
+    (rows, y)
 }
 
 /// Truncate to `max` display columns, marking the cut with `…`.
@@ -570,7 +590,109 @@ fn draw_orchestration(
         return;
     }
 
-    let rows = card_rows(inner, &view.agents);
+    let nodes = agent_nodes(&view.agents);
+    let blocks = layout::ceo_blocks(&nodes);
+    let parents = flows::parents(&view.agents);
+    let mut drawn = 0usize;
+    match layout::block_widths(&blocks, inner.width, CARD_MIN_W, CARD_GAP) {
+        Some(widths) => {
+            let mut x = inner.x;
+            for (block, width) in blocks.iter().zip(widths) {
+                let rect = Rect {
+                    x,
+                    y: inner.y,
+                    width: width.min(inner.right().saturating_sub(x)),
+                    height: inner.height,
+                };
+                draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn);
+                x = x.saturating_add(width).saturating_add(CARD_GAP);
+            }
+        }
+        None => {
+            let mut y = inner.y;
+            for (i, block) in blocks.iter().enumerate() {
+                if i > 0 {
+                    y = y.saturating_add(1);
+                }
+                if y >= inner.bottom() {
+                    break;
+                }
+                let rect = Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: inner.bottom().saturating_sub(y),
+                };
+                y = draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn);
+            }
+        }
+    }
+    // Cards that did not fit: say so on the bottom border instead of hiding them silently.
+    let hidden = view.agents.len().saturating_sub(drawn);
+    if hidden > 0 && area.height > 1 && area.width > 4 {
+        let arrow = if ctx.ascii { "v" } else { "↓" };
+        let note = format!(" {arrow} {hidden} more ");
+        let width = (note.chars().count() as u16).min(area.width.saturating_sub(4));
+        render_text(
+            frame,
+            Rect {
+                x: area.x + 2,
+                y: area.bottom() - 1,
+                width,
+                height: 1,
+            },
+            &note,
+            Style::new().fg(ctx.theme.warn),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_block(
+    frame: &mut Frame,
+    area: Rect,
+    block: &layout::Block,
+    parents: &[Option<usize>],
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    drawn: &mut usize,
+) -> u16 {
+    let Some(view) = &data.view else {
+        return area.y;
+    };
+    if area.width == 0 || area.height == 0 {
+        return area.y;
+    }
+    let is_no_ceo = block.kind == BlockKind::NoCeo;
+    // No room for a card under the caption: draw nothing (the "more" note counts the cards).
+    if is_no_ceo && area.height < 2 {
+        return area.y;
+    }
+    let cards_area = if is_no_ceo {
+        render_text(
+            frame,
+            Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: 1,
+            },
+            "no CEO",
+            Style::new().fg(ctx.theme.muted),
+        );
+        Rect {
+            x: area.x,
+            y: area.y.saturating_add(1),
+            width: area.width,
+            height: area.height.saturating_sub(1),
+        }
+    } else {
+        area
+    };
+
+    let (rows, end_y) = block_card_rows(cards_area, &block.levels);
+    *drawn += rows.iter().map(|row| row.cards.len()).sum::<usize>();
     for row in &rows {
         for slot in &row.cards {
             draw_card(
@@ -583,7 +705,10 @@ fn draw_orchestration(
             );
         }
     }
-    let parents = flows::parents(&view.agents);
+    if is_no_ceo {
+        return end_y;
+    }
+
     for (row_index, row) in rows.iter().enumerate() {
         if row_index == 0 {
             continue;
@@ -594,7 +719,6 @@ fn draw_orchestration(
         let bus_y = top.saturating_sub(CONNECTOR_ROWS);
         let drop_y = top.saturating_sub(1);
 
-        // Group this row's cards by the parent that holds them, wherever that parent row is.
         let mut groups: Vec<(usize, Vec<&CardSlot>)> = Vec::new();
         for slot in &row.cards {
             let Some(parent) = parents.get(slot.index).copied().flatten() else {
@@ -614,7 +738,7 @@ fn draw_orchestration(
             }
             draw_connectors(
                 frame,
-                inner,
+                cards_area,
                 parent_slot,
                 &kids,
                 parent_row + 1 == row_index,
@@ -626,6 +750,7 @@ fn draw_orchestration(
             );
         }
     }
+    end_y
 }
 
 /// Row index and slot holding agent `index`, when its card fits on screen.
@@ -671,73 +796,95 @@ fn draw_card(
     let width = inner.width as usize;
 
     let kind = status_kind(agent);
+    let muted = Style::new().fg(ctx.theme.muted);
     let symbol_color = if exited {
         ctx.theme.muted
     } else {
         status_color(kind, ctx.theme)
     };
-    let label = sanitize_one_line(&agent.label);
-    let app = sanitize_one_line(&agent.app);
-    let model = sanitize_one_line(&agent.model);
-    let ident = if app.is_empty() {
-        format!("{label} {model}")
-    } else if model.is_empty() {
-        format!("{label} {app}")
-    } else {
-        format!("{label} {app}/{model}")
-    };
-    let ident = fit_text(&ident, width.saturating_sub(2));
-    let base = Style::new().fg(if exited {
-        ctx.theme.muted
-    } else {
-        Color::Reset
+    let is_ceo = layout::is_ceo(layout::Node {
+        depth: agent.depth,
+        worker: agent.role.as_deref() == Some("worker"),
     });
-    let ident_style = if selected {
-        base.add_modifier(Modifier::BOLD)
+    let label_style = if exited {
+        muted
+    } else if is_ceo {
+        Style::new()
+            .fg(ctx.theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
-        base
+        Style::new().fg(ctx.theme.title)
     };
+    let label = fit_text(&sanitize_one_line(&agent.label), width.saturating_sub(2));
     let line1 = Line::from(vec![
         Span::styled(
             format!("{} ", status_symbol(kind, ctx.ascii)),
             Style::new().fg(symbol_color),
         ),
-        Span::styled(ident, ident_style),
-    ]);
+        Span::styled(label, label_style),
+    ])
+    .centered();
 
-    let line2 = if let Some(doing) = &agent.doing {
+    let model = sanitize_one_line(&agent.model);
+    let app = sanitize_one_line(&agent.app);
+    let ident = if !model.is_empty() {
+        model
+    } else if !app.is_empty() {
+        app
+    } else {
+        "-".to_string()
+    };
+    let line2 = Line::from(Span::styled(fit_text(&ident, width), muted)).centered();
+
+    let base = if exited {
+        muted
+    } else {
+        Style::new().fg(Color::Reset)
+    };
+    let line3 = if let Some(doing) = &agent.doing {
         let summary = sanitize_one_line(&doing.summary);
         let age = age_since(now_ms, doing.ts_ms);
         let prefix = "doing: ";
         let summary_fits = prefix.width() + summary.width() <= width;
         let with_age = summary_fits && prefix.width() + summary.width() + 1 + age.width() <= width;
-        let mut spans = vec![Span::styled(prefix, Style::new().fg(ctx.theme.muted))];
+        let mut spans = vec![Span::styled(prefix, muted)];
         if with_age {
             spans.push(Span::styled(summary, base));
-            spans.push(Span::styled(
-                format!(" {age}"),
-                Style::new().fg(ctx.theme.muted),
-            ));
+            spans.push(Span::styled(format!(" {age}"), muted));
         } else {
             let summary = fit_text(&summary, width.saturating_sub(prefix.width()));
             spans.push(Span::styled(summary, base));
         }
-        Line::from(spans)
+        Line::from(spans).centered()
     } else if let Some(stage) = &agent.stage {
         let prefix = "stage: ";
         let stage = fit_text(
             &sanitize_one_line(stage),
             width.saturating_sub(prefix.width()),
         );
-        Line::from(vec![
-            Span::styled(prefix, Style::new().fg(ctx.theme.muted)),
-            Span::styled(stage, base),
-        ])
+        Line::from(vec![Span::styled(prefix, muted), Span::styled(stage, base)]).centered()
     } else {
-        muted_line("-", ctx)
+        muted_line("-", ctx).centered()
     };
 
-    frame.render_widget(Paragraph::new(vec![line1, line2]), inner);
+    let line4 = match agent
+        .task
+        .as_deref()
+        .map(sanitize_one_line)
+        .filter(|s| !s.is_empty())
+    {
+        Some(task) => {
+            let style = if exited {
+                muted
+            } else {
+                Style::new().fg(ctx.theme.selected)
+            };
+            Line::from(Span::styled(fit_text(&format!("‹{task}›"), width), style)).centered()
+        }
+        None => muted_line("-", ctx).centered(),
+    };
+
+    frame.render_widget(Paragraph::new(vec![line1, line2, line3, line4]), inner);
 }
 
 /// Box-drawing glyphs for the tree connector, or their ASCII fallbacks.
@@ -836,6 +983,8 @@ fn draw_connectors(
         let is_parent = adjacent && x == parent_cx;
         let is_child = child_centres.contains(&x);
         let symbol = match (is_parent, is_child) {
+            // Parent straight above its only child: a plain vertical, not a junction.
+            (true, true) if bus_start == bus_end => glyphs.vertical,
             (true, true) => glyphs.cross,
             (true, false) => glyphs.up,
             (false, true) if x == bus_start => glyphs.corner_left,
@@ -934,11 +1083,18 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDa
     };
     let status = format_status(Some(agent.status.as_str()).filter(|s| !s.is_empty()), None);
 
+    let task = agent
+        .task
+        .as_deref()
+        .map(sanitize_one_line)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "-".to_string());
+
     let mut rows: Vec<Line<'static>> = vec![
         field_line("app", &dash_value(&agent.app), ctx),
         field_line("model", &model, ctx),
         field_line("status", &sanitize_one_line(&status), ctx),
-        field_line("task", "-", ctx),
+        field_line("task", &task, ctx),
     ];
     rows.extend(stage_lines(agent.stage.as_deref(), ctx));
     rows.push(ctx_line(agent.context_pct, ctx));

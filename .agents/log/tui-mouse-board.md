@@ -38,3 +38,18 @@
 - cargo test: pass (all suites ok, 0 failed)
 - Fixed test call sites in tests/board_view_test.rs for new draw/draw_in return type.
 - Status: green
+
+## Fix round 1
+
+### Item 1 - Overlays are modal for the mouse
+- Red: new integration test `picker_popup_makes_the_board_behind_it_unreachable` first failed to compile
+  (`BoardHitMap` had no `overlay`) and, once the field existed, `hit()` still returned the background
+  inbox row / card behind the picker.
+- `BoardHitMap` gained `overlay: Option<Rect>` + `begin_overlay(rect)` (clears background entries, marks the
+  rect). `hit()` returns `None` outside the overlay, so a hidden target can never win.
+- `view::draw_popup` calls `begin_overlay` for every popup mode; the picker then records its own panel/rows.
+- The Output panel is modal too: `app::draw_frame` calls `hit_map.begin_overlay(main_area)` after drawing it
+  (unit test `output_overlay_hides_the_board_from_mouse`).
+- Test drives the REAL map from `view::draw_in` (TestBackend 140x40): double-click on a background inbox row
+  while PickProject is open leaves mode PickProject, no Reply, no selection/focus change.
+- Status: green

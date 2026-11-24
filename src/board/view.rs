@@ -1544,6 +1544,9 @@ fn popup_area(area: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
+/// A popup is modal for the mouse: it discards everything recorded under it and marks its rect,
+/// so `hit()` can never return a card, row or panel hidden behind the popup. What the popup itself
+/// adds (the picker panel and its rows) is recorded after this call.
 fn draw_popup(
     frame: &mut Frame,
     area: Rect,
@@ -1694,6 +1697,7 @@ fn draw_popup(
     };
 
     let rect = popup_area(area, width, height);
+    hit.begin_overlay(rect);
     frame.render_widget(Clear, rect);
     let block = panel(title, ctx.theme.title, ctx);
     let inner = block.inner(rect);

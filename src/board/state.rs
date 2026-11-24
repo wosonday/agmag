@@ -26,6 +26,21 @@ pub struct BoardHitMap {
     pub agent_cards: Vec<(Rect, String)>,
     pub inbox_rows: Vec<(Rect, i64)>,
     pub picker_rows: Vec<(Rect, usize)>,
+    /// An open popup (picker, reply, help, output, ...) is modal: only this rect is hit-testable.
+    pub overlay: Option<Rect>,
+}
+
+impl BoardHitMap {
+    /// Makes `rect` the only hit-testable area: an overlay hides whatever was drawn under it.
+    /// What the overlay itself draws records its own entries after this call.
+    pub fn begin_overlay(&mut self, rect: Rect) {
+        self.panels.clear();
+        self.project_rows.clear();
+        self.agent_cards.clear();
+        self.inbox_rows.clear();
+        self.picker_rows.clear();
+        self.overlay = Some(rect);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +54,13 @@ pub enum HitTarget {
 
 /// Pure hit test: most specific target wins (rows/cards before panels).
 /// Picker rows are checked first because the picker popup overlays the board.
+/// An overlay is modal: nothing outside its rect is hit, so a hidden target never wins.
 pub fn hit(map: &BoardHitMap, x: u16, y: u16) -> Option<HitTarget> {
+    if let Some(overlay) = map.overlay
+        && !contains(overlay, x, y)
+    {
+        return None;
+    }
     for (rect, idx) in &map.picker_rows {
         if contains(*rect, x, y) {
             return Some(HitTarget::PickerRow(*idx));
@@ -1516,6 +1537,7 @@ mod tests {
             agent_cards: vec![(Rect::new(1, 1, 8, 3), "t1".into())],
             inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10)],
             picker_rows: vec![(Rect::new(1, 17, 10, 1), 1)],
+            overlay: None,
         };
         let kinds = [
             MouseEventKind::Down(MouseButton::Left),

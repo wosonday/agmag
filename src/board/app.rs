@@ -564,6 +564,8 @@ fn draw_frame(
                     &palette,
                     ascii,
                 );
+                // The Output panel covers the board: nothing under it may stay hit-testable.
+                board.hit_map.begin_overlay(main_area);
             }
             let mut cursor = global_view::draw_cmdline_bar(
                 frame,
@@ -950,6 +952,32 @@ mod tests {
         assert!(
             cmd_row.contains("agm> "),
             "board screen in app missing command bar on row above footer: {cmd_row:?}"
+        );
+    }
+
+    #[test]
+    fn output_overlay_hides_the_board_from_mouse() {
+        let mut screen = Screen::Board(fake_board_screen());
+        let state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        data.output = Some("cleanup 1 t2".into());
+        let backend = ratatui::backend::TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_frame(f, &mut screen, &state, &data, false, false))
+            .unwrap();
+        let Screen::Board(board) = &screen else {
+            panic!("screen changed")
+        };
+        // The Output panel covers the board area (command bar and footer stay visible).
+        assert_eq!(board.hit_map.overlay, Some(Rect::new(0, 0, 100, 22)));
+        assert!(
+            board.hit_map.panels.is_empty() && board.hit_map.inbox_rows.is_empty(),
+            "board targets stayed hit-testable under the Output panel"
+        );
+        assert!(
+            crate::board::view::hit(&board.hit_map, 1, 1).is_none(),
+            "a click under the Output panel still reached the board"
         );
     }
 

@@ -229,6 +229,7 @@ pub fn run_app(
                             store,
                             hc,
                             &mut state,
+                            &data,
                             &mut board_cmd_focus,
                             super::clock_ms(),
                         );
@@ -627,33 +628,46 @@ fn run_board_dispatch(
 }
 
 /// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
+/// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
+#[allow(clippy::too_many_arguments)]
 fn handle_mouse(
     mouse: event::MouseEvent,
     screen: &mut Screen,
     store: &Store,
     hc: &dyn Hc,
     state: &mut GlobalState,
+    data: &GlobalData,
     board_cmd_focus: &mut bool,
     now_ms: i64,
 ) -> Next {
     match screen {
-        Screen::Board(board) => {
-            handle_board_mouse(mouse, board, store, hc, state, board_cmd_focus, now_ms)
-        }
+        Screen::Board(board) => handle_board_mouse(
+            mouse,
+            board,
+            store,
+            hc,
+            state,
+            data,
+            board_cmd_focus,
+            now_ms,
+        ),
         Screen::Global => Next::Skip,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_board_mouse(
     mouse: event::MouseEvent,
     board: &mut Box<BoardScreen>,
     store: &Store,
     hc: &dyn Hc,
     state: &mut GlobalState,
+    data: &GlobalData,
     board_cmd_focus: &mut bool,
     now_ms: i64,
 ) -> Next {
-    if state.popup.is_some() || *board_cmd_focus {
+    // Popups, the board command bar and the Output panel all own the mouse while they are up.
+    if state.popup.is_some() || *board_cmd_focus || data.output.is_some() {
         return Next::Skip;
     }
     let redraw = board.on_mouse(mouse, store, hc, now_ms);
@@ -978,8 +992,10 @@ mod tests {
     fn output_overlay_hides_the_board_from_mouse() {
         let mut screen = Screen::Board(fake_board_screen());
         let state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
-        let mut data = GlobalData::default();
-        data.output = Some("cleanup 1 t2".into());
+        let data = GlobalData {
+            output: Some("cleanup 1 t2".into()),
+            ..GlobalData::default()
+        };
         let backend = ratatui::backend::TestBackend::new(100, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1015,6 +1031,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let data = GlobalData::default();
         let mut cmd_focus = false;
 
         // The overview's mouse belongs to T3: ignoring it must not repaint the frame.
@@ -1026,6 +1043,7 @@ mod tests {
                 &store,
                 &FakeHc,
                 &mut state,
+                &data,
                 &mut cmd_focus,
                 0
             ),
@@ -1054,6 +1072,7 @@ mod tests {
                         &store,
                         &FakeHc,
                         &mut state,
+                        &data,
                         &mut cmd_focus,
                         0
                     ),
@@ -1071,6 +1090,7 @@ mod tests {
                 &store,
                 &FakeHc,
                 &mut state,
+                &data,
                 &mut cmd_focus,
                 10
             ),
@@ -1084,9 +1104,13 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
         let mut board = fake_board_screen();
         board.hit_map = crate::board::state::BoardHitMap {
-            panels: vec![(Rect::new(0, 0, 20, 10), crate::board::state::Panel::Detail)],
+            panels: vec![
+                (Rect::new(0, 0, 20, 10), crate::board::state::Panel::Detail),
+                (Rect::new(20, 0, 20, 10), crate::board::state::Panel::Inbox),
+            ],
             ..Default::default()
         };
         let mut cmd_focus = false;
@@ -1099,6 +1123,7 @@ mod tests {
                 &store,
                 &FakeHc,
                 &mut state,
+                &data,
                 &mut cmd_focus,
                 10
             ),
@@ -1116,6 +1141,7 @@ mod tests {
                 &store,
                 &FakeHc,
                 &mut state,
+                &data,
                 &mut cmd_focus,
                 20
             ),
@@ -1137,6 +1163,7 @@ mod tests {
                 &store,
                 &FakeHc,
                 &mut state,
+                &data,
                 &mut cmd_focus,
                 30
             ),
@@ -1144,6 +1171,26 @@ mod tests {
         ));
         assert_eq!(board.state.panel, Panel::Orchestration);
         assert_eq!(state.popup, Some(popup));
+
+        // An open Output panel is modal too: `Tab` can leave the command bar while it stays open,
+        // and then a click on the panel text must not reach the board under it.
+        state.popup = None;
+        data.output = Some("cleanup 1 t2".into());
+        // A different target than every earlier click, so this is a plain (not double) click.
+        assert!(matches!(
+            handle_board_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 21, 1),
+                &mut board,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut cmd_focus,
+                40
+            ),
+            Next::Skip
+        ));
+        assert_eq!(board.state.panel, Panel::Orchestration);
     }
 
     fn press(

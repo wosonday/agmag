@@ -95,3 +95,13 @@
 - TDD evidence (temporary mutation, reverted): dropping the inbox scroll offset from the recorded rows made
   `inbox_hit_map_follows_the_rendered_scroll` fail.
 - Status: green
+
+### Item 5 - Ignore the mouse while the Output panel is open
+- Red: extended `board_mouse_is_blocked_by_a_popup_or_the_command_bar` with an output-open click on a different
+  panel (so the previous clicks cannot pair with it as a double-click); it failed (`Redraw` instead of `Skip`).
+- `handle_board_mouse` now takes `&GlobalData` and returns `Skip` while `data.output.is_some()`, next to the
+  popup and board-command-bar guards; `handle_mouse`/`run_app` thread the data through.
+- The Output overlay is also modal in the hit map itself (item 1: `begin_overlay(main_area)`), so both layers
+  agree.
+- Clippy `field_reassign_with_default` in the item-1 output test fixed with a struct-update literal.
+- Status: green

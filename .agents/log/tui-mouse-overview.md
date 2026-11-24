@@ -84,3 +84,26 @@ The border mapping test proves `Horizontal(2)`/`Horizontal(3)` sit on the pair's
 row in a real 140x40 frame, so the group-above mapping is measured, not guessed.
 Green: `cargo test` = **766 passed, 0 failed** (lib 127, global_view_test 45); clippy clean.
 
+
+## Step 4 — wire the overview mouse into the app loop
+
+New tests (written first, seen failing: `Screen::Global => Next::Skip` ignored every click):
+
+- `overview_mouse_redraws_only_when_something_changed`
+- `overview_mouse_never_dispatches_or_confirms`
+- `overview_mouse_never_confirms_a_popup`
+- `overview_mouse_is_modal_under_the_output_overlay`
+- `overview_drag_persists_through_handle_mouse`
+- `overview_mouse_double_click_opens_the_board`
+
+Code: `handle_mouse` `Screen::Global` calls `state.on_mouse(...)` and maps the effect exactly like
+`handle_global_key`: `OpenBoard` resolves through `terminal_project`, `SaveLayout` writes
+`tui_layout` + note, `None` is `Skip` unless something changed (`Redraw`). Run/SaveTheme/Quit are
+never produced by the mouse and are ignored defensively (the handle has no dispatcher at all).
+
+Anti-goal matrix: every recorded panel/row/border centre + footer x every event kind, plus every
+double-click pair, with and without a popup, and under the Output overlay: no `GEffect::Run`, no
+dispatch, no `Next::Quit`/`Restart`, popup text/state unchanged, board opens only on the terminal
+double-click.
+Green: `cargo test` = **772 passed, 0 failed** (lib 133); clippy clean.
+

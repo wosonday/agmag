@@ -691,7 +691,51 @@ fn handle_mouse(
             board_cmd_focus,
             now_ms,
         ),
-        Screen::Global => Next::Skip,
+        Screen::Global => {
+            let (changed, effect) = state.on_mouse(mouse, data, now_ms);
+            match effect {
+                GEffect::None => {
+                    if changed {
+                        Next::Redraw
+                    } else {
+                        Next::Skip
+                    }
+                }
+                GEffect::OpenBoard(address) => {
+                    // Same resolution as ⏎ on a terminal row.
+                    let name = terminal_label(data, &address);
+                    match terminal_project(data, &address, &name) {
+                        Ok(key) => Next::Board(key),
+                        Err(text) => {
+                            state.note = Some((NoteKind::Warn, text));
+                            Next::Redraw
+                        }
+                    }
+                }
+                GEffect::SaveLayout(text) => {
+                    state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, &text) {
+                        Ok(()) => (
+                            NoteKind::Ok,
+                            if text.is_empty() {
+                                "layout reset".into()
+                            } else {
+                                "layout saved".into()
+                            },
+                        ),
+                        Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                    });
+                    Next::Redraw
+                }
+                // The overview's mouse never sends or quits (anti-goal): never dispatch it.
+                GEffect::Run(_) | GEffect::SaveTheme(_) | GEffect::Quit => {
+                    if changed {
+                        Next::Redraw
+                    } else {
+                        Next::Skip
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1522,5 +1566,480 @@ mod tests {
             0,
         );
         assert!(matches!(next, Next::Global(_)));
+    }
+
+    use crate::board::global::{BorderId, HitPanel, RowTarget};
+    use crate::dashboard::{Snapshot, TermView};
+    use crate::report::{UsageBucket, UsageSummary};
+    use crate::store::{InboxRow, MessageRow};
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+
+    fn ov_term(address: &str, name: &str) -> TermView {
+        TermView {
+            address: address.into(),
+            name: name.into(),
+            app: "claude".into(),
+            status: "working".into(),
+            task: String::new(),
+            model: String::new(),
+            effort: String::new(),
+            cwd: String::new(),
+            place: String::new(),
+            last_msg: None,
+            tokens: None,
+            context_pct: None,
+            handoff_state: "active".into(),
+        }
+    }
+
+    fn ov_inbox(id: i64) -> InboxRow {
+        InboxRow {
+            id,
+            ts_ms: 0,
+            terminal: Some("t1".into()),
+            source: "source".into(),
+            kind: Some("question".into()),
+            text: format!("item {id}"),
+            resolved_ms: None,
+            reply: None,
+        }
+    }
+
+    fn overview_data() -> GlobalData {
+        let snap = Snapshot {
+            now_s: 0,
+            policy_on: true,
+            quota: Vec::new(),
+            usage_summary: UsageSummary {
+                now_ms: 0,
+                offset_label: String::new(),
+                four_months_start_ms: 0,
+                four_months_start_day: String::new(),
+                last_24h: UsageBucket::default(),
+                today: UsageBucket::default(),
+                this_month: UsageBucket::default(),
+                recent_months: Vec::new(),
+                covered_since_ms: None,
+                incomplete_coverage: false,
+            },
+            terminals: vec![ov_term("t1", "worker-1"), ov_term("t2", "worker-2")],
+            live_rotation_pairs: Vec::new(),
+            budgets: Vec::new(),
+            inbox: vec![ov_inbox(7), ov_inbox(8)],
+            messages: vec![MessageRow {
+                id: 1,
+                ts_ms: 0,
+                from: "t1".into(),
+                to: "t2".into(),
+                kind: "REPORT".into(),
+                text: "hello".into(),
+                ..MessageRow::default()
+            }],
+            system: None,
+        };
+        GlobalData {
+            snap: Some(snap),
+            view: vec![Section::Terminals, Section::Inbox],
+            project_of: HashMap::new(),
+            output: None,
+            now_ms: 0,
+        }
+    }
+
+    fn draw_overview(state: &GlobalState, data: &GlobalData) -> Screen {
+        let mut screen = Screen::Global;
+        let backend = ratatui::backend::TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_frame(f, &mut screen, state, data, false, false))
+            .unwrap();
+        screen
+    }
+
+    /// The middle of every recorded target, plus the footer row.
+    fn overview_targets(state: &GlobalState) -> Vec<(u16, u16)> {
+        let map = state.hit_map();
+        let mut coords = Vec::new();
+        for (rect, _) in &map.panels {
+            coords.push((rect.x + rect.width / 2, rect.y + rect.height / 2));
+        }
+        for (rect, _) in &map.rows {
+            coords.push((rect.x + rect.width / 2, rect.y + rect.height / 2));
+        }
+        for (rect, _) in &map.borders {
+            coords.push((rect.x + rect.width / 2, rect.y));
+        }
+        coords.push((0, 39));
+        coords
+    }
+
+    #[test]
+    fn overview_mouse_redraws_only_when_something_changed() {
+        let store = Store::open_in_memory().unwrap();
+        let data = overview_data();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut screen = draw_overview(&state, &data);
+        let map = state.hit_map();
+        let panel = map
+            .panels
+            .iter()
+            .find(|(_, panel)| matches!(panel, HitPanel::Section(_)))
+            .expect("a section panel")
+            .0;
+        let point = (panel.x + panel.width / 2, panel.y + panel.height / 2);
+
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+        ] {
+            let next = handle_mouse(
+                mouse_ev(kind, point.0, point.1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                1_000,
+            );
+            assert!(matches!(next, Next::Skip), "{kind:?} forced a redraw");
+        }
+
+        // A click on a panel moves the focus and repaints.
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), point.0, point.1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                2_000,
+            ),
+            Next::Redraw
+        ));
+        assert!(matches!(state.focus, Focus::Panel(_)));
+
+        // A wheel outside every panel (the footer) changes nothing.
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::ScrollDown, 139, 39),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                3_000,
+            ),
+            Next::Skip
+        ));
+    }
+
+    #[test]
+    fn overview_mouse_never_dispatches_or_confirms() {
+        let store = Store::open_in_memory().unwrap();
+        let data = overview_data();
+        let probe = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        draw_overview(&probe, &data);
+        let coords = overview_targets(&probe);
+        let kinds = [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Right),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ];
+
+        for kind in kinds {
+            for &(column, row) in &coords {
+                let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+                let mut screen = draw_overview(&state, &data);
+                let (_, effect) = state
+                    .clone()
+                    .on_mouse(mouse_ev(kind, column, row), &data, 1_000);
+                assert!(
+                    !matches!(
+                        effect,
+                        GEffect::Run(_) | GEffect::Quit | GEffect::SaveTheme(_)
+                    ),
+                    "{kind:?} at {column},{row} produced {effect:?}"
+                );
+                let next = handle_mouse(
+                    mouse_ev(kind, column, row),
+                    &mut screen,
+                    &store,
+                    &FakeHc,
+                    &mut state,
+                    &data,
+                    &mut false,
+                    1_000,
+                );
+                assert!(
+                    !matches!(next, Next::Quit | Next::Restart),
+                    "{kind:?} at {column},{row} quit or restarted the loop"
+                );
+                assert!(
+                    state.popup.is_none(),
+                    "{kind:?} at {column},{row} opened a confirmation popup"
+                );
+            }
+        }
+
+        // The same two downs within 400 ms on every target: still no dispatch.
+        for &(column, row) in &coords {
+            let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+            let mut screen = draw_overview(&state, &data);
+            for now in [1_000, 1_200] {
+                let next = handle_mouse(
+                    mouse_ev(MouseEventKind::Down(MouseButton::Left), column, row),
+                    &mut screen,
+                    &store,
+                    &FakeHc,
+                    &mut state,
+                    &data,
+                    &mut false,
+                    now,
+                );
+                assert!(
+                    !matches!(next, Next::Quit | Next::Restart),
+                    "a double-click at {column},{row} quit or restarted the loop"
+                );
+            }
+            assert!(
+                state.popup.is_none(),
+                "a double-click at {column},{row} opened a confirmation popup"
+            );
+        }
+    }
+
+    #[test]
+    fn overview_mouse_never_confirms_a_popup() {
+        let store = Store::open_in_memory().unwrap();
+        let data = overview_data();
+        let probe = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        draw_overview(&probe, &data);
+        let coords = overview_targets(&probe);
+        let popup = Popup::Confirm {
+            prompt: "kill t1?".into(),
+            input: "y".into(),
+        };
+
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ] {
+            for &(column, row) in &coords {
+                let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+                state.popup = Some(popup.clone());
+                let mut screen = draw_overview(&state, &data);
+                let next = handle_mouse(
+                    mouse_ev(kind, column, row),
+                    &mut screen,
+                    &store,
+                    &FakeHc,
+                    &mut state,
+                    &data,
+                    &mut false,
+                    1_000,
+                );
+                assert!(
+                    matches!(next, Next::Skip),
+                    "{kind:?} at {column},{row} acted under a popup"
+                );
+                assert_eq!(state.popup, Some(popup.clone()));
+                assert_eq!(state.cmd.text, "", "a mouse event typed into the popup");
+            }
+        }
+    }
+
+    #[test]
+    fn overview_mouse_is_modal_under_the_output_overlay() {
+        let store = Store::open_in_memory().unwrap();
+        let mut data = overview_data();
+        // Enough rows that some terminal row stays visible above the overlay.
+        for i in 3..=9 {
+            data.snap
+                .as_mut()
+                .unwrap()
+                .terminals
+                .push(ov_term(&format!("t{i}"), &format!("worker-{i}")));
+        }
+        data.output = Some("cleanup 1 t2".into());
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut screen = draw_overview(&state, &data);
+        let map = state.hit_map();
+        let output = map
+            .panels
+            .iter()
+            .find(|(_, panel)| matches!(panel, HitPanel::Output))
+            .expect("Output panel")
+            .0;
+        let output_point = (output.x + output.width / 2, output.y + output.height / 2);
+
+        // The Output panel scrolls; that is the only reaction the overlay allows.
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::ScrollDown, output_point.0, output_point.1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                1_000,
+            ),
+            Next::Redraw
+        ));
+        assert_eq!(state.output_scroll, 1);
+
+        // A terminal row under the overlay stays unreachable, even for a double-click.
+        let row = map
+            .rows
+            .iter()
+            .find(|(_, target)| matches!(target, RowTarget::Terminal(_)))
+            .expect("terminal row")
+            .0;
+        let point = (row.x + row.width / 2, row.y + row.height / 2);
+        for now in [2_000, 2_100] {
+            assert!(matches!(
+                handle_mouse(
+                    mouse_ev(MouseEventKind::Down(MouseButton::Left), point.0, point.1),
+                    &mut screen,
+                    &store,
+                    &FakeHc,
+                    &mut state,
+                    &data,
+                    &mut false,
+                    now,
+                ),
+                Next::Skip
+            ));
+        }
+    }
+
+    #[test]
+    fn overview_drag_persists_through_handle_mouse() {
+        let mut data = overview_data();
+        for i in 3..=9 {
+            data.snap
+                .as_mut()
+                .unwrap()
+                .terminals
+                .push(ov_term(&format!("t{i}"), &format!("worker-{i}")));
+        }
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut screen = draw_overview(&state, &data);
+        let (column, boundary) = state
+            .hit_map()
+            .borders
+            .iter()
+            .find_map(|(rect, id)| (*id == BorderId::Horizontal(2)).then_some((rect.x + 5, rect.y)))
+            .expect("pair boundary");
+
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), column, boundary),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                1_000,
+            ),
+            Next::Skip
+        ));
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    column,
+                    boundary - 3
+                ),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                1_100,
+            ),
+            Next::Redraw
+        ));
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Up(MouseButton::Left), column, boundary - 3),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &data,
+                &mut false,
+                1_200,
+            ),
+            Next::Redraw
+        ));
+        let saved = store.setting(LAYOUT_SETTING_KEY).unwrap();
+        assert!(
+            saved.as_deref().is_some_and(|text| text.contains("h2=")),
+            "the drag was not persisted: {saved:?}"
+        );
+        assert!(
+            matches!(&state.note, Some((NoteKind::Ok, text)) if text.contains("layout saved")),
+            "{:?}",
+            state.note
+        );
+    }
+
+    #[test]
+    fn overview_mouse_double_click_opens_the_board() {
+        let mut data = overview_data();
+        data.project_of.insert("t1".into(), pk("agmag"));
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut screen = draw_overview(&state, &data);
+        let row = state
+            .hit_map()
+            .rows
+            .iter()
+            .find(|(_, target)| matches!(target, RowTarget::Terminal(address) if address == "t1"))
+            .expect("t1 row")
+            .0;
+        let point = (row.x + row.width / 2, row.y + row.height / 2);
+
+        handle_mouse(
+            mouse_ev(MouseEventKind::Down(MouseButton::Left), point.0, point.1),
+            &mut screen,
+            &store,
+            &FakeHc,
+            &mut state,
+            &data,
+            &mut false,
+            1_000,
+        );
+        let next = handle_mouse(
+            mouse_ev(MouseEventKind::Down(MouseButton::Left), point.0, point.1),
+            &mut screen,
+            &store,
+            &FakeHc,
+            &mut state,
+            &data,
+            &mut false,
+            1_200,
+        );
+        assert!(matches!(next, Next::Board(key) if key == pk("agmag")));
     }
 }

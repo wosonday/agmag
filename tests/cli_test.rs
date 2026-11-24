@@ -1112,3 +1112,64 @@ fn approval_check_empty_action_fails() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("action"));
 }
+
+#[test]
+fn approval_check_mixed_case_hard_prohibited_exits_6() {
+    let tmp = sandbox(None);
+    let out = agm(tmp.path(), &["approval", "check", " PuSh\n", "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "hard_prohibited");
+    assert_eq!(v["action"], "push");
+    assert_eq!(v["source"], "hard");
+}
+
+#[test]
+fn approval_check_normalizes_action_lane_and_task() {
+    let tmp = sandbox(None);
+    assert!(agm(tmp.path(), &["policy", "status"]).status.success());
+    {
+        let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+        store
+            .upsert_approval_grant(&agmag::store::ApprovalGrant {
+                lane: Some("lane-a".into()),
+                task: Some("task-a".into()),
+                action: "spawn_worker".into(),
+                approved_by: "user".into(),
+                approved_ms: 1,
+                expires_ms: None,
+                reason: "test".into(),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "check",
+            " SPAWN_WORKER ",
+            "--lane",
+            " lane-a ",
+            "--task",
+            " task-a ",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "allowed");
+    assert_eq!(v["action"], "spawn_worker");
+    assert_eq!(v["lane"], "lane-a");
+    assert_eq!(v["task"], "task-a");
+}

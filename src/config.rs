@@ -194,12 +194,13 @@ impl Policy {
     /// would start a rotation at `rotate` and cancel it below `warn` on every tick, or never act at all.
     pub fn validate(&self) -> Result<()> {
         for entry in &self.delegated_actions {
-            if entry.trim().is_empty() {
+            let normalized = crate::actions::normalize_action(entry);
+            if normalized.is_empty() {
                 anyhow::bail!("delegated_actions entries must not be empty (got {entry:?})");
             }
-            if HARD_PROHIBITED_ACTIONS.contains(&entry.trim()) {
+            if HARD_PROHIBITED_ACTIONS.contains(&normalized.as_str()) {
                 anyhow::bail!(
-                    "delegated_actions: '{entry}' is hard-prohibited and can never be delegated"
+                    "delegated_actions: '{normalized}' is hard-prohibited and can never be delegated"
                 );
             }
         }

@@ -102,3 +102,25 @@
 ### Gates (final, 2026-11-24, CEO)
 - `cargo fmt --check` sạch; `cargo clippy --all-targets -- -D warnings` sạch; `cargo test` 664 passed, 0 failed;
   `python scripts/lint_harness.py` 0 errors. EOL: CHANGELOG.md, src/main.rs CRLF giữ nguyên; còn lại LF.
+
+## Fix round 1
+
+State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; review `.agents/reviews/approval-runtime-1.md`
+(CHƯA ĐẠT) đã đọc. EOL trước mỗi commit: `src/main.rs`, `CHANGELOG.md` CRLF; các tệp sửa trong item này LF.
+
+### Item 1 — một dạng chuẩn cho action/lane/task (RED → GREEN)
+- RED: tests/actions_test.rs thêm 5 test (`approval_normalization_canonicalizes_action_and_keys`,
+  `approval_hard_prohibited_ignores_case_and_surrounding_space`, `approval_delegated_actions_match_case_insensitively`,
+  `approval_grant_input_normalizes_fields_and_rejects_hard_prohibited_case`,
+  `approval_decide_normalizes_lane_task_and_action_for_grant_lookup`); tests/config_test.rs thêm `PUSH`, `Push`,
+  `" push\n"` vào bảng entry bị từ chối; tests/cli_test.rs thêm 2 test (`approval_check_mixed_case_hard_prohibited_exits_6`,
+  `approval_check_normalizes_action_lane_and_task`). Chạy `cargo test --test actions_test approval_` → đỏ
+  (E0425 `normalize_action`, E0609 `ValidatedGrant.lane/task/action`).
+- GREEN: src/actions.rs thêm `normalize_action` (trim + ASCII lowercase), `normalize_key` (trim), `ValidatedGrant`;
+  `is_hard_prohibited`, `decide` (input + từng `delegated_actions` + lane/task), `validate_new_grant` dùng chung hàm chuẩn
+  hóa; src/config.rs `Policy::validate` kiểm entry đã chuẩn hóa; src/main.rs (add/revoke/check) và src/mcp.rs in/kết quả
+  đã chuẩn hóa, add lưu lane/task/action chuẩn; docs cập nhật hành động không phân biệt hoa/thường.
+- `cargo test --test actions_test approval_` 15 passed; `cargo test --test config_test delegated_actions` 1 passed;
+  `cargo test --test cli_test approval_check` 7 passed; `cargo test --test mcp_test approval` 1 passed;
+  `cargo fmt --check` sạch. Item 4 của review (trim không đồng nhất) được phủ trọn bởi item này.
+- Commit: `fix(approval): canonicalize actions, lanes and tasks everywhere`.

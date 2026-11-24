@@ -329,6 +329,9 @@ fn delegated_actions_reject_empty_and_hard_prohibited_entries() {
         ("  ", "empty"),
         ("push", "push"),
         (" merge ", "merge"),
+        ("PUSH", "push"),
+        ("Push", "push"),
+        (" push\\n", "push"),
         ("grant_extension", "grant_extension"),
     ] {
         std::fs::write(

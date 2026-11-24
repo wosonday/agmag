@@ -202,8 +202,81 @@ fn approval_grant_input_rejects_empty_fields_and_hard_prohibited() {
         );
     }
     assert_eq!(
-        actions::validate_new_grant("lane-a", "task-a", "  spawn_worker  ").unwrap(),
+        actions::validate_new_grant("lane-a", "task-a", "  spawn_worker  ")
+            .unwrap()
+            .action,
         "spawn_worker"
+    );
+}
+
+#[test]
+fn approval_normalization_canonicalizes_action_and_keys() {
+    assert_eq!(actions::normalize_action("  PuSh\n"), "push");
+    assert_eq!(actions::normalize_key("  lane-a \t"), "lane-a");
+}
+
+#[test]
+fn approval_hard_prohibited_ignores_case_and_surrounding_space() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    for raw in ["PUSH", "Push", " push ", "push\n", "  MERGE  "] {
+        assert!(actions::is_hard_prohibited(raw), "{raw:?}");
+        assert_eq!(
+            approval_decision(&store, &cfg, raw, None, None, 500),
+            (ApprovalDecision::HardProhibited, "hard".into()),
+            "{raw:?}"
+        );
+    }
+}
+
+#[test]
+fn approval_delegated_actions_match_case_insensitively() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[" Continue_Review ", "PUSH_OK"]);
+    for (raw, action) in [
+        ("continue_review", "continue_review"),
+        ("  CONTINUE_REVIEW  ", "continue_review"),
+        (" push_ok ", "push_ok"),
+    ] {
+        assert_eq!(
+            approval_decision(&store, &cfg, raw, None, None, 500),
+            (ApprovalDecision::Allowed, "global".into()),
+            "{action:?}"
+        );
+    }
+}
+
+#[test]
+fn approval_grant_input_normalizes_fields_and_rejects_hard_prohibited_case() {
+    let input = actions::validate_new_grant(" lane-a ", " task-a ", "  Spawn_Worker  ").unwrap();
+    assert_eq!(input.lane, "lane-a");
+    assert_eq!(input.task, "task-a");
+    assert_eq!(input.action, "spawn_worker");
+    for action in ["PUSH", "Push", " push ", "push\n"] {
+        let err = actions::validate_new_grant("lane-a", "task-a", action).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("hard-prohibited"),
+            "{action:?}: {err:#}"
+        );
+    }
+}
+
+#[test]
+fn approval_decide_normalizes_lane_task_and_action_for_grant_lookup() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let input = actions::validate_new_grant(" lane-a ", " task-a ", " Spawn_Worker ").unwrap();
+    let id = approval_grant(&store, &input.lane, &input.task, &input.action, None);
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            " SPAWN_WORKER ",
+            Some(" lane-a "),
+            Some(" task-a "),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{id}"))
     );
 }
 

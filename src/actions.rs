@@ -29,9 +29,21 @@ impl ApprovalDecision {
     }
 }
 
+/// Dạng chuẩn của tên hành động: bỏ khoảng trắng hai đầu rồi chuyển thường (ASCII).
+/// Mọi nơi so sánh/lưu action đều dùng hàm này để tránh `PUSH` lọt qua danh sách cấm.
+pub fn normalize_action(s: &str) -> String {
+    s.trim().to_ascii_lowercase()
+}
+
+/// Dạng chuẩn của lane/task: chỉ bỏ khoảng trắng hai đầu, giữ nguyên chữ hoa/thường.
+pub fn normalize_key(s: &str) -> String {
+    s.trim().to_string()
+}
+
 /// Hành động luôn cần người dù whitelist toàn cục hay grant còn hiệu lực có ghi.
 pub fn is_hard_prohibited(action: &str) -> bool {
-    HARD_PROHIBITED_ACTIONS.contains(&action)
+    let action = normalize_action(action);
+    HARD_PROHIBITED_ACTIONS.contains(&action.as_str())
 }
 
 /// Kết quả một lần kiểm quyền: quyết định + nguồn (`hard`, `global`, `grant:<id>`, `none`).
@@ -76,7 +88,7 @@ impl Decision {
 }
 
 /// Luật BOT-CEO §2.1: hard-prohibited luôn thắng; rồi whitelist toàn cục; rồi grant lane+task còn hiệu lực;
-/// còn lại cần người. `action` được trim trước khi so khớp.
+/// còn lại cần người. Mọi đầu vào (kể cả từng `delegated_actions`) đều đưa về dạng chuẩn trước khi so khớp.
 pub fn decide(
     store: &Store,
     cfg: &Config,
@@ -85,22 +97,29 @@ pub fn decide(
     task: Option<&str>,
     now: i64,
 ) -> Result<Decision> {
-    let action = action.trim();
+    let action = normalize_action(action);
     if action.is_empty() {
         bail!("action không được rỗng");
     }
+    let lane = lane.map(normalize_key);
+    let task = task.map(normalize_key);
     let decision = |decision, source: &str| Decision {
         decision,
         source: source.to_string(),
     };
-    if is_hard_prohibited(action) {
+    if is_hard_prohibited(&action) {
         return Ok(decision(ApprovalDecision::HardProhibited, "hard"));
     }
-    if cfg.policy.delegated_actions.iter().any(|a| a == action) {
+    if cfg
+        .policy
+        .delegated_actions
+        .iter()
+        .any(|a| normalize_action(a) == action)
+    {
         return Ok(decision(ApprovalDecision::Allowed, "global"));
     }
-    if let (Some(lane), Some(task)) = (lane, task)
-        && let Some(grant) = store.approval_grant(lane, task, action, now)?
+    if let (Some(lane), Some(task)) = (lane.as_deref(), task.as_deref())
+        && let Some(grant) = store.approval_grant(lane, task, &action, now)?
     {
         return Ok(decision(
             ApprovalDecision::Allowed,
@@ -110,23 +129,33 @@ pub fn decide(
     Ok(decision(ApprovalDecision::RequiresHuman, "none"))
 }
 
+/// Lane/task/action của một grant đã được kiểm và đưa về dạng chuẩn để lưu vào CSDL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedGrant {
+    pub lane: String,
+    pub task: String,
+    pub action: String,
+}
+
 /// Kiểm đầu vào `agm approval add`: lane/task/action không rỗng và action không hard-prohibited.
-/// Trả action đã trim để lưu. Chỉ kiểm tra, không ghi gì.
-pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<String> {
-    if lane.trim().is_empty() {
+/// Trả cả ba trường đã chuẩn hóa để lưu. Chỉ kiểm tra, không ghi gì.
+pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<ValidatedGrant> {
+    let lane = normalize_key(lane);
+    let task = normalize_key(task);
+    let action = normalize_action(action);
+    if lane.is_empty() {
         bail!("lane không được rỗng");
     }
-    if task.trim().is_empty() {
+    if task.is_empty() {
         bail!("task không được rỗng");
     }
-    let action = action.trim();
     if action.is_empty() {
         bail!("action không được rỗng");
     }
-    if is_hard_prohibited(action) {
+    if is_hard_prohibited(&action) {
         bail!("hành động '{action}' là hard-prohibited: luôn cần người duyệt, không thể tạo grant");
     }
-    Ok(action.to_string())
+    Ok(ValidatedGrant { lane, task, action })
 }
 
 /// English message types shown in `agm tui`, paired with the stored code (SQLite, forwarded text, `agm send --type`).

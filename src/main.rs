@@ -738,7 +738,8 @@ fn run(cli: Cli) -> Result<()> {
             if !std::io::stdin().is_terminal() {
                 anyhow::bail!("approval add chỉ người dùng TTY mới được tạo");
             }
-            let action = agmag::actions::validate_new_grant(&lane, &task, &action)?;
+            let grant = agmag::actions::validate_new_grant(&lane, &task, &action)?;
+            let (lane, task, action) = (grant.lane, grant.task, grant.action);
             let id = store.upsert_approval_grant(&agmag::store::ApprovalGrant {
                 lane: Some(lane.clone()),
                 task: Some(task.clone()),
@@ -780,6 +781,9 @@ fn run(cli: Cli) -> Result<()> {
             if !std::io::stdin().is_terminal() {
                 anyhow::bail!("approval revoke chỉ người dùng ở terminal (TTY) mới được thu hồi");
             }
+            let lane = agmag::actions::normalize_key(&lane);
+            let task = agmag::actions::normalize_key(&task);
+            let action = agmag::actions::normalize_action(&action);
             store.revoke_approval_grant(&lane, &task, &action, now)?;
             store.log_action(
                 "user",
@@ -805,14 +809,16 @@ fn run(cli: Cli) -> Result<()> {
                 task.as_deref(),
                 now,
             )?;
-            let action = action.trim();
+            let action = agmag::actions::normalize_action(&action);
+            let lane = lane.as_deref().map(agmag::actions::normalize_key);
+            let task = task.as_deref().map(agmag::actions::normalize_key);
             let _ = emit(
                 json,
-                &decision.to_json(action, lane.as_deref(), task.as_deref()),
+                &decision.to_json(&action, lane.as_deref(), task.as_deref()),
                 || {
                     println!(
                         "{}",
-                        decision.human_line(action, lane.as_deref(), task.as_deref())
+                        decision.human_line(&action, lane.as_deref(), task.as_deref())
                     )
                 },
             );

@@ -259,7 +259,12 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
             let cfg = crate::config::Config::load(&ctx.cfg_path)?;
             let decision =
                 crate::actions::decide(ctx.store, &cfg, action, lane, task, (ctx.clock)())?;
-            Ok(decision.to_json(action.trim(), lane, task))
+            let (action, lane, task) = (
+                crate::actions::normalize_action(action),
+                lane.map(crate::actions::normalize_key),
+                task.map(crate::actions::normalize_key),
+            );
+            Ok(decision.to_json(&action, lane.as_deref(), task.as_deref()))
         }
         "agm_ps" => {
             let all = opt_bool(args, "all")?;

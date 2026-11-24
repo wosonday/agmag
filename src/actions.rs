@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use crate::config::{Config, HARD_PROHIBITED_ACTIONS};
 use crate::hc::{Hc, RunSpec, terminal_row_from};
 use crate::launch::LaunchSpec;
-use crate::store::{MessageRow, Store, TerminalRow};
+use crate::store::{ApprovalGrant, MessageRow, Store, TerminalRow};
 
 pub const KINDS: [&str; 7] = ["GIAO", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "CHƯA ĐẠT"];
 
@@ -156,6 +156,29 @@ pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<Valida
         bail!("hành động '{action}' là hard-prohibited: luôn cần người duyệt, không thể tạo grant");
     }
     Ok(ValidatedGrant { lane, task, action })
+}
+
+/// Một dòng dễ đọc cho `agm approval ls` khi chạy trên TTY (không dùng `--json`).
+pub fn grant_human_line(g: &ApprovalGrant) -> String {
+    let scope = match (&g.lane, &g.task) {
+        (Some(lane), Some(task)) => format!("{lane}/{task}"),
+        (Some(lane), None) => lane.clone(),
+        (None, Some(task)) => task.clone(),
+        (None, None) => "*/*".into(),
+    };
+    let expiry = match g.expires_ms {
+        Some(ms) => format!("expires={ms}"),
+        None => "no expiry".into(),
+    };
+    let state = if g.revoked_ms.is_some() {
+        "revoked"
+    } else {
+        "active"
+    };
+    format!(
+        "#{} {scope}: {} | {expiry} | {state} | {}",
+        g.id, g.action, g.reason
+    )
 }
 
 /// `--expires-ms` là mốc tuyệt đối (epoch ms), không phải TTL; phải lớn hơn `now`.

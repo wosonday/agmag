@@ -835,6 +835,42 @@ fn non_shell_foreground_keeps_current_rules() -> Result<()> {
 }
 
 #[test]
+fn approval_grant_human_line_is_readable() {
+    let grant = ApprovalGrant {
+        id: 7,
+        lane: Some("lane-a".into()),
+        task: Some("task-a".into()),
+        action: "spawn_worker".into(),
+        approved_by: "user".into(),
+        approved_ms: 10,
+        expires_ms: None,
+        revoked_ms: None,
+        reason: "user approved".into(),
+    };
+    let line = actions::grant_human_line(&grant);
+    for part in [
+        "#7",
+        "lane-a",
+        "task-a",
+        "spawn_worker",
+        "no expiry",
+        "active",
+        "user approved",
+    ] {
+        assert!(line.contains(part), "{part:?} not in {line:?}");
+    }
+    assert!(!line.contains("ApprovalGrant {"), "{line}");
+    let expired = ApprovalGrant {
+        expires_ms: Some(1234),
+        revoked_ms: Some(999),
+        ..grant
+    };
+    let line = actions::grant_human_line(&expired);
+    assert!(line.contains("expires=1234"), "{line}");
+    assert!(line.contains("revoked"), "{line}");
+}
+
+#[test]
 fn approval_refused_never_exits_zero() {
     for (decision, expected) in [
         (ApprovalDecision::Allowed, 1),

@@ -778,7 +778,7 @@ fn run(cli: Cli) -> Result<()> {
             let grants = store.approval_grants(!all, now)?;
             emit(json, &serde_json::json!({"grants": grants}), || {
                 for grant in grants {
-                    println!("{:?}", grant);
+                    println!("{}", agmag::actions::grant_human_line(&grant));
                 }
             })?;
             Ok(())

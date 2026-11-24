@@ -205,3 +205,11 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
   xuất, test là regression guard được yêu cầu.
 - `cargo test --test store_v2_test` 14 passed; `cargo fmt --check` sạch; EOL không đổi.
 - Commit: `fix(approval): add direct v4 to v5 migration test`.
+
+### Item 10 — `approval ls` trên TTY in một dòng dễ đọc (RED → GREEN)
+- RED: tests/actions_test.rs thêm `approval_grant_human_line_is_readable` → đỏ `E0425 grant_human_line`.
+- GREEN: src/actions.rs thêm `grant_human_line(&ApprovalGrant)`: `#id lane/task: action | expires=<ms> hoặc no expiry |
+  revoked/active | reason`; src/main.rs nhánh `ApprovalCmd::Ls` thay `println!("{:?}", grant)` bằng hàm này.
+- `cargo test --test actions_test approval_grant_human_line` 1 passed; `cargo test --test cli_test approval` 11 passed;
+  `cargo fmt --check` sạch. EOL: main.rs vẫn `i/crlf w/crlf`.
+- Commit: `fix(approval): print readable grant lines in approval ls`.

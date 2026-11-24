@@ -148,6 +148,8 @@ cmd: reply <#> <text> · done <#|a-b|kind:K|term:T> · send <terminal> <TYPE> <m
 
 The full-screen board also supports mouse: click to focus/select, wheel to scroll, and double-click to open a project or pre-fill an inbox reply (nothing is sent until you press Enter). Hold Shift while dragging to select text; set `AGM_MOUSE=0` to disable mouse capture.
 
+The overview takes the same mouse: click a panel or row to focus/select, wheel to scroll, double-click a terminal to open its board or an inbox row to pre-fill `reply`, and drag a panel border to resize (double-click a border or type `layout reset` to return to the content-fitted layout).
+
 TUI commands (type, then Enter):
 
 | Command | Action |

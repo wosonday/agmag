@@ -393,6 +393,8 @@ pub enum GEffect {
     SaveTheme(ThemeName),
     /// Persist these panel proportions under `LAYOUT_SETTING_KEY` (empty = reset).
     SaveLayout(String),
+    /// Show the overview's keyboard/mouse help in the Output panel.
+    ShowHelp,
     Quit,
 }
 
@@ -1113,14 +1115,7 @@ impl GlobalState {
                 GEffect::SaveTheme(self.theme)
             }
             KeyCode::Char('q') => GEffect::Quit,
-            KeyCode::Char('?') => {
-                self.note = Some((
-                    NoteKind::Ok,
-                    "tab panels · ↑↓ select · ⏎ open · r reply · d done · s send · t theme · q quit"
-                        .into(),
-                ));
-                GEffect::None
-            }
+            KeyCode::Char('?') => GEffect::ShowHelp,
             KeyCode::Char(c) => {
                 if !c.is_control()
                     && !key.modifiers.contains(KeyModifiers::CONTROL)

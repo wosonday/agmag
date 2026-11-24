@@ -107,3 +107,17 @@ dispatch, no `Next::Quit`/`Restart`, popup text/state unchanged, board opens onl
 double-click.
 Green: `cargo test` = **772 passed, 0 failed** (lib 133); clippy clean.
 
+
+## Step 5 — docs
+
+New test (written first, seen failing: `?` still set a one-line footer note, `data.output` was None):
+
+- `overview_help_lists_mouse_layout_and_escape_hatches` (app.rs) — `?` fills the Output panel and
+  the text mentions click, wheel, double-click, drag, `layout reset`, `Shift+drag`, `AGM_MOUSE=0`,
+  every line <= 100 columns.
+
+Code: `GEffect::ShowHelp` from `?`; `handle_global_key` shows `OVERVIEW_HELP` in the Output panel.
+The footer `HELP`/`HELP_ASCII` line is untouched (no diff there). Docs: one overview sentence in
+`README.md` and `README_vi.md`; one Vietnamese bullet under `CHANGELOG.md` `[Unreleased]` ->
+`### Thêm mới`. CHANGELOG stayed CRLF (`git ls-files --eol` = `i/crlf w/crlf`), READMEs LF.
+

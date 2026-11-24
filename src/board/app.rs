@@ -92,6 +92,14 @@ enum Next {
     Quit,
 }
 
+/// The overview's `?` help, shown in the Output panel. The footer line stays as it is (it must
+/// still fit 100 columns).
+const OVERVIEW_HELP: &str = "overview help
+click focus/select · wheel scroll · double-click open board / prefill reply
+drag a border to resize · double-click a border resets it · `layout reset` clears all
+Shift+drag selects text · AGM_MOUSE=0 disables mouse capture
+tab panels · ↑↓ select · ⏎ open · r reply · d done · s send · t theme · ? help · q quit";
+
 /// Runs the app until the user quits. `dispatch` runs one command line (shared with `--plain`).
 /// Caller must have passed the human-only check.
 pub fn run_app(
@@ -441,6 +449,12 @@ fn handle_global_key(
             });
             AppAction::Stay
         }
+        GEffect::ShowHelp => {
+            state.note = None;
+            data.output = Some(OVERVIEW_HELP.into());
+            state.output_scroll = 0;
+            AppAction::Stay
+        }
         GEffect::Quit => AppAction::Quit,
     }
 }
@@ -727,7 +741,7 @@ fn handle_mouse(
                     Next::Redraw
                 }
                 // The overview's mouse never sends or quits (anti-goal): never dispatch it.
-                GEffect::Run(_) | GEffect::SaveTheme(_) | GEffect::Quit => {
+                GEffect::Run(_) | GEffect::SaveTheme(_) | GEffect::ShowHelp | GEffect::Quit => {
                     if changed {
                         Next::Redraw
                     } else {
@@ -1671,6 +1685,45 @@ mod tests {
         }
         coords.push((0, 39));
         coords
+    }
+
+    #[test]
+    fn overview_help_lists_mouse_layout_and_escape_hatches() {
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        state.focus = Focus::Panel(Section::Terminals);
+        let mut data = GlobalData::default();
+        let mut noop = |_: &str| dispatched(Outcome::None, vec![]);
+        let action = handle_global_key(
+            key_ev(KeyCode::Char('?')),
+            &store,
+            &mut state,
+            &mut data,
+            &mut noop,
+        );
+        assert!(matches!(action, AppAction::Stay));
+        let help = data
+            .output
+            .as_deref()
+            .expect("`?` must show the overview help in the Output panel");
+        for needle in [
+            "click",
+            "wheel",
+            "double-click",
+            "drag",
+            "layout reset",
+            "Shift+drag",
+            "AGM_MOUSE=0",
+        ] {
+            assert!(
+                help.contains(needle),
+                "{needle:?} missing from the overview help:\n{help}"
+            );
+        }
+        assert!(
+            help.lines().all(|line| line.chars().count() <= 100),
+            "the help must stay readable (and the footer line is not touched):\n{help}"
+        );
     }
 
     #[test]

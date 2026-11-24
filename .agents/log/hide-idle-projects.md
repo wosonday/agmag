@@ -43,3 +43,9 @@ Task: `.agents/tasks/hide-idle-projects.md`. Ẩn dự án idle (`live_agents ==
   `src/board/app.rs` (~302) — phân giải tên vẫn dùng full list.
 - Xanh: 7/7 `board_runtime_test`.
 - Commit: `feat(board): hide idle projects in the project column`.
+
+### Step 4: CHANGELOG (RED → GREEN không áp dụng; tài liệu)
+- `CHANGELOG.md` `[Unreleased]` → `### Thay đổi`: thêm đúng một bullet tiếng Việt về việc ẩn dự án
+  idle trong `cd` và cột dự án của bảng, dòng báo số lượng, và `cd <name>` vẫn mở được chúng.
+- `git ls-files --eol CHANGELOG.md` = `i/crlf w/crlf` (diff đúng 1 dòng thêm, không đổi toàn tệp).
+- Commit: `docs(changelog): note idle projects are hidden from lists`.

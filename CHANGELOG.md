@@ -11,6 +11,7 @@
 
 ### Thay đổi
 
+- Danh sách dự án trong `cd` (không đối số) và cột dự án của `agm board` giờ ẩn các dự án idle (không còn agent live và không có inbox mở); dòng `N idle project(s) hidden — cd <name> still opens them` cho biết số dự án bị ẩn, nhưng `cd <name>` vẫn mở được chúng. Dự án đang hiển thị trên bảng không bị ẩn.
 - Ngưỡng ngữ cảnh riêng cho Claude Code và Codex: `[policy].interactive_ctx_warn` (mặc định 40) và `[policy].interactive_ctx_rotate` (mặc định 50). Cảnh báo ngữ cảnh, xoay vòng phiên đã `agm manage`, cảnh báo phiên chưa quản lý và việc hủy vòng tự động khi ngữ cảnh giảm đều dùng cặp này cho `claude-code`/`codex`; thợ OpenCode và app khác vẫn dùng `ctx_warn`/`ctx_rotate` (50/70).
 
 ### Sửa lỗi

@@ -91,6 +91,10 @@ pub fn format_status(status: Option<&str>, kind: Option<&str>) -> String {
     }
 }
 
+/// Messages a snapshot loads (enough to fill a tall Messages panel) and how many `--plain` prints.
+pub const SNAPSHOT_MESSAGES: usize = 50;
+pub const PLAIN_MESSAGES: usize = 5;
+
 pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
     let mut terminals = Vec::new();
     for t in store.terminals(true)? {
@@ -186,7 +190,8 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
         live_rotation_pairs,
         budgets,
         inbox: store.inbox(true)?,
-        messages: store.messages(5)?,
+        // The full-screen app's Messages panel grows with free space; `--plain` still shows the newest 5.
+        messages: store.messages(SNAPSHOT_MESSAGES)?,
         system: None,
     })
 }
@@ -1575,7 +1580,7 @@ fn render_section(s: &Snapshot, sec: Section, width: usize) -> String {
             if s.messages.is_empty() {
                 out += &format!("  {}\n", paint(GRAY, "(no messages)"));
             }
-            for m in &s.messages {
+            for m in s.messages.iter().take(PLAIN_MESSAGES) {
                 let from = one_line(&m.from, max_w / 6);
                 let to = one_line(&m.to, max_w / 6);
                 let kind = one_line(&m.kind, max_w / 6);

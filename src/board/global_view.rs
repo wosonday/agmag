@@ -15,15 +15,22 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
-use super::global::{CmdLine, Focus, GlobalData, GlobalState, Popup, visible_sections};
+use super::global::{
+    BorderId, CmdLine, Focus, GlobalData, GlobalState, HitPanel, Popup, RowTarget, is_plain_shell,
+    ordered_terminals, visible_sections,
+};
 use super::theme::Theme;
 use crate::actions::kind_to_english;
 use crate::dashboard::{Section, Snapshot, TermView, render_section_body, sanitize_one_line};
 use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
-/// Six message rows plus the panel's top and bottom borders, so wide screens show six messages.
-const MESSAGES_H: u16 = 8;
+/// Messages is the flexible section: it absorbs the space no other section needs.
+const MESSAGES_MIN: u16 = 4;
+/// A panel is its border plus at least one usable row.
+const MIN_SECTION_H: u16 = 3;
+/// The top pair may never take more than this share of the sections area.
+const PAIR_CAP_PERCENT: u32 = 60;
 const PROMPT: &str = "agm> ";
 const HELP: &str =
     " tab panels · ↑↓ select · ⏎ open · r reply · d done · s send · t theme · ? help · q quit";
@@ -36,6 +43,7 @@ pub fn draw_global(
     theme: &Theme,
     ascii: bool,
 ) {
+    state.clear_hit_map();
     let area = frame.area();
     if area.width == 0 || area.height == 0 {
         return;
@@ -46,11 +54,35 @@ pub fn draw_global(
         now_ms: data.now_ms,
     };
     let (main, cmd, footer) = split_bottom(area);
-    let (sections, messages) = split_messages(main);
-    draw_sections(frame, sections, state, data, ctx);
+    let (sections, messages, layout) = split_messages(main, data, ctx);
+    draw_sections(frame, sections, &layout, state, data, ctx);
     draw_messages(frame, messages, state, data, ctx);
-    if let Some(output) = &data.output {
-        draw_output(frame, sections, output, state.output_scroll, ctx);
+    if messages.height > 0 {
+        state.push_panel(messages, Section::Messages);
+        state.push_border(
+            Rect {
+                x: messages.x,
+                y: messages.y,
+                width: messages.width,
+                height: 1,
+            },
+            BorderId::Horizontal(visible_sections(&data.view).len().saturating_sub(1)),
+        );
+    }
+    if let (Some(output), Some(rect)) = (data.output.as_deref(), output_rect(sections)) {
+        draw_output(frame, rect, output, state.output_scroll, ctx);
+        // The overlay was drawn last: nothing it covers may remain clickable in the hit map.
+        state.clip_hit_map(rect);
+        state.push_panel(rect, HitPanel::Output);
+        state.push_border(
+            Rect {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: 1,
+            },
+            BorderId::OutputTop,
+        );
     }
     let mut cursor = None;
     if state.popup.is_none() && matches!(state.focus, Focus::CmdLine) {
@@ -103,22 +135,135 @@ fn split_bottom(area: Rect) -> (Rect, Rect, Rect) {
     (main, cmd, footer)
 }
 
-/// Sections get everything except the pinned Messages rows at the bottom.
-fn split_messages(main: Rect) -> (Rect, Rect) {
-    let messages_h = MESSAGES_H.min(main.height);
+/// Fitted heights for the section groups of one frame. The top pair is one group (two panels
+/// side by side share a height); the remaining groups are full-width sections; Messages is pinned
+/// last and is the flexible group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LayoutHeights {
+    pair: Option<u16>,
+    stacked: Vec<u16>,
+    messages: u16,
+}
+
+/// Rows a section needs for its content, borders included.
+fn section_desired_rows(sec: Section, data: &GlobalData, width: u16) -> u16 {
+    if sec == Section::Messages {
+        return MESSAGES_MIN;
+    }
+    let content_rows = match sec {
+        Section::Quota => data
+            .snap
+            .as_ref()
+            .map(|snap| snap.quota.len().max(1))
+            .unwrap_or(1),
+        Section::Terminals => data
+            .snap
+            .as_ref()
+            .map(|snap| {
+                if snap.terminals.is_empty() {
+                    1 // one muted `-` line, no table header
+                } else {
+                    snap.terminals.len() + 1 // header + rows
+                }
+            })
+            .unwrap_or(1),
+        Section::Inbox => data
+            .snap
+            .as_ref()
+            .map(|snap| {
+                if snap.inbox.is_empty() {
+                    1
+                } else {
+                    snap.inbox.len() + 1 // header + rows
+                }
+            })
+            .unwrap_or(1),
+        Section::Usage | Section::Budgets | Section::System => data
+            .snap
+            .as_ref()
+            .map(|snap| {
+                let inner = width.saturating_sub(2).max(1) as usize;
+                render_section_body(snap, sec, inner).lines().count().max(1)
+            })
+            .unwrap_or(1),
+        Section::Messages => unreachable!(),
+    };
+    (content_rows as u16)
+        .saturating_add(2)
+        .clamp(MIN_SECTION_H, u16::MAX - 2)
+}
+
+/// Widths of the two top-panel columns, mirroring the constraints used by `draw_sections` so a
+/// section's desired rows are measured against the width it is actually drawn at.
+fn pair_column_widths(width: u16, chosen: &[Section], data: &GlobalData, ctx: Ctx) -> (u16, u16) {
+    let quota_w = quota_panel_width(data, ctx, width);
+    if chosen[0] == Section::Quota {
+        (quota_w, width.saturating_sub(quota_w))
+    } else if chosen[1] == Section::Quota {
+        (width.saturating_sub(quota_w), quota_w)
+    } else {
+        (width / 2, width - width / 2)
+    }
+}
+
+/// Fit every section group into `main` at once: Messages gets what nobody needs.
+fn section_layout(main: Rect, data: &GlobalData, ctx: Ctx) -> LayoutHeights {
+    let mut chosen = visible_sections(&data.view);
+    chosen.pop(); // Messages is drawn separately; it stays the last group below.
+    let wide = main.width >= 120 && chosen.len() >= 2;
+    let mut desired: Vec<u16> = Vec::with_capacity(chosen.len());
+    let mut stacked: Vec<Section> = Vec::with_capacity(chosen.len());
+
+    if wide {
+        // The cap is a share of what is left for the fixed sections after Messages; it must
+        // never be inflated to fit two panels. The floor is one panel's minimum, not two.
+        let cap = (u32::from(main.height.saturating_sub(MESSAGES_MIN))
+            .saturating_mul(PAIR_CAP_PERCENT)
+            / 100) as u16;
+        let (left_w, right_w) = pair_column_widths(main.width, &chosen, data, ctx);
+        let pair = section_desired_rows(chosen[0], data, left_w)
+            .max(section_desired_rows(chosen[1], data, right_w))
+            .min(cap)
+            .max(MIN_SECTION_H);
+        desired.push(pair);
+        stacked.extend_from_slice(&chosen[2..]);
+    } else {
+        stacked.extend_from_slice(&chosen);
+    }
+    for sec in &stacked {
+        desired.push(section_desired_rows(*sec, data, main.width));
+    }
+    desired.push(MESSAGES_MIN.min(main.height.max(1)));
+
+    let heights = fit_heights(&desired, desired.len() - 1, main.height, MIN_SECTION_H);
+    let offset = usize::from(wide);
+    LayoutHeights {
+        pair: wide.then(|| heights[0]),
+        stacked: heights[offset..heights.len() - 1].to_vec(),
+        messages: *heights.last().unwrap_or(&0),
+    }
+}
+
+/// Sections get everything except the height Messages needs, which is fitted with the rest.
+fn split_messages(main: Rect, data: &GlobalData, ctx: Ctx) -> (Rect, Rect, LayoutHeights) {
+    let mut layout = section_layout(main, data, ctx);
+    // `fit_heights` keeps its one-panel floor even for a window shorter than the floor. The
+    // floor may win over the requested total, but no rect may spill into the command bar/footer.
+    layout.messages = layout.messages.min(main.height);
+    let sections_h = main.height.saturating_sub(layout.messages);
     let sections = Rect {
         x: main.x,
         y: main.y,
         width: main.width,
-        height: main.height - messages_h,
+        height: sections_h,
     };
     let messages = Rect {
         x: main.x,
-        y: main.y + sections.height,
+        y: main.y + sections_h,
         width: main.width,
-        height: messages_h,
+        height: layout.messages,
     };
-    (sections, messages)
+    (sections, messages, layout)
 }
 
 fn ascii_borders() -> symbols::border::Set<'static> {
@@ -161,6 +306,46 @@ fn muted_line(text: impl Into<String>, ctx: Ctx) -> Line<'static> {
     Line::from(Span::styled(text.into(), Style::new().fg(ctx.theme.muted)))
 }
 
+/// Fit the desired row counts into `total`.
+///
+/// Surplus goes to the single flexible section (`flex`); a deficit is taken from the largest
+/// section first so small panels keep their content, and no section is ever shrunk below `min`.
+/// The result sums to `total` whenever `total >= desired.len() * min` (or is empty for no input).
+pub fn fit_heights(desired: &[u16], flex: usize, total: u16, min: u16) -> Vec<u16> {
+    if desired.is_empty() {
+        return Vec::new();
+    }
+    let mut heights: Vec<u16> = desired.iter().map(|&d| d.max(min)).collect();
+    let sum: u32 = heights.iter().map(|&h| h as u32).sum();
+    let total = total as u32;
+
+    if sum <= total {
+        // Everyone got what they wanted: the leftover belongs to the flexible section.
+        if let Some(slot) = heights.get_mut(flex) {
+            let room = u32::from(u16::MAX) - u32::from(*slot);
+            *slot += (total - sum).min(room) as u16;
+        }
+        return heights;
+    }
+
+    let mut deficit = sum - total;
+    while deficit > 0 {
+        // Lowest index wins ties, so the result is deterministic.
+        let mut largest = None;
+        for (i, &h) in heights.iter().enumerate() {
+            if h > min && largest.is_none_or(|(j, _)| h > heights[j]) {
+                largest = Some((i, h));
+            }
+        }
+        let Some((i, _)) = largest else {
+            break; // everything is at `min`; that floor wins over the requested total
+        };
+        heights[i] -= 1;
+        deficit -= 1;
+    }
+    heights
+}
+
 fn section_title(sec: Section) -> &'static str {
     match sec {
         Section::Quota => "Quota",
@@ -173,72 +358,87 @@ fn section_title(sec: Section) -> &'static str {
     }
 }
 
-fn draw_sections(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
+fn draw_sections(
+    frame: &mut Frame,
+    area: Rect,
+    layout: &LayoutHeights,
+    state: &GlobalState,
+    data: &GlobalData,
+    ctx: Ctx,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let mut chosen = visible_sections(&data.view);
     // `Messages` is pinned and drawn separately below the section area.
     chosen.pop();
-    if chosen.len() == 1 {
-        draw_section(frame, area, chosen[0], state, data, ctx);
-        return;
-    }
-    if area.width >= 120 {
+    if let Some(pair_h) = layout.pair {
         // ≥ 120 columns: first two sections side by side, the rest stacked under them.
-        let pair_h = if chosen.len() >= 3 {
-            let max_h = area.height.saturating_sub(1).max(1);
-            (area.height.saturating_mul(3) / 5)
-                .max(1)
-                .min(max_h)
-                .min(area.height)
-        } else {
-            area.height
-        };
         let pair = Rect {
             x: area.x,
             y: area.y,
             width: area.width,
-            height: pair_h,
+            height: pair_h.min(area.height),
         };
-        let constraints = if chosen[0] == Section::Quota {
-            [
-                Constraint::Length(quota_panel_width(data, ctx, pair.width)),
-                Constraint::Min(0),
-            ]
-        } else if chosen[1] == Section::Quota {
-            [
-                Constraint::Min(0),
-                Constraint::Length(quota_panel_width(data, ctx, pair.width)),
-            ]
-        } else {
-            [Constraint::Percentage(50), Constraint::Percentage(50)]
-        };
+        let (left_w, right_w) = pair_column_widths(pair.width, &chosen, data, ctx);
+        let constraints = [Constraint::Length(left_w), Constraint::Length(right_w)];
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(constraints)
             .split(pair);
+        for (col, sec) in cols.iter().zip(chosen.iter().take(2)) {
+            state.push_panel(*col, *sec);
+        }
+        // Both panels' border columns are draggable, not just the gap between them. Clamp the
+        // two-cell strip so it never reaches past the right edge of the content area.
+        let divider_x = cols[0]
+            .right()
+            .saturating_sub(1)
+            .min(pair.right().saturating_sub(1));
+        let divider_w = 2.min(pair.right().saturating_sub(divider_x));
+        state.push_border(
+            Rect {
+                x: divider_x,
+                y: pair.y,
+                width: divider_w,
+                height: pair.height,
+            },
+            BorderId::TopPairVertical,
+        );
         draw_section(frame, cols[0], chosen[0], state, data, ctx);
         draw_section(frame, cols[1], chosen[1], state, data, ctx);
         if chosen.len() > 2 {
             let rest = Rect {
                 x: area.x,
-                y: area.y + pair_h,
+                y: area.y + pair.height,
                 width: area.width,
-                height: area.height.saturating_sub(pair_h),
+                height: area.height.saturating_sub(pair.height),
             };
-            draw_stacked(frame, rest, &chosen[2..], state, data, ctx);
+            draw_stacked(
+                frame,
+                rest,
+                &chosen[2..],
+                2,
+                &layout.stacked,
+                state,
+                data,
+                ctx,
+            );
         }
     } else {
-        draw_stacked(frame, area, &chosen, state, data, ctx);
+        draw_stacked(frame, area, &chosen, 0, &layout.stacked, state, data, ctx);
     }
 }
 
-/// One section per chunk of the available height (small panels get one row each).
+/// One section per fitted height. The heights were computed for the whole frame, so rounding is
+/// absorbed by the last panel instead of leaving gaps between sections.
+#[allow(clippy::too_many_arguments)]
 fn draw_stacked(
     frame: &mut Frame,
     area: Rect,
     sections: &[Section],
+    base_index: usize,
+    heights: &[u16],
     state: &GlobalState,
     data: &GlobalData,
     ctx: Ctx,
@@ -246,20 +446,53 @@ fn draw_stacked(
     if sections.is_empty() || area.height == 0 {
         return;
     }
-    let count = sections.len() as u16;
-    let base = area.height / count;
-    let extra = area.height % count;
+    let mut heights = heights.to_vec();
+    if heights.len() != sections.len() {
+        heights = vec![0; sections.len()];
+    }
+    let sum: u16 = heights.iter().copied().fold(0, u16::saturating_add);
+    if sum < area.height {
+        if let Some(last) = heights.last_mut() {
+            *last = last.saturating_add(area.height - sum);
+        }
+    } else if sum > area.height {
+        // A section that cannot get its minimum is dropped entirely, never squeezed to a
+        // one-row sliver that overlaps its neighbour or the Messages panel below.
+        let mut excess = sum - area.height;
+        for height in heights.iter_mut().rev() {
+            let take = (*height).min(excess);
+            *height -= take;
+            excess -= take;
+            if excess == 0 {
+                break;
+            }
+        }
+    }
     let mut y = area.y;
-    for (i, sec) in sections.iter().enumerate() {
-        let height = base + u16::from((i as u16) < extra);
+    for (i, (sec, height)) in sections.iter().zip(&heights).enumerate() {
+        if *height == 0 {
+            continue; // dropped: neither drawn nor recorded in the hit map
+        }
         let rect = Rect {
             x: area.x,
             y,
             width: area.width,
-            height,
+            height: *height,
         };
+        state.push_panel(rect, *sec);
+        if i > 0 || base_index > 0 {
+            state.push_border(
+                Rect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: 1,
+                },
+                BorderId::Horizontal(base_index + i),
+            );
+        }
         draw_section(frame, rect, *sec, state, data, ctx);
-        y = y.saturating_add(height);
+        y = y.saturating_add(*height);
     }
 }
 
@@ -430,33 +663,103 @@ fn columns_width(widths: &[u16], highlight: usize) -> usize {
     widths.iter().map(|w| *w as usize).sum::<usize>() + highlight + widths.len()
 }
 
+fn terminals_title(agents: usize, shells: usize) -> String {
+    let noun = |n: usize, one: &'static str, many: &'static str| if n == 1 { one } else { many };
+    match (agents, shells) {
+        (0, 0) => " Terminals ".to_string(),
+        (a, 0) => format!(" Terminals ({a} {}) ", noun(a, "agent", "agents")),
+        (0, s) => format!(" Terminals ({s} {}) ", noun(s, "shell", "shells")),
+        (a, s) => format!(
+            " Terminals ({a} {} · {s} {}) ",
+            noun(a, "agent", "agents"),
+            noun(s, "shell", "shells")
+        ),
+    }
+}
+
+/// Rect of each row a `Table` actually shows, following ratatui's offset for the selected row.
+/// Index 0 is the data row at the top of the inner area (the header occupies the first line).
+fn visible_table_rows(
+    inner: Rect,
+    row_count: usize,
+    selected: Option<usize>,
+) -> Vec<(usize, Rect)> {
+    let view = inner.height.saturating_sub(1) as usize;
+    if view == 0 || row_count == 0 {
+        return Vec::new();
+    }
+    let offset = selected
+        .map(|sel| sel.saturating_add(1).saturating_sub(view))
+        .unwrap_or(0)
+        .min(row_count.saturating_sub(view));
+    (offset..row_count.min(offset.saturating_add(view)))
+        .map(|i| {
+            (
+                i,
+                Rect {
+                    x: inner.x,
+                    y: inner.y + 1 + (i - offset) as u16,
+                    width: inner.width,
+                    height: 1,
+                },
+            )
+        })
+        .collect()
+}
+
 fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
-    let block = panel(
-        format!(" {} ", section_title(Section::Terminals)),
-        ctx.theme.border,
-        ctx,
-    );
+    // One ordering for the rows, the title counts and the ↑↓ navigation (in `global.rs`).
+    let ordered = data
+        .snap
+        .as_ref()
+        .map(ordered_terminals)
+        .unwrap_or_default();
+    let shells = ordered.iter().filter(|t| is_plain_shell(t)).count();
+    let agents = ordered.len() - shells;
+    let block = panel(terminals_title(agents, shells), ctx.theme.border, ctx);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let Some(snap) = &data.snap else {
-        render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
-        return;
-    };
-    if snap.terminals.is_empty() {
+    if ordered.is_empty() {
         render_text(frame, inner, "-", Style::new().fg(ctx.theme.muted));
         return;
     }
 
     let width = inner.width;
-    let terms = &snap.terminals;
-    // Size columns from content: a long name must not squeeze app/model out, and each column has
-    // a cap so one hostile value cannot eat the row.
-    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 4, 20);
+    let terms = &ordered;
+    let values = |header: &'static str| -> Vec<String> {
+        match header {
+            "app" => terms.iter().map(|t| dash_value(&t.app)).collect(),
+            "model" => terms.iter().map(|t| model_label(t)).collect(),
+            "st" => terms
+                .iter()
+                .map(|t| status_label(&t.status, ctx).0)
+                .collect(),
+            "ctx" => terms
+                .iter()
+                .map(|t| {
+                    if t.context_pct.is_some_and(|p| p.is_finite()) {
+                        "ctx".to_string()
+                    } else {
+                        "-".to_string()
+                    }
+                })
+                .collect(),
+            "tok" => terms.iter().map(|t| tokens_label(t.tokens)).collect(),
+            "last" => terms.iter().map(|t| last_msg_label(t, ctx)).collect(),
+            "task" => terms.iter().map(|t| dash_value(&t.task)).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let has_data = |header: &'static str| values(header).iter().any(|v| v != "-");
+
+    // Size name/model from their content first (with generous caps); the `task` column, when it
+    // exists, shows all dashes and is dropped, otherwise it takes the leftover width.
+    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 4, 32);
     let app_w = content_width(terms.iter().map(|t| dash_value(&t.app).width()), 3, 12);
-    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 22);
+    let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 32);
     let status_w = content_width(
         terms.iter().map(|t| status_label(&t.status, ctx).0.width()),
         2,
@@ -467,6 +770,8 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
 
     const HIGHLIGHT_W: usize = 2; // `▸ ` / `> `
     const TASK_MIN: usize = 6;
+    let show_task = has_data("task");
+    let reserve = if show_task { 1 + TASK_MIN } else { 0 };
     let mut columns: Vec<(&'static str, u16)> = vec![("", 1), ("name", name_w)];
     let optional = [
         ("app", app_w),
@@ -477,14 +782,18 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         ("last", last_w),
     ];
     for (header, col_width) in optional {
+        if !has_data(header) {
+            continue; // a column that is `-` for every row only wastes cells
+        }
         let mut trial: Vec<u16> = columns.iter().map(|(_, w)| *w).collect();
         trial.push(col_width);
-        // Keep the flexible task column at least `TASK_MIN` cells wide.
-        if columns_width(&trial, HIGHLIGHT_W) + 1 + TASK_MIN <= width as usize {
+        if columns_width(&trial, HIGHLIGHT_W) + reserve <= width as usize {
             columns.push((header, col_width));
         }
     }
-    columns.push(("task", 0));
+    if show_task {
+        columns.push(("task", 0));
+    }
 
     let show_app = columns.iter().any(|(h, _)| *h == "app");
     let show_model = columns.iter().any(|(h, _)| *h == "model");
@@ -494,7 +803,7 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     let show_last = columns.iter().any(|(h, _)| *h == "last");
 
     let mut rows: Vec<Row<'static>> = Vec::new();
-    for t in &snap.terminals {
+    for t in &ordered {
         let mut cells = vec![status_cell(t, ctx), Cell::from(display_name(t))];
         if show_app {
             cells.push(Cell::from(dash_value(&t.app)));
@@ -515,9 +824,16 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         if show_last {
             cells.push(Cell::from(last_msg_label(t, ctx)));
         }
-        // `task` is the last column (it takes the remaining width), same order as `columns`.
-        cells.push(Cell::from(dash_value(&t.task)));
-        rows.push(Row::new(cells));
+        if show_task {
+            cells.push(Cell::from(dash_value(&t.task)));
+        }
+        // Plain shells sit last and are dimmed; the highlight style still wins for the selection.
+        let row_style = if is_plain_shell(t) {
+            Style::new().fg(ctx.theme.muted)
+        } else {
+            Style::new()
+        };
+        rows.push(Row::new(cells).style(row_style));
     }
 
     let header = Row::new(columns.iter().map(|(h, _)| Cell::from(*h)))
@@ -535,7 +851,10 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     let selected = state
         .sel_terminal
         .as_deref()
-        .and_then(|address| snap.terminals.iter().position(|t| t.address == address));
+        .and_then(|address| ordered.iter().position(|t| t.address == address));
+    for (i, rect) in visible_table_rows(inner, ordered.len(), selected) {
+        state.push_row(rect, RowTarget::Terminal(ordered[i].address.clone()));
+    }
     let mut table_state = TableState::default().with_selected(selected);
     let table = Table::new(rows, constraints)
         .header(header)
@@ -776,6 +1095,9 @@ fn draw_inbox(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalD
     let selected = state
         .sel_inbox
         .and_then(|id| snap.inbox.iter().position(|item| item.id == id));
+    for (i, rect) in visible_table_rows(inner, snap.inbox.len(), selected) {
+        state.push_row(rect, RowTarget::Inbox(snap.inbox[i].id));
+    }
     let mut table_state = TableState::default().with_selected(selected);
     let table = Table::new(rows, constraints)
         .header(header)
@@ -801,6 +1123,18 @@ fn party_labels(snap: &Snapshot) -> HashMap<String, String> {
         }
     }
     labels
+}
+
+/// Rows a message's `Line`s need, counted by ratatui itself for the exact lines the paragraph
+/// draws (word wrap, `trim: true`, wide characters and long words included).
+fn message_row_count(lines: Vec<Line<'static>>, width: u16, wrap: bool) -> usize {
+    let paragraph = Paragraph::new(lines);
+    let paragraph = if wrap {
+        paragraph.wrap(Wrap { trim: true })
+    } else {
+        paragraph
+    };
+    paragraph.line_count(width)
 }
 
 fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
@@ -832,6 +1166,7 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
             .unwrap_or_else(|| sanitize_one_line(address))
     };
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut message_rows: Vec<usize> = Vec::new();
     // Wide panels have room for one line per message (`from → to KIND age  text`), so the pinned
     // six rows show more of the conversation; narrow ones keep the header/text split.
     let one_line = inner.width >= 100;
@@ -856,16 +1191,43 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
                 format!("  {}", sanitize_one_line(&message.text)),
                 Style::new(),
             ));
+            message_rows.push(message_row_count(vec![line.clone()], inner.width, false).max(1));
             lines.push(line);
         } else {
+            let text = Line::from(Span::styled(sanitize_one_line(&message.text), Style::new()));
+            // Count exactly the two lines this message renders, so the hit map sees what ratatui
+            // wraps (spaces at the break, trailing space, wide chars in an over-long word).
+            message_rows.push(
+                message_row_count(vec![header.clone(), text.clone()], inner.width, true).max(1),
+            );
             lines.push(header);
-            lines.push(Line::from(Span::styled(
-                sanitize_one_line(&message.text),
-                Style::new(),
-            )));
+            lines.push(text);
         }
     }
     let scroll = state.scroll.get(&Section::Messages).copied().unwrap_or(0);
+    let scroll_rows = scroll as usize;
+    let view_rows = inner.height as usize;
+    let mut top = 0usize;
+    for (i, rows) in message_rows.iter().enumerate() {
+        let bottom = top + rows;
+        if bottom <= scroll_rows || top >= scroll_rows + view_rows {
+            top = bottom;
+            continue; // entirely above or below the scrolled viewport
+        }
+        // Both edges are measured in the viewport (0..view_rows), never in message space.
+        let top_v = top.saturating_sub(scroll_rows);
+        let bottom_v = bottom.min(scroll_rows + view_rows) - scroll_rows;
+        state.push_row(
+            Rect {
+                x: inner.x,
+                y: inner.y + top_v as u16,
+                width: inner.width,
+                height: (bottom_v - top_v) as u16,
+            },
+            RowTarget::Message(i),
+        );
+        top = bottom;
+    }
     let paragraph = Paragraph::new(lines).scroll((scroll, 0));
     let paragraph = if one_line {
         paragraph
@@ -908,31 +1270,37 @@ pub(crate) fn draw_output_overlay(
     theme: &Theme,
     ascii: bool,
 ) {
-    draw_output(
-        frame,
-        area,
-        text,
-        scroll,
-        Ctx {
-            theme,
-            ascii,
-            now_ms: 0,
-        },
-    );
+    if let Some(rect) = output_rect(area) {
+        draw_output(
+            frame,
+            rect,
+            text,
+            scroll,
+            Ctx {
+                theme,
+                ascii,
+                now_ms: 0,
+            },
+        );
+    }
 }
 
-/// `Outcome::Shown` text over the lower half of the section area, above Messages.
-fn draw_output(frame: &mut Frame, area: Rect, text: &str, scroll: u16, ctx: Ctx) {
+/// Rectangle the Output overlay occupies: the lower half of the section area.
+fn output_rect(area: Rect) -> Option<Rect> {
     if area.width < 4 || area.height < 3 {
-        return;
+        return None;
     }
     let height = (area.height / 2).max(3).min(area.height);
-    let rect = Rect {
+    Some(Rect {
         x: area.x,
         y: area.y + area.height - height,
         width: area.width,
         height,
-    };
+    })
+}
+
+/// `Outcome::Shown` text over the lower half of the section area, above Messages.
+fn draw_output(frame: &mut Frame, rect: Rect, text: &str, scroll: u16, ctx: Ctx) {
     frame.render_widget(Clear, rect);
     let block = panel(" Output ".to_string(), ctx.theme.accent, ctx);
     let inner = block.inner(rect);
@@ -1132,4 +1500,81 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> O
         .saturating_add(input_width)
         .min(inner.right().saturating_sub(1));
     Some(Position::new(x, inner.y.saturating_add(2)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit_heights, message_row_count};
+    use ratatui::text::Line;
+
+    #[test]
+    fn wrap_count_trims_spaces_after_the_wrap_point() {
+        // Ratatui draws "1234567890", the empty row left by the space run, then "123456789":
+        // the count used for the hit map must include that blank row.
+        assert_eq!(
+            message_row_count(vec![Line::from("1234567890   123456789")], 10, true),
+            3
+        );
+    }
+
+    #[test]
+    fn wrap_count_drops_a_trailing_space() {
+        assert_eq!(
+            message_row_count(vec![Line::from("1234567890 ")], 10, true),
+            1,
+            "a trailing space does not start a new row"
+        );
+    }
+
+    #[test]
+    fn wrap_count_breaks_wide_chars_on_cell_boundaries() {
+        assert_eq!(
+            message_row_count(vec![Line::from("漢漢漢")], 3, true),
+            2,
+            "a 2-column char cannot straddle the last free cell: 漢 then 漢漢"
+        );
+    }
+
+    #[test]
+    fn fit_heights_empty_input_is_empty() {
+        assert!(fit_heights(&[], 0, 20, 3).is_empty());
+        assert!(fit_heights(&[], 9, 0, 3).is_empty());
+    }
+
+    #[test]
+    fn fit_heights_surplus_goes_to_flex() {
+        assert_eq!(fit_heights(&[3, 5, 4], 1, 20, 3), vec![3, 13, 4]);
+        assert_eq!(fit_heights(&[4, 4], 0, 10, 3), vec![6, 4]);
+    }
+
+    #[test]
+    fn fit_heights_deficit_shrinks_largest_first() {
+        let got = fit_heights(&[20, 4, 4], 0, 15, 3);
+        assert_eq!(got, vec![7, 4, 4], "only the largest section shrinks");
+        assert_eq!(got.iter().sum::<u16>(), 15);
+
+        let got = fit_heights(&[10, 10, 3], 0, 15, 3);
+        assert_eq!(got, vec![6, 6, 3], "ties share the deficit evenly");
+        assert_eq!(got.iter().sum::<u16>(), 15);
+    }
+
+    #[test]
+    fn fit_heights_never_below_min() {
+        let got = fit_heights(&[20, 2, 2], 0, 4, 3);
+        assert!(got.iter().all(|&h| h >= 3), "below min: {got:?}");
+        assert_eq!(got, vec![3, 3, 3], "min wins when total is too small");
+
+        let got = fit_heights(&[20, 2, 2], 0, 12, 3);
+        assert_eq!(got, vec![6, 3, 3]);
+    }
+
+    #[test]
+    fn fit_heights_sums_to_total() {
+        for total in [12u16, 20, 38, 50] {
+            let got = fit_heights(&[3, 14, 3, 4], 3, total, 3);
+            assert_eq!(got.iter().sum::<u16>(), total, "total {total}: {got:?}");
+            assert!(got.iter().all(|&h| h >= 3), "below min: {got:?}");
+        }
+        assert_eq!(fit_heights(&[3, 14, 3, 4], 3, 38, 3), vec![3, 14, 3, 18]);
+    }
 }

@@ -82,3 +82,11 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - RED (each verified with a temporary local regression, then restored): (1) the priority test's row `x: 1..19` did not overlap the border `x: 19..20` - swapping the `hit()` priority made it fail only after the fix; (2) `tiny_heights_two_and_three_stay_inside_main` failed at 140x2 when the Messages clamp was removed (a height-3 rect in a zero-height main); (3) `scrolled_table_row_rects_match_drawn_rows` failed when the `visible_table_rows` offset was forced to 0.
 - CODE (tests only): the row now spans `x: 1..20` so Border > Row is genuinely tested; tiny heights 2 and 3 get explicit bounds/overlap coverage; a scrolled Terminals (45 rows, t44 selected) and Inbox (20 rows, id 19 selected) test asserts the hit-map rect y and hit target match the row actually drawn. No production-code changes survived.
 - GREEN: all new tests pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+
+### Final gates (all clean, recorded)
+
+- `cargo fmt --check` -> exit 0 (no diff).
+- `cargo clippy --all-targets -- -D warnings` -> exit 0, no warnings.
+- `cargo test` -> exit 0, 42 test binaries report `ok`, 0 failed.
+- `git status --short` clean; `git ls-files --eol` for all touched files (`src/board/global.rs`, `src/board/global_view.rs`, `tests/global_view_test.rs`, `.agents/log/tui-layout.md`) -> `i/lf w/lf`, no mixed endings.
+- Seven commits after the review: items 1-7, one per item, no push/merge/branch switch; no edits to `src/board/mod.rs`, `state.rs` or `view.rs`.

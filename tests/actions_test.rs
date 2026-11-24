@@ -1,80 +1,186 @@
 mod common;
 
-use agmag::actions::{self, Caller, SpawnReq};
+use agmag::actions::{self, ApprovalDecision, Caller, SpawnReq};
 use agmag::config::Config;
-use agmag::store::{Store, TerminalRow};
+use agmag::store::{ApprovalGrant, Store, TerminalRow};
 use anyhow::Result;
 use common::FakeHc;
 
-#[test]
-fn delegated_approval_evaluates_grant_scope_and_hard_blocks() {
-    use agmag::actions::{ApprovalDecision, evaluate_delegated_approval};
+fn approval_cfg(actions: &[&str]) -> Config {
+    let mut cfg = Config::builtin();
+    cfg.policy.delegated_actions = actions.iter().map(|a| (*a).to_string()).collect();
+    cfg
+}
 
+fn approval_grant(
+    store: &Store,
+    lane: &str,
+    task: &str,
+    action: &str,
+    expires_ms: Option<i64>,
+) -> i64 {
+    store
+        .upsert_approval_grant(&ApprovalGrant {
+            lane: Some(lane.into()),
+            task: Some(task.into()),
+            action: action.into(),
+            approved_by: "user".into(),
+            approved_ms: 100,
+            expires_ms,
+            reason: "test".into(),
+            ..Default::default()
+        })
+        .unwrap()
+}
+
+fn approval_decision(
+    store: &Store,
+    cfg: &Config,
+    action: &str,
+    lane: Option<&str>,
+    task: Option<&str>,
+    now: i64,
+) -> (ApprovalDecision, String) {
+    let decision = actions::decide(store, cfg, action, lane, task, now).unwrap();
+    (decision.decision, decision.source)
+}
+
+#[test]
+fn approval_rule_allows_global_whitelist_without_grant() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&["continue_review"]);
     assert_eq!(
-        evaluate_delegated_approval(
-            "continue_review",
-            Some("lane-a"),
-            Some("task-a"),
-            &["continue_review"],
-            &["continue_review"],
-            Some("lane-a"),
-            Some("task-a"),
-            true,
-        ),
-        ApprovalDecision::Allowed
+        approval_decision(&store, &cfg, "  continue_review  ", None, None, 500),
+        (ApprovalDecision::Allowed, "global".into())
     );
+}
+
+#[test]
+fn approval_rule_hard_prohibited_beats_whitelist_and_grant() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&["push"]);
+    approval_grant(&store, "lane-a", "task-a", "push", None);
     assert_eq!(
-        evaluate_delegated_approval(
+        approval_decision(&store, &cfg, "push", Some("lane-a"), Some("task-a"), 500),
+        (ApprovalDecision::HardProhibited, "hard".into())
+    );
+}
+
+#[test]
+fn approval_rule_active_grant_allows_with_grant_source() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let id = approval_grant(&store, "lane-a", "task-a", "spawn_worker", Some(1000));
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
             "spawn_worker",
             Some("lane-a"),
             Some("task-a"),
-            &["continue_review"],
-            &[],
-            Some("lane-a"),
-            Some("task-a"),
-            true,
+            500
         ),
-        ApprovalDecision::RequiresHuman
+        (ApprovalDecision::Allowed, format!("grant:{id}"))
     );
+}
+
+#[test]
+fn approval_rule_expired_grant_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", Some(1000));
     assert_eq!(
-        evaluate_delegated_approval(
-            "merge",
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
             Some("lane-a"),
             Some("task-a"),
-            &["merge"],
-            &["merge"],
-            Some("lane-a"),
-            Some("task-a"),
-            true,
+            1001
         ),
-        ApprovalDecision::HardProhibited
+        (ApprovalDecision::RequiresHuman, "none".into())
     );
+}
+
+#[test]
+fn approval_rule_revoked_grant_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", None);
+    store
+        .revoke_approval_grant("lane-a", "task-a", "spawn_worker", 200)
+        .unwrap();
     assert_eq!(
-        evaluate_delegated_approval(
-            "continue_review",
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_rule_grant_for_other_lane_or_task_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", None);
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
             Some("lane-b"),
             Some("task-a"),
-            &["continue_review"],
-            &[],
-            Some("lane-a"),
-            Some("task-a"),
-            true,
+            500
         ),
-        ApprovalDecision::RequiresHuman
+        (ApprovalDecision::RequiresHuman, "none".into())
     );
     assert_eq!(
-        evaluate_delegated_approval(
-            "task_only_action",
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
             Some("lane-a"),
-            Some("task-a"),
-            &["continue_review"],
-            &["task_only_action"],
-            Some("lane-a"),
-            Some("task-a"),
-            true,
+            Some("task-b"),
+            500
         ),
-        ApprovalDecision::RequiresHuman
+        (ApprovalDecision::RequiresHuman, "none".into())
     );
+}
+
+#[test]
+fn approval_rule_needs_both_lane_and_task_to_use_a_grant() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", None);
+    for (lane, task) in [(None, None), (Some("lane-a"), None), (None, Some("task-a"))] {
+        assert_eq!(
+            approval_decision(&store, &cfg, "spawn_worker", lane, task, 500),
+            (ApprovalDecision::RequiresHuman, "none".into())
+        );
+    }
+}
+
+#[test]
+fn approval_rule_unknown_action_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&["continue_review"]);
+    assert_eq!(
+        approval_decision(&store, &cfg, "spawn_worker", None, None, 500),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_rule_empty_action_is_error() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let err = actions::decide(&store, &cfg, "   ", None, None, 500).unwrap_err();
+    assert!(format!("{err:#}").contains("action"), "{err:#}");
 }
 
 fn term(store: &Store, addr: &str, app: &str, role: Option<&str>) {

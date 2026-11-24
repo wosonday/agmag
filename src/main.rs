@@ -727,25 +727,8 @@ fn run(cli: Cli) -> Result<()> {
             if !std::io::stdin().is_terminal() {
                 anyhow::bail!("approval add chỉ người dùng TTY mới được tạo");
             }
-            let cfg = cfg()?;
-            let global_actions: Vec<&str> = cfg
-                .policy
-                .delegated_actions
-                .iter()
-                .map(String::as_str)
-                .collect();
-            let decision = agmag::actions::evaluate_delegated_approval(
-                &action,
-                Some(&lane),
-                Some(&task),
-                &global_actions,
-                &[],
-                Some(&lane),
-                Some(&task),
-                true,
-            );
-            if decision != agmag::actions::ApprovalDecision::Allowed {
-                anyhow::bail!("approval add bị từ chối: {decision:?}");
+            if agmag::actions::is_hard_prohibited(action.trim()) {
+                anyhow::bail!("approval add bị từ chối: {action} là hành động hard-prohibited");
             }
             let id = store.upsert_approval_grant(&agmag::store::ApprovalGrant {
                 lane: Some(lane.clone()),

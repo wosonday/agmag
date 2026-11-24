@@ -12,3 +12,10 @@
 - BoardScreen stores hit_map after each draw; app board draw stores it too.
 - Tests: hit_prefers_specific_targets_over_panels, hit_finds_project_and_picker_rows.
 - Status: green
+
+## Step 3 - Board mouse handling in state
+- Added BoardState::on_mouse (pure, synthetic MouseEvent tested) handling panel focus, row/card selection, scroll, double-click open/reply prefill.
+- Ignores mouse in popup/confirm/prompt modes; only Down/Drag/Up(Left) and Scroll acted on.
+- Added last_click for 400ms double-click; picker rows prioritized in hit testing.
+- Tests: mouse focus/select, scroll, double-click project/picker/inbox reply prefill, ignored popup/non-left.
+- Status: green

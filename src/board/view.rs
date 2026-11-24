@@ -38,58 +38,7 @@ pub fn layout_mode(width: u16, height: u16) -> LayoutMode {
     }
 }
 
-/// Rects recorded during the last board draw, used for mouse hit testing.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BoardHitMap {
-    pub panels: Vec<(Rect, Panel)>,
-    pub project_rows: Vec<(Rect, usize)>,
-    pub agent_cards: Vec<(Rect, String)>,
-    pub inbox_rows: Vec<(Rect, i64)>,
-    pub picker_rows: Vec<(Rect, usize)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HitTarget {
-    Panel(Panel),
-    ProjectRow(usize),
-    AgentCard(String),
-    InboxRow(i64),
-    PickerRow(usize),
-}
-
-/// Pure hit test: most specific target wins (rows/cards before panels).
-pub fn hit(map: &BoardHitMap, x: u16, y: u16) -> Option<HitTarget> {
-    for (rect, idx) in &map.project_rows {
-        if contains(*rect, x, y) {
-            return Some(HitTarget::ProjectRow(*idx));
-        }
-    }
-    for (rect, addr) in &map.agent_cards {
-        if contains(*rect, x, y) {
-            return Some(HitTarget::AgentCard(addr.clone()));
-        }
-    }
-    for (rect, id) in &map.inbox_rows {
-        if contains(*rect, x, y) {
-            return Some(HitTarget::InboxRow(*id));
-        }
-    }
-    for (rect, idx) in &map.picker_rows {
-        if contains(*rect, x, y) {
-            return Some(HitTarget::PickerRow(*idx));
-        }
-    }
-    for (rect, panel) in &map.panels {
-        if contains(*rect, x, y) {
-            return Some(HitTarget::Panel(*panel));
-        }
-    }
-    None
-}
-
-fn contains(rect: Rect, x: u16, y: u16) -> bool {
-    x >= rect.x && x < rect.x.saturating_add(rect.width) && y >= rect.y && y < rect.y.saturating_add(rect.height)
-}
+pub use super::state::{hit, BoardHitMap, HitTarget};
 
 pub fn draw(frame: &mut Frame, state: &BoardState, data: &BoardData, theme: &Theme, ascii: bool) -> BoardHitMap {
     draw_in(frame, frame.area(), state, data, theme, ascii)

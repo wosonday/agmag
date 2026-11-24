@@ -25,3 +25,9 @@
 - Added BoardScreen::on_mouse and handle_board_mouse; mouse ignored when global popup/cmd focus active.
 - Anti-goal test: mouse_cannot_reach_destructive_or_send_actions proves no mouse sequence produces kill/interrupt/cleanup/done/send/reply-send effects.
 - Status: green
+
+## Step 5 - Docs
+- Updated board ? help to mention mouse (click/wheel/double-click, Shift+drag text selection, AGM_MOUSE=0).
+- Added short TUI mouse paragraph to README.md and README_vi.md.
+- Added CHANGELOG.md [Unreleased] ### Thêm mới bullet for board mouse capture.
+- Status: green

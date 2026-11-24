@@ -1665,12 +1665,18 @@ fn draw_popup(
                 Line::from("?          help           q/esc leave board"),
                 Line::from(""),
                 muted_line(
+                    "mouse: click focus/select · wheel scroll · double-click open/reply prefill",
+                    ctx,
+                ),
+                muted_line("Shift+drag selects text · set AGM_MOUSE=0 to disable mouse capture", ctx),
+                Line::from(""),
+                muted_line(
                     "every refresh is live; failed actions show in the footer",
                     ctx,
                 ),
             ],
-            64,
-            12,
+            72,
+            15,
         ),
     };
 

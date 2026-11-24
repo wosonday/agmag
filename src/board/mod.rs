@@ -146,7 +146,9 @@ pub fn load_data(
     let terms = store.terminals(false)?;
     let inbox = store.inbox(true)?;
     let roots = project::compute_roots(&terms, &snap, cache, &project::git_common_root);
-    let (projects, no_project_inbox) = project::list_projects(&terms, &inbox, &roots);
+    let (all_projects, no_project_inbox) = project::list_projects(&terms, &inbox, &roots);
+    // The scoped project is the board being shown, so it stays even when idle.
+    let (projects, _) = project::split_idle(all_projects, state.project.as_ref());
     let mut data = BoardData {
         projects,
         no_project_inbox,

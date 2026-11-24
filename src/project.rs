@@ -204,6 +204,25 @@ pub fn list_projects(
     (list, no_project)
 }
 
+/// Display lists hide idle projects: no live agent and no open inbox item. `keep` is the project
+/// a view is scoped to, which stays visible even when idle. Returns the visible projects in input
+/// order and the number hidden. Name resolution still uses the full list via [`match_project`].
+pub fn split_idle(
+    list: Vec<ProjectSummary>,
+    keep: Option<&ProjectKey>,
+) -> (Vec<ProjectSummary>, usize) {
+    let mut visible = Vec::with_capacity(list.len());
+    let mut hidden = 0;
+    for p in list {
+        if p.live_agents == 0 && p.open_inbox == 0 && keep.is_none_or(|key| key != &p.key) {
+            hidden += 1;
+        } else {
+            visible.push(p);
+        }
+    }
+    (visible, hidden)
+}
+
 pub fn match_project(list: &[ProjectSummary], query: &str) -> CdMatch {
     let query = query.trim();
     if query.is_empty() {

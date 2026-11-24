@@ -10,7 +10,7 @@ use agmag::model::{ContextSnapshot, Role, Source, TurnSummary, Usage, UsageRecor
 use agmag::project::{
     CdMatch, ProjectKey, ProjectSummary, RootCache, Roots, TurnRow, branch_entry_for,
     compute_roots, git_common_root, list_projects, load_project_view, match_project, members,
-    parties, project_name, tree_order,
+    parties, project_name, split_idle, tree_order,
 };
 use agmag::store::{InboxRow, MessageRow, Store, TerminalRow};
 
@@ -155,6 +155,64 @@ fn list_projects_counts_live_agents_and_open_inbox() {
     assert_eq!(list[1].live_agents, 2); // exited t3 is not live
     assert_eq!(list[1].open_inbox, 1);
     assert_eq!(list[1].key.root, norm_cwd(r"D:\Project\shop"));
+}
+
+#[test]
+fn split_idle_hides_idle_projects_and_counts_them() {
+    let ghost_a = summary(r"D:\wt\ghost-a", "ghost-a");
+    let ghost_b = summary(r"D:\wt\ghost-b", "ghost-b");
+    let (visible, hidden) = split_idle(vec![ghost_a, ghost_b], None);
+    assert!(visible.is_empty(), "{visible:?}");
+    assert_eq!(hidden, 2);
+}
+
+#[test]
+fn split_idle_keeps_live_projects() {
+    let mut live = summary(r"D:\Project\shop", "shop");
+    live.live_agents = 1;
+    let (visible, hidden) = split_idle(vec![live.clone()], None);
+    assert_eq!(visible, vec![live]);
+    assert_eq!(hidden, 0);
+}
+
+#[test]
+fn split_idle_keeps_inbox_only_projects() {
+    let mut inbox_only = summary(r"D:\Project\shop", "shop");
+    inbox_only.open_inbox = 2;
+    let (visible, hidden) = split_idle(vec![inbox_only.clone()], None);
+    assert_eq!(visible, vec![inbox_only]);
+    assert_eq!(hidden, 0);
+}
+
+#[test]
+fn split_idle_keeps_the_requested_project_even_if_idle() {
+    let ghost = summary(r"D:\wt\ghost", "ghost");
+    let (visible, hidden) = split_idle(vec![ghost.clone()], Some(&ghost.key));
+    assert_eq!(visible, vec![ghost]);
+    assert_eq!(hidden, 0);
+}
+
+#[test]
+fn split_idle_counts_only_the_idle_projects_that_were_hidden() {
+    let mut live = summary(r"D:\Project\shop", "shop");
+    live.live_agents = 1;
+    let keep = summary(r"D:\wt\keep", "keep");
+    let ghost = summary(r"D:\wt\ghost", "ghost");
+    let (visible, hidden) = split_idle(vec![keep.clone(), live.clone(), ghost], Some(&keep.key));
+    assert_eq!(visible, vec![keep, live]);
+    assert_eq!(hidden, 1);
+}
+
+#[test]
+fn split_idle_preserves_input_order() {
+    let mut first = summary(r"D:\Project\agmag", "agmag");
+    first.live_agents = 3;
+    let ghost = summary(r"D:\wt\ghost", "ghost");
+    let mut last = summary(r"D:\Project\shop", "shop");
+    last.open_inbox = 1;
+    let (visible, hidden) = split_idle(vec![first.clone(), ghost, last.clone()], None);
+    assert_eq!(visible, vec![first, last]);
+    assert_eq!(hidden, 1);
 }
 
 #[test]

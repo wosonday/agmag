@@ -321,6 +321,11 @@ impl GlobalState {
     }
 
     pub(crate) fn push_panel(&self, rect: Rect, panel: impl Into<HitPanel>) {
+        // A zero-width column (e.g. a long Quota title taking the whole top pair) or a dropped
+        // zero-height section is not on screen, so it must not be hit-testable either.
+        if rect.width == 0 || rect.height == 0 {
+            return;
+        }
         self.hit_map.borrow_mut().panels.push((rect, panel.into()));
     }
 

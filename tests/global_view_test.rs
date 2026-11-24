@@ -1379,6 +1379,110 @@ fn message_hit_rows_follow_ratatui_wrap_for_edge_cases() {
     );
 }
 
+fn assert_no_row_overlap(size: (u16, u16), d: &GlobalData) {
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render(size, &state, d, false);
+    let map = state.hit_map();
+    for i in 0..map.rows.len() {
+        for j in i + 1..map.rows.len() {
+            assert!(
+                !rects_overlap(map.rows[i].0, map.rows[j].0),
+                "rows {:?} and {:?} overlap at {size:?}:\n{}",
+                map.rows[i],
+                map.rows[j],
+                text(&buf)
+            );
+        }
+    }
+}
+
+#[test]
+fn row_rects_never_overlap() {
+    let d = dense_overview_data();
+    for height in 1..=10 {
+        assert_no_row_overlap((100, height), &d);
+        assert_no_row_overlap((140, height), &d);
+    }
+}
+
+#[test]
+fn zero_sized_panels_are_not_recorded_in_the_hit_map() {
+    let mut d = data(&[Section::Quota, Section::Terminals]);
+    let long_provider = "p".repeat(300);
+    d.snap
+        .as_mut()
+        .unwrap()
+        .quota
+        .push(quota(&long_provider, 300, 80.0));
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let _buf = render((120, 30), &state, &d, false);
+    let map = state.hit_map();
+    assert!(
+        map.panels
+            .iter()
+            .all(|(rect, _)| rect.width > 0 && rect.height > 0),
+        "a zero-sized panel reached the hit map: {:?}",
+        map.panels
+    );
+    assert!(
+        !map.panels
+            .iter()
+            .any(|(_, panel)| *panel == HitPanel::Section(Section::Terminals)),
+        "the 0-column Terminals panel must not be recorded: {:?}",
+        map.panels
+    );
+}
+
+#[test]
+fn dropped_sections_have_no_hit_entries() {
+    // 100x8 leaves 6 content rows: Quota survives with 2 rows, Terminals and Inbox are dropped,
+    // Messages keeps its 4 rows.
+    let d = dense_overview_data();
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((100, 8), &state, &d, false);
+    let map = state.hit_map();
+    for dropped in [Section::Terminals, Section::Inbox] {
+        assert!(
+            !map.panels
+                .iter()
+                .any(|(_, panel)| *panel == HitPanel::Section(dropped)),
+            "{dropped:?} was dropped from the layout but is still a panel:\n{}",
+            text(&buf)
+        );
+    }
+    assert!(
+        !map.rows
+            .iter()
+            .any(|(_, target)| matches!(target, RowTarget::Terminal(_) | RowTarget::Inbox(_))),
+        "a dropped table still recorded rows:\n{}",
+        text(&buf)
+    );
+    let visible = [
+        Section::Quota,
+        Section::Terminals,
+        Section::Inbox,
+        Section::Messages,
+    ];
+    let dropped_index = |sec: Section| visible.iter().position(|s| *s == sec).unwrap();
+    for dropped in [Section::Terminals, Section::Inbox] {
+        let index = dropped_index(dropped);
+        assert!(
+            !map.borders
+                .iter()
+                .any(|(_, border)| *border == BorderId::Horizontal(index)),
+            "a dropped section left Horizontal({index}) in the hit map:\n{}",
+            text(&buf)
+        );
+    }
+    assert!(
+        map.panels
+            .iter()
+            .any(|(_, panel)| *panel == HitPanel::Section(Section::Messages)),
+        "Messages must still be drawn:\n{}",
+        text(&buf)
+    );
+}
+
 #[test]
 fn message_row_rects_follow_wrapped_height() {
     let mut d = data(&Section::DEFAULT);

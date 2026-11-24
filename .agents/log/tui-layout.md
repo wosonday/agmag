@@ -117,3 +117,11 @@ Review: `.agents/reviews/tui-layout-2.md` (CHƯA ĐẠT). TDD per item (RED → 
 - Added `message_hit_rows_follow_ratatui_wrap_for_edge_cases` (width 12 → inner 10): four messages with a multi-space text, a trailing space, nine wide chars and a long marker; each hit rect starts at its drawn header row, spans exactly up to the next header, and every drawn row in that span hits its own message.
 - GREEN: unit + render tests and the full suite pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean. The now-unused `unicode_segmentation` import was removed (crate still used elsewhere).
 - EOL: `Cargo.toml` LF, `src/board/global_view.rs` LF, `tests/global_view_test.rs` LF; no mixed endings.
+
+### Item 3 - zero-sized panels and dropped sections in the hit map
+
+- RED: `zero_sized_panels_are_not_recorded_in_the_hit_map` (120×30, a 300-char Quota provider takes the whole top pair): `map.panels` contained `Rect { x: 120, y: 0, width: 0, height: 3 }` for `Section(Terminals)`.
+- CODE: `GlobalState::push_panel` now drops a rect with `width == 0 || height == 0`, so a zero-width column and any zero-height dropped section can never be hit.
+- Tests added: `dropped_sections_have_no_hit_entries` (100×8: Terminals and Inbox dropped) asserts neither appears in `panels`, no `RowTarget::Terminal`/`Inbox` rows survive, and no `BorderId::Horizontal` for their `visible_sections` indexes exists while Messages is still drawn; `row_rects_never_overlap` checks every pair of recorded rows at 100 and 140 columns for heights 1..=10.
+- GREEN: full suite passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+- EOL: `src/board/global.rs`, `tests/global_view_test.rs` and this log `i/lf w/lf`.

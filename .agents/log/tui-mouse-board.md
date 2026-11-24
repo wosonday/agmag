@@ -105,3 +105,11 @@
   agree.
 - Clippy `field_reassign_with_default` in the item-1 output test fixed with a struct-update literal.
 - Status: green
+
+### Item 6 - Help popup mouse line fits without wrapping
+- Red: `help_popup_mouse_lines_fit_without_wrapping` (draw at 100x24, `Mode::Help`) showed the 74-cell mouse
+  line broken before "prefill" because the popup was 72 wide (inner 70).
+- Widened the Help popup to 80 (inner 78); both the mouse line (74) and the Shift+drag line (66) now render on
+  one row. Test asserts each full line appears inside a single buffer row.
+- Normalized the appended test lines back to LF (`git ls-files --eol` clean, no `w/mixed`).
+- Status: green

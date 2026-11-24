@@ -1691,7 +1691,8 @@ fn draw_popup(
                     ctx,
                 ),
             ],
-            72,
+            // Wide enough that the two mouse lines (74 and 66 cells) never wrap.
+            80,
             15,
         ),
     };

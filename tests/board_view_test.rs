@@ -1511,3 +1511,24 @@ fn narrow_orchestration_hit_map_follows_the_rendered_scroll() {
         Some(HitTarget::Panel(Panel::Orchestration))
     );
 }
+
+#[test]
+fn help_popup_mouse_lines_fit_without_wrapping() {
+    let mut state = BoardState::new(Some(key()), ThemeName::CatppuccinMocha);
+    state.mode = Mode::Help;
+    let d = data(vec![agent("ceo", "ceo-card", 0)]);
+    let buf = render((100, 24), &state, &d, false);
+
+    let first = "mouse: click focus/select · wheel scroll · double-click open/reply prefill";
+    let second = "Shift+drag selects text · set AGM_MOUSE=0 to disable mouse capture";
+    assert!(
+        (0..buf.area.height).any(|y| row_text(&buf, y).contains(first)),
+        "the mouse help line is wrapped or clipped:\n{}",
+        text(&buf)
+    );
+    assert!(
+        (0..buf.area.height).any(|y| row_text(&buf, y).contains(second)),
+        "the Shift+drag help line is wrapped or clipped:\n{}",
+        text(&buf)
+    );
+}

@@ -107,3 +107,13 @@ Review: `.agents/reviews/tui-layout-2.md` (CHƯA ĐẠT). TDD per item (RED → 
 - CODE: `draw_messages` now computes both edges in the viewport system exactly as specified: `top_v = top.saturating_sub(scroll)`, `bottom_v = bottom.min(scroll + view) - scroll`, skipping a message when `bottom <= scroll` or `top >= scroll + view`; `height = bottom_v - top_v`; `y = inner.y + top_v`.
 - GREEN: the scrolled test and the full suite pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
 - EOL: `tests/global_view_test.rs`, `src/board/global_view.rs` and this log remain `i/lf w/lf`.
+
+### Item 2 - exact wrap counts from ratatui
+
+- `Cargo.toml`: `ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }` (default features kept).
+- RED: three unit tests in `src/board/global_view.rs` for `message_row_count` failed against the hand-written counter: trailing space `"1234567890 "` at width 10 counted 2 rows instead of the 1 ratatui draws; the multi-space and wide-char cases exposed that the review's expected numbers were inverted (see below).
+- CODE: deleted `wrapped_line_rows` and the grapheme walk. `message_row_count(lines, width, wrap)` builds `Paragraph::new(<the exact lines rendered>)`, adds `.wrap(Wrap { trim: true })` for the narrow layout, and returns `line_count(width)`. `draw_messages` asks it once per message (header+text narrow, header+text appended wide) and no longer hard-codes `1`.
+- Ratatui's real counts (verified by rendering a `Paragraph` into a `TestBuffer`): `"1234567890   123456789"` at width 10 draws `1234567890`, a blank row left by the space run, then `123456789` → **3 rows**; `"1234567890 "` draws one row → **1**; `"漢漢漢"` at width 3 draws `漢` then `漢漢` → **2**. The review claimed 2/1/3; the tests assert what ratatui actually draws, which is what the hit map must match.
+- Added `message_hit_rows_follow_ratatui_wrap_for_edge_cases` (width 12 → inner 10): four messages with a multi-space text, a trailing space, nine wide chars and a long marker; each hit rect starts at its drawn header row, spans exactly up to the next header, and every drawn row in that span hits its own message.
+- GREEN: unit + render tests and the full suite pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean. The now-unused `unicode_segmentation` import was removed (crate still used elsewhere).
+- EOL: `Cargo.toml` LF, `src/board/global_view.rs` LF, `tests/global_view_test.rs` LF; no mixed endings.

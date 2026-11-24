@@ -11,7 +11,6 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Table, TableState,
     Wrap,
 };
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
@@ -1126,53 +1125,16 @@ fn party_labels(snap: &Snapshot) -> HashMap<String, String> {
     labels
 }
 
-/// Rows one `Line` needs when a `Paragraph` wraps it at `width` with `Wrap { trim: true }`.
-/// Ratatui packs words greedily, trims whitespace at the start of a new row and breaks words
-/// longer than the row; counting by the same rule keeps message hit rows on the drawn text.
-fn wrapped_line_rows(line: &Line<'_>, width: u16) -> usize {
-    let width = width as usize;
-    if width == 0 {
-        return 0;
-    }
-    let symbols: Vec<(&str, usize)> = line
-        .spans
-        .iter()
-        .flat_map(|span| span.content.graphemes(true).map(move |g| (g, g.width())))
-        .collect();
-    let is_space = |i: usize| symbols[i].0.chars().all(char::is_whitespace);
-    let mut rows = 1usize;
-    let mut used = 0usize;
-    let mut i = 0usize;
-    while i < symbols.len() {
-        if is_space(i) {
-            if used + symbols[i].1 > width {
-                rows += 1;
-                used = 0; // `trim: true` drops leading whitespace of the new row
-            } else {
-                used += symbols[i].1;
-            }
-            i += 1;
-            continue;
-        }
-        let mut word_width = 0usize;
-        while i < symbols.len() && !is_space(i) {
-            word_width += symbols[i].1;
-            i += 1;
-        }
-        if used > 0 && used + word_width > width {
-            rows += 1;
-            used = 0;
-        }
-        // A word wider than a row is broken across rows, like ratatui's word wrapper.
-        let mut remaining = word_width;
-        while remaining > width - used {
-            remaining -= width - used;
-            rows += 1;
-            used = 0;
-        }
-        used += remaining;
-    }
-    rows
+/// Rows a message's `Line`s need, counted by ratatui itself for the exact lines the paragraph
+/// draws (word wrap, `trim: true`, wide characters and long words included).
+fn message_row_count(lines: Vec<Line<'static>>, width: u16, wrap: bool) -> usize {
+    let paragraph = Paragraph::new(lines);
+    let paragraph = if wrap {
+        paragraph.wrap(Wrap { trim: true })
+    } else {
+        paragraph
+    };
+    paragraph.line_count(width)
 }
 
 fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
@@ -1229,14 +1191,14 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
                 format!("  {}", sanitize_one_line(&message.text)),
                 Style::new(),
             ));
+            message_rows.push(message_row_count(vec![line.clone()], inner.width, false).max(1));
             lines.push(line);
-            message_rows.push(1);
         } else {
             let text = Line::from(Span::styled(sanitize_one_line(&message.text), Style::new()));
+            // Count exactly the two lines this message renders, so the hit map sees what ratatui
+            // wraps (spaces at the break, trailing space, wide chars in an over-long word).
             message_rows.push(
-                wrapped_line_rows(&header, inner.width)
-                    .saturating_add(wrapped_line_rows(&text, inner.width))
-                    .max(1),
+                message_row_count(vec![header.clone(), text.clone()], inner.width, true).max(1),
             );
             lines.push(header);
             lines.push(text);
@@ -1542,7 +1504,36 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::fit_heights;
+    use super::{fit_heights, message_row_count};
+    use ratatui::text::Line;
+
+    #[test]
+    fn wrap_count_trims_spaces_after_the_wrap_point() {
+        // Ratatui draws "1234567890", the empty row left by the space run, then "123456789":
+        // the count used for the hit map must include that blank row.
+        assert_eq!(
+            message_row_count(vec![Line::from("1234567890   123456789")], 10, true),
+            3
+        );
+    }
+
+    #[test]
+    fn wrap_count_drops_a_trailing_space() {
+        assert_eq!(
+            message_row_count(vec![Line::from("1234567890 ")], 10, true),
+            1,
+            "a trailing space does not start a new row"
+        );
+    }
+
+    #[test]
+    fn wrap_count_breaks_wide_chars_on_cell_boundaries() {
+        assert_eq!(
+            message_row_count(vec![Line::from("漢漢漢")], 3, true),
+            2,
+            "a 2-column char cannot straddle the last free cell: 漢 then 漢漢"
+        );
+    }
 
     #[test]
     fn fit_heights_empty_input_is_empty() {

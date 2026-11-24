@@ -1293,11 +1293,12 @@ fn scrolled_message_row_rects_match_drawn_lines() {
             let expected = (0..fillers.len())
                 .find(|i| content.contains(&format!("from{i}")))
                 .or_else(|| (0..fillers.len()).find(|i| content.contains(&format!("P{i}"))))
-                .or_else(|| {
-                    (0..fillers.len()).find(|i| content.chars().any(|c| c == fillers[*i]))
-                });
+                .or_else(|| (0..fillers.len()).find(|i| content.chars().any(|c| c == fillers[*i])));
             let Some(i) = expected else {
-                panic!("scroll {scroll}: row {y} belongs to no message: {content:?}\n{}", text(&buf));
+                panic!(
+                    "scroll {scroll}: row {y} belongs to no message: {content:?}\n{}",
+                    text(&buf)
+                );
             };
             assert_eq!(
                 hit(&map, inner.x + 1, y),
@@ -1307,6 +1308,75 @@ fn scrolled_message_row_rects_match_drawn_lines() {
             );
         }
     }
+}
+
+#[test]
+fn message_hit_rows_follow_ratatui_wrap_for_edge_cases() {
+    let mut d = data(&[Section::Terminals]);
+    let snap = d.snap.as_mut().unwrap();
+    let texts = [
+        "1234567890   123456789".to_string(),
+        "1234567890 ".to_string(),
+        "漢".repeat(9),
+        "AFTER-EDGE-CASES".to_string(),
+    ];
+    for (i, message_text) in texts.iter().enumerate() {
+        snap.messages.push(MessageRow {
+            id: i as i64 + 1,
+            ts_ms: NOW,
+            from: format!("from{i}"),
+            to: format!("to{i}"),
+            kind: "BÁO CÁO".into(),
+            text: message_text.clone(),
+            ..MessageRow::default()
+        });
+    }
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((12, 50), &state, &d, false);
+    let map = state.hit_map();
+    let (left, top, width, height) = panel_rect(&buf, "Messages");
+    let inner = ratatui::layout::Rect::new(left + 1, top + 1, width - 2, height - 2);
+    let tops: Vec<u16> = (0..texts.len())
+        .map(|i| find(&buf, &format!("from{i}")).1)
+        .collect();
+    for (i, &message_top) in tops.iter().enumerate() {
+        let rect = map
+            .rows
+            .iter()
+            .find(|(_, target)| matches!(target, RowTarget::Message(m) if *m == i))
+            .map(|(rect, _)| *rect)
+            .unwrap_or_else(|| panic!("no hit row for message {i}:\n{}", text(&buf)));
+        assert_eq!(
+            rect.y,
+            message_top,
+            "message {i} rect must start where its header was drawn:\n{}",
+            text(&buf)
+        );
+        let Some(&next_top) = tops.get(i + 1) else {
+            break;
+        };
+        assert_eq!(
+            rect.height,
+            next_top - message_top,
+            "message {i} rect must cover exactly the rows ratatui drew (multi-space, trailing \
+             space, wide chars):\n{}",
+            text(&buf)
+        );
+        for y in message_top..next_top {
+            assert_eq!(
+                hit(&map, inner.x + 1, y),
+                Some(Hit::Row(RowTarget::Message(i))),
+                "row {y} was drawn for message {i} but hit another target:\n{}",
+                text(&buf)
+            );
+        }
+    }
+    assert_eq!(
+        hit(&map, inner.x + 1, *tops.last().unwrap()),
+        Some(Hit::Row(RowTarget::Message(texts.len() - 1))),
+        "the last message's first drawn line must be hit-testable:\n{}",
+        text(&buf)
+    );
 }
 
 #[test]

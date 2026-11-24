@@ -3,7 +3,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 
 use super::cmd::NoteKind;
@@ -197,6 +199,8 @@ pub enum BorderId {
 pub enum HitPanel {
     Section(Section),
     Output,
+    /// The command line below the sections.
+    CmdLine,
 }
 
 impl From<Section> for HitPanel {
@@ -289,6 +293,9 @@ pub struct GlobalState {
     prev_terminal_idx: Option<usize>,
     /// Index of `sel_inbox` in the last snapshot, so a removed row keeps its neighbour.
     prev_inbox_idx: Option<usize>,
+    /// Last left-button down: the target and its clock, so the next down on the same target within
+    /// `DOUBLE_CLICK_MS` is the second half of a double-click.
+    last_click: Option<(Hit, i64)>,
     /// Rebuilt by `draw_global` every frame; read by the app loop after drawing.
     hit_map: RefCell<HitMap>,
 }
@@ -307,6 +314,7 @@ impl GlobalState {
             note: None,
             prev_terminal_idx: None,
             prev_inbox_idx: None,
+            last_click: None,
             hit_map: RefCell::new(HitMap::default()),
         }
     }
@@ -382,6 +390,198 @@ impl GlobalState {
             .iter()
             .filter_map(|(r, b)| clip(*r, hidden).map(|r| (r, *b)))
             .collect();
+    }
+
+    const DOUBLE_CLICK_MS: i64 = 400;
+
+    /// One mouse event on the overview: (did the visible state change, effect for the app loop).
+    ///
+    /// The hit map is the one the last frame drew, so the app tests without a terminal. Only the
+    /// left button and the wheel act; everything else is ignored, and so is every event while a
+    /// confirmation popup is open or the Output overlay covers the sections.
+    pub fn on_mouse(&mut self, ev: MouseEvent, data: &GlobalData, now_ms: i64) -> (bool, GEffect) {
+        if self.popup.is_some() {
+            // A popup is keyboard-only: forget earlier clicks so closing it cannot pair with one.
+            self.last_click = None;
+            return (false, GEffect::None);
+        }
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left)
+            | MouseEventKind::Drag(MouseButton::Left)
+            | MouseEventKind::Up(MouseButton::Left)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown => {}
+            _ => return (false, GEffect::None),
+        }
+
+        let map = self.hit_map();
+        let target = hit(&map, ev.column, ev.row);
+
+        if data.output.is_some() {
+            // The overlay is modal: only its own panel scrolls (its top border is not resizable).
+            return match (ev.kind, target) {
+                (MouseEventKind::ScrollUp, Some(Hit::Panel(HitPanel::Output))) => {
+                    let before = self.output_scroll;
+                    self.output_scroll = self.output_scroll.saturating_sub(1);
+                    (self.output_scroll != before, GEffect::None)
+                }
+                (MouseEventKind::ScrollDown, Some(Hit::Panel(HitPanel::Output))) => {
+                    let before = self.output_scroll;
+                    self.output_scroll = self.output_scroll.saturating_add(1);
+                    (self.output_scroll != before, GEffect::None)
+                }
+                _ => (false, GEffect::None),
+            };
+        }
+
+        match ev.kind {
+            MouseEventKind::ScrollUp => (self.on_wheel(target, -1, data), GEffect::None),
+            MouseEventKind::ScrollDown => (self.on_wheel(target, 1, data), GEffect::None),
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(target, data, now_ms),
+            // Drag is only meaningful once a border drag started (T3 step 3); Up ends nothing yet.
+            _ => (false, GEffect::None),
+        }
+    }
+
+    /// The panel under the pointer takes the wheel: the two tables move their selection and every
+    /// other section (Messages included) scrolls. A border, the command line and the footer do
+    /// nothing.
+    fn on_wheel(&mut self, target: Option<Hit>, delta: i32, data: &GlobalData) -> bool {
+        let Some(target) = target else {
+            return false;
+        };
+        let sec = match target {
+            Hit::Panel(HitPanel::Section(sec)) => sec,
+            Hit::Row(RowTarget::Terminal(_)) => Section::Terminals,
+            Hit::Row(RowTarget::Inbox(_)) => Section::Inbox,
+            Hit::Row(RowTarget::Message(_)) => Section::Messages,
+            // The board's row targets never appear on the overview map.
+            Hit::Row(RowTarget::Agent(_) | RowTarget::Project(_)) => return false,
+            Hit::Panel(HitPanel::Output | HitPanel::CmdLine) | Hit::Border(_) => return false,
+        };
+        match sec {
+            Section::Terminals => {
+                let before = self.sel_terminal.clone();
+                if delta < 0 {
+                    self.panel_up(data, sec);
+                } else {
+                    self.panel_down(data, sec);
+                }
+                self.sel_terminal != before
+            }
+            Section::Inbox => {
+                let before = self.sel_inbox;
+                if delta < 0 {
+                    self.panel_up(data, sec);
+                } else {
+                    self.panel_down(data, sec);
+                }
+                self.sel_inbox != before
+            }
+            _ => {
+                let entry = self.scroll.entry(sec).or_insert(0);
+                let before = *entry;
+                *entry = if delta < 0 {
+                    entry.saturating_sub(1)
+                } else {
+                    entry.saturating_add(1)
+                };
+                *entry != before
+            }
+        }
+    }
+
+    fn on_left_down(
+        &mut self,
+        target: Option<Hit>,
+        data: &GlobalData,
+        now_ms: i64,
+    ) -> (bool, GEffect) {
+        let Some(target) = target else {
+            self.last_click = None;
+            return (false, GEffect::None);
+        };
+        let is_double = self.last_click.as_ref().is_some_and(|(prev, ts)| {
+            *prev == target && now_ms.saturating_sub(*ts) <= Self::DOUBLE_CLICK_MS
+        });
+        self.last_click = Some((target.clone(), now_ms));
+        if is_double {
+            // A double-click consumes the pair.
+            self.last_click = None;
+            return self.on_double_click(target, data);
+        }
+        match target {
+            Hit::Panel(HitPanel::Section(sec)) => {
+                (self.set_focus(Focus::Panel(sec)), GEffect::None)
+            }
+            Hit::Panel(HitPanel::CmdLine) => (self.set_focus(Focus::CmdLine), GEffect::None),
+            Hit::Panel(HitPanel::Output) => (false, GEffect::None),
+            Hit::Row(row) => self.click_row(row, data),
+            Hit::Border(_) => (false, GEffect::None),
+        }
+    }
+
+    fn set_focus(&mut self, focus: Focus) -> bool {
+        if self.focus == focus {
+            return false;
+        }
+        self.focus = focus;
+        true
+    }
+
+    fn click_row(&mut self, row: RowTarget, data: &GlobalData) -> (bool, GEffect) {
+        let before = (
+            self.focus.clone(),
+            self.sel_terminal.clone(),
+            self.sel_inbox,
+        );
+        match row {
+            RowTarget::Terminal(address) => {
+                self.prev_terminal_idx = data.snap.as_ref().and_then(|snap| {
+                    ordered_terminals(snap)
+                        .iter()
+                        .position(|t| t.address == address)
+                });
+                self.sel_terminal = Some(address);
+                self.focus = Focus::Panel(Section::Terminals);
+            }
+            RowTarget::Inbox(id) => {
+                self.prev_inbox_idx = data
+                    .snap
+                    .as_ref()
+                    .and_then(|snap| snap.inbox.iter().position(|r| r.id == id));
+                self.sel_inbox = Some(id);
+                self.focus = Focus::Panel(Section::Inbox);
+            }
+            RowTarget::Message(_) => self.focus = Focus::Panel(Section::Messages),
+            RowTarget::Agent(_) | RowTarget::Project(_) => return (false, GEffect::None),
+        }
+        (
+            before
+                != (
+                    self.focus.clone(),
+                    self.sel_terminal.clone(),
+                    self.sel_inbox,
+                ),
+            GEffect::None,
+        )
+    }
+
+    fn on_double_click(&mut self, target: Hit, data: &GlobalData) -> (bool, GEffect) {
+        match target {
+            Hit::Row(RowTarget::Terminal(address)) => {
+                // Same effect as ⏎ on the Terminals panel.
+                self.click_row(RowTarget::Terminal(address.clone()), data);
+                (true, GEffect::OpenBoard(address))
+            }
+            Hit::Row(RowTarget::Inbox(id)) => {
+                // Same pre-fill as `r`: nothing is dispatched.
+                self.click_row(RowTarget::Inbox(id), data);
+                self.focus_cmdline_with(format!("reply {id} "));
+                (true, GEffect::None)
+            }
+            _ => (false, GEffect::None),
+        }
     }
 
     pub fn on_key(&mut self, key: KeyEvent, data: &GlobalData) -> GEffect {
@@ -1327,6 +1527,280 @@ mod tests {
             "selection still points at the closed item"
         );
         assert_eq!(st.sel_inbox, Some(3));
+    }
+
+    use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn down(column: u16, row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+    }
+
+    /// A manual overview map: Terminals | Inbox on top, Messages, then the command line.
+    fn overview_map(st: &GlobalState) {
+        st.push_panel(Rect::new(0, 0, 40, 10), Section::Terminals);
+        st.push_row(Rect::new(1, 1, 30, 1), RowTarget::Terminal("t1".into()));
+        st.push_row(Rect::new(1, 2, 30, 1), RowTarget::Terminal("t2".into()));
+        st.push_panel(Rect::new(40, 0, 20, 10), Section::Inbox);
+        st.push_row(Rect::new(41, 1, 10, 1), RowTarget::Inbox(7));
+        st.push_row(Rect::new(41, 2, 10, 1), RowTarget::Inbox(8));
+        st.push_panel(Rect::new(0, 10, 60, 5), Section::Messages);
+        st.push_row(Rect::new(1, 10, 50, 2), RowTarget::Message(0));
+        st.push_panel(Rect::new(0, 15, 60, 1), HitPanel::CmdLine);
+    }
+
+    fn overview_state() -> (GlobalState, GlobalData) {
+        let data = data_with(
+            vec![Section::Terminals, Section::Inbox],
+            vec![term("t1", "worker-1"), term("t2", "worker-2")],
+            vec![inbox(7), inbox(8)],
+        );
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        st.sync(&data);
+        overview_map(&st);
+        (st, data)
+    }
+
+    #[test]
+    fn mouse_click_focuses_panel_rows_and_cmdline() {
+        let (mut st, data) = overview_state();
+        assert_eq!(st.focus, Focus::CmdLine);
+
+        let (changed, eff) = st.on_mouse(down(5, 5), &data, 1_000);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.focus, Focus::Panel(Section::Terminals));
+
+        // Clicking the already focused panel is not a change.
+        let (changed, _) = st.on_mouse(down(5, 5), &data, 2_000);
+        assert!(!changed);
+
+        // A Terminals row focuses the panel and selects exactly that row.
+        let (changed, eff) = st.on_mouse(down(5, 2), &data, 3_000);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.focus, Focus::Panel(Section::Terminals));
+        assert_eq!(st.sel_terminal.as_deref(), Some("t2"));
+
+        // An Inbox row does the same for the inbox.
+        let (changed, _) = st.on_mouse(down(45, 1), &data, 4_000);
+        assert!(changed);
+        assert_eq!(st.focus, Focus::Panel(Section::Inbox));
+        assert_eq!(st.sel_inbox, Some(7));
+
+        // A Messages row only focuses Messages (no row selection is kept there).
+        let (changed, _) = st.on_mouse(down(5, 10), &data, 5_000);
+        assert!(changed);
+        assert_eq!(st.focus, Focus::Panel(Section::Messages));
+
+        // The command line below the sections takes the focus back.
+        let (changed, _) = st.on_mouse(down(5, 15), &data, 6_000);
+        assert!(changed);
+        assert_eq!(st.focus, Focus::CmdLine);
+    }
+
+    #[test]
+    fn mouse_wheel_moves_selection_and_scrolls() {
+        let (mut st, data) = overview_state();
+
+        // Terminals: one row per notch, clamped at the ends.
+        let (changed, eff) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 5, 1), &data, 1_000);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.sel_terminal.as_deref(), Some("t2"));
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 5, 1), &data, 2_000);
+        assert!(!changed, "the selection is already on the last row");
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollUp, 5, 1), &data, 3_000);
+        assert!(changed);
+        assert_eq!(st.sel_terminal.as_deref(), Some("t1"));
+
+        // Inbox rows move the inbox selection, whichever row the pointer sits on.
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 45, 2), &data, 4_000);
+        assert!(changed);
+        assert_eq!(st.sel_inbox, Some(8));
+
+        // Messages scrolls by lines and stops at the top.
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 5, 11), &data, 5_000);
+        assert!(changed);
+        assert_eq!(st.scroll.get(&Section::Messages).copied(), Some(1));
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollUp, 5, 11), &data, 6_000);
+        assert!(changed);
+        assert_eq!(st.scroll.get(&Section::Messages).copied(), Some(0));
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollUp, 5, 11), &data, 7_000);
+        assert!(!changed, "scrolling past the top is not a change");
+
+        // A wheel outside every panel (footer) or on the command line changes nothing.
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 59, 17), &data, 8_000);
+        assert!(!changed);
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 5, 15), &data, 9_000);
+        assert!(!changed);
+
+        // A wheel on a border is not a panel either.
+        st.push_border(Rect::new(19, 0, 2, 10), BorderId::TopPairVertical);
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 19, 5), &data, 10_000);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn mouse_double_click_opens_board_and_prefills_reply() {
+        // Two downs on the same terminal row within 400 ms open its board.
+        let (mut st, data) = overview_state();
+        let (changed, eff) = st.on_mouse(down(5, 1), &data, 1_000);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        let (changed, eff) = st.on_mouse(down(5, 1), &data, 1_300);
+        assert!(changed);
+        assert_eq!(eff, GEffect::OpenBoard("t1".into()));
+
+        // An inbox row pre-fills `reply #<id> ` and focuses the command line; nothing runs.
+        let (mut st, data) = overview_state();
+        st.on_mouse(down(45, 1), &data, 1_000);
+        let (changed, eff) = st.on_mouse(down(45, 1), &data, 1_200);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.focus, Focus::CmdLine);
+        assert_eq!(st.cmd.text, "reply 7 ");
+        assert_eq!(st.cmd.cursor, "reply 7 ".chars().count());
+    }
+
+    #[test]
+    fn mouse_double_click_window_edges() {
+        // 401 ms apart is two plain clicks, never a double-click.
+        let (mut st, data) = overview_state();
+        st.on_mouse(down(5, 1), &data, 1_000);
+        let (_, eff) = st.on_mouse(down(5, 1), &data, 1_401);
+        assert_eq!(eff, GEffect::None);
+
+        // Two different targets inside the window stay two plain clicks.
+        let (mut st, data) = overview_state();
+        st.on_mouse(down(5, 1), &data, 1_000);
+        let (changed, eff) = st.on_mouse(down(5, 2), &data, 1_100);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.sel_terminal.as_deref(), Some("t2"));
+
+        // A double-click consumes the pair: the third down is a plain click again.
+        let (mut st, data) = overview_state();
+        st.on_mouse(down(5, 1), &data, 1_000);
+        st.on_mouse(down(5, 1), &data, 1_100);
+        let (_, eff) = st.on_mouse(down(5, 1), &data, 1_150);
+        assert_eq!(eff, GEffect::None);
+    }
+
+    #[test]
+    fn mouse_ignored_while_popup_or_output_overlay() {
+        // Every event is ignored while a confirmation popup is open.
+        let (mut st, data) = overview_state();
+        st.popup = Some(Popup::Confirm {
+            prompt: "kill t1?".into(),
+            input: "y".into(),
+        });
+        let before = (
+            st.focus.clone(),
+            st.sel_terminal.clone(),
+            st.sel_inbox,
+            st.cmd.text.clone(),
+            st.output_scroll,
+            st.popup.clone(),
+        );
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ] {
+            for (column, row) in [(5, 5), (5, 1), (45, 1), (5, 10), (5, 15)] {
+                let (changed, eff) = st.on_mouse(mouse(kind, column, row), &data, 1_000);
+                assert!(
+                    !changed,
+                    "{kind:?} at {column},{row} changed the popup screen"
+                );
+                assert_eq!(eff, GEffect::None);
+            }
+        }
+        assert_eq!(
+            (
+                st.focus.clone(),
+                st.sel_terminal.clone(),
+                st.sel_inbox,
+                st.cmd.text.clone(),
+                st.output_scroll,
+                st.popup.clone(),
+            ),
+            before
+        );
+
+        // While the Output overlay is shown only that panel and its border react.
+        let data = data_with(
+            vec![Section::Terminals],
+            vec![term("t1", "worker-1")],
+            vec![],
+        );
+        let mut data = data;
+        data.output = Some("cleanup 1 t2".into());
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        st.sync(&data);
+        st.push_panel(Rect::new(0, 0, 60, 10), Section::Terminals);
+        st.push_row(Rect::new(1, 1, 50, 1), RowTarget::Terminal("t1".into()));
+        st.push_panel(Rect::new(0, 10, 60, 5), HitPanel::Output);
+        st.push_border(Rect::new(0, 10, 60, 1), BorderId::OutputTop);
+        st.push_panel(Rect::new(0, 15, 60, 1), HitPanel::CmdLine);
+        let st = &mut st;
+
+        // Clicks elsewhere (including the command line) are ignored.
+        for (column, row) in [(5, 5), (5, 15)] {
+            let (changed, eff) = st.on_mouse(down(column, row), &data, 2_000);
+            assert!(!changed, "a click under the overlay reached {column},{row}");
+            assert_eq!(eff, GEffect::None);
+        }
+        assert_eq!(st.focus, Focus::CmdLine);
+
+        // The Output panel scrolls with the wheel; its border is not a scroll target.
+        let (changed, eff) = st.on_mouse(mouse(MouseEventKind::ScrollDown, 5, 12), &data, 3_000);
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.output_scroll, 1);
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollUp, 5, 12), &data, 4_000);
+        assert!(changed);
+        assert_eq!(st.output_scroll, 0);
+        let (changed, _) = st.on_mouse(mouse(MouseEventKind::ScrollUp, 5, 10), &data, 5_000);
+        assert!(!changed, "the Output border must not scroll");
+    }
+
+    #[test]
+    fn mouse_ignores_non_left_and_moved_events() {
+        let (mut st, data) = overview_state();
+        let before = (st.focus.clone(), st.sel_terminal.clone(), st.sel_inbox);
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Right),
+            MouseEventKind::Drag(MouseButton::Right),
+        ] {
+            for (column, row) in [(5, 5), (5, 1), (45, 1), (5, 15)] {
+                let (changed, eff) = st.on_mouse(mouse(kind, column, row), &data, 1_000);
+                assert!(!changed, "{kind:?} at {column},{row} forced a redraw");
+                assert_eq!(eff, GEffect::None);
+            }
+        }
+        assert_eq!(
+            (st.focus.clone(), st.sel_terminal.clone(), st.sel_inbox),
+            before
+        );
     }
 
     #[test]

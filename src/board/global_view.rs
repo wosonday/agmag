@@ -90,6 +90,8 @@ pub fn draw_global(
     } else {
         draw_cmdline(frame, cmd, state, ctx);
     }
+    // The command line is a click target (focus it) even though it is not a section panel.
+    state.push_panel(cmd, HitPanel::CmdLine);
     draw_footer(frame, footer, state, ctx);
     if let Some(position) = draw_popup(frame, area, state, ctx) {
         cursor = Some(position);

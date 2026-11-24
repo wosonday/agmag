@@ -872,7 +872,7 @@ fn hit_map_records_what_the_overview_drew() {
         .iter()
         .filter_map(|(_, p)| match p {
             HitPanel::Section(s) => Some(*s),
-            HitPanel::Output => None,
+            HitPanel::Output | HitPanel::CmdLine => None,
         })
         .collect();
     assert_eq!(
@@ -984,6 +984,8 @@ fn assert_everything_inside_main(size: (u16, u16), d: &GlobalData) {
     let all = map
         .panels
         .iter()
+        // The command bar is deliberately below `main`, so it is the one target this check skips.
+        .filter(|(_, panel)| !matches!(panel, HitPanel::CmdLine))
         .map(|(r, _)| *r)
         .chain(map.rows.iter().map(|(r, _)| *r))
         .chain(map.borders.iter().map(|(r, _)| *r));

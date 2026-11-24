@@ -16,8 +16,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
 use super::global::{
-    BorderId, CmdLine, Focus, GlobalData, GlobalState, HitPanel, Popup, RowTarget, is_plain_shell,
-    ordered_terminals, visible_sections,
+    BorderId, CmdLine, Focus, GlobalData, GlobalState, HitPanel, LayoutOverride, Popup, RowTarget,
+    is_plain_shell, ordered_terminals, visible_sections,
 };
 use super::theme::Theme;
 use crate::actions::kind_to_english;
@@ -26,9 +26,13 @@ use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
 /// Messages is the flexible section: it absorbs the space no other section needs.
-const MESSAGES_MIN: u16 = 4;
+pub(crate) const MESSAGES_MIN: u16 = 4;
 /// A panel is its border plus at least one usable row.
-const MIN_SECTION_H: u16 = 3;
+pub(crate) const MIN_SECTION_H: u16 = 3;
+/// A dragged top-pair panel never gets narrower than this.
+pub(crate) const MIN_PANEL_W: u16 = 20;
+/// Below this width the sections are stacked instead of the two top panels sharing a row.
+pub(crate) const WIDE_MIN_COLS: u16 = 120;
 /// The top pair may never take more than this share of the sections area.
 const PAIR_CAP_PERCENT: u32 = 60;
 const PROMPT: &str = "agm> ";
@@ -54,7 +58,7 @@ pub fn draw_global(
         now_ms: data.now_ms,
     };
     let (main, cmd, footer) = split_bottom(area);
-    let (sections, messages, layout) = split_messages(main, data, ctx);
+    let (sections, messages, layout) = split_messages(main, data, ctx, &state.layout);
     draw_sections(frame, sections, &layout, state, data, ctx);
     draw_messages(frame, messages, state, data, ctx);
     if messages.height > 0 {
@@ -90,6 +94,8 @@ pub fn draw_global(
     } else {
         draw_cmdline(frame, cmd, state, ctx);
     }
+    // The command line is a click target (focus it) even though it is not a section panel.
+    state.push_panel(cmd, HitPanel::CmdLine);
     draw_footer(frame, footer, state, ctx);
     if let Some(position) = draw_popup(frame, area, state, ctx) {
         cursor = Some(position);
@@ -195,7 +201,22 @@ fn section_desired_rows(sec: Section, data: &GlobalData, width: u16) -> u16 {
 
 /// Widths of the two top-panel columns, mirroring the constraints used by `draw_sections` so a
 /// section's desired rows are measured against the width it is actually drawn at.
-fn pair_column_widths(width: u16, chosen: &[Section], data: &GlobalData, ctx: Ctx) -> (u16, u16) {
+fn pair_column_widths(
+    width: u16,
+    chosen: &[Section],
+    data: &GlobalData,
+    ctx: Ctx,
+    layout: &LayoutOverride,
+) -> (u16, u16) {
+    // A user drag wins over the content-fitted split, but only where both panels can keep their
+    // 20-column floor; a narrower window ignores the stored ratio instead of hiding a panel.
+    if let Some(fraction) = layout.top_pair_width
+        && width >= MIN_PANEL_W.saturating_mul(2)
+    {
+        let left = (fraction.clamp(0.0, 1.0) * f32::from(width)).round() as u16;
+        let left = left.clamp(MIN_PANEL_W, width - MIN_PANEL_W);
+        return (left, width - left);
+    }
     let quota_w = quota_panel_width(data, ctx, width);
     if chosen[0] == Section::Quota {
         (quota_w, width.saturating_sub(quota_w))
@@ -207,10 +228,15 @@ fn pair_column_widths(width: u16, chosen: &[Section], data: &GlobalData, ctx: Ct
 }
 
 /// Fit every section group into `main` at once: Messages gets what nobody needs.
-fn section_layout(main: Rect, data: &GlobalData, ctx: Ctx) -> LayoutHeights {
+fn section_layout(
+    main: Rect,
+    data: &GlobalData,
+    ctx: Ctx,
+    layout: &LayoutOverride,
+) -> LayoutHeights {
     let mut chosen = visible_sections(&data.view);
     chosen.pop(); // Messages is drawn separately; it stays the last group below.
-    let wide = main.width >= 120 && chosen.len() >= 2;
+    let wide = main.width >= WIDE_MIN_COLS && chosen.len() >= 2;
     let mut desired: Vec<u16> = Vec::with_capacity(chosen.len());
     let mut stacked: Vec<Section> = Vec::with_capacity(chosen.len());
 
@@ -220,7 +246,7 @@ fn section_layout(main: Rect, data: &GlobalData, ctx: Ctx) -> LayoutHeights {
         let cap = (u32::from(main.height.saturating_sub(MESSAGES_MIN))
             .saturating_mul(PAIR_CAP_PERCENT)
             / 100) as u16;
-        let (left_w, right_w) = pair_column_widths(main.width, &chosen, data, ctx);
+        let (left_w, right_w) = pair_column_widths(main.width, &chosen, data, ctx, layout);
         let pair = section_desired_rows(chosen[0], data, left_w)
             .max(section_desired_rows(chosen[1], data, right_w))
             .min(cap)
@@ -235,7 +261,8 @@ fn section_layout(main: Rect, data: &GlobalData, ctx: Ctx) -> LayoutHeights {
     }
     desired.push(MESSAGES_MIN.min(main.height.max(1)));
 
-    let heights = fit_heights(&desired, desired.len() - 1, main.height, MIN_SECTION_H);
+    let mut heights = fit_heights(&desired, desired.len() - 1, main.height, MIN_SECTION_H);
+    apply_height_overrides(&mut heights, wide, layout, main.height);
     let offset = usize::from(wide);
     LayoutHeights {
         pair: wide.then(|| heights[0]),
@@ -245,8 +272,13 @@ fn section_layout(main: Rect, data: &GlobalData, ctx: Ctx) -> LayoutHeights {
 }
 
 /// Sections get everything except the height Messages needs, which is fitted with the rest.
-fn split_messages(main: Rect, data: &GlobalData, ctx: Ctx) -> (Rect, Rect, LayoutHeights) {
-    let mut layout = section_layout(main, data, ctx);
+fn split_messages(
+    main: Rect,
+    data: &GlobalData,
+    ctx: Ctx,
+    layout: &LayoutOverride,
+) -> (Rect, Rect, LayoutHeights) {
+    let mut layout = section_layout(main, data, ctx, layout);
     // `fit_heights` keeps its one-panel floor even for a window shorter than the floor. The
     // floor may win over the requested total, but no rect may spill into the command bar/footer.
     layout.messages = layout.messages.min(main.height);
@@ -346,6 +378,88 @@ pub fn fit_heights(desired: &[u16], flex: usize, total: u16, min: u16) -> Vec<u1
     heights
 }
 
+/// Apply the stored height ratios to the content-fitted groups.
+///
+/// `heights` is `[pair?, stacked..., messages]`: the last slot is always Messages, which stays
+/// flexible and takes what the other groups leave. A key sizes the group directly above
+/// `BorderId::Horizontal(key)` (on wide screens `Horizontal(2)` is below the top pair). Ratios are
+/// recomputed from `total` every frame, no group drops below `MIN_SECTION_H` and Messages keeps
+/// `MESSAGES_MIN`; a window too short for those floors ignores the override entirely.
+fn apply_height_overrides(heights: &mut [u16], wide: bool, layout: &LayoutOverride, total: u16) {
+    if heights.len() < 2 || layout.heights.is_empty() {
+        return;
+    }
+    let groups = heights.len() - 1; // the Messages slot stays flexible
+    let budget = total.saturating_sub(MESSAGES_MIN);
+    if budget < MIN_SECTION_H.saturating_mul(groups as u16) {
+        return;
+    }
+
+    let mut targets: Vec<u16> = heights[..groups].to_vec();
+    let mut overridden = vec![false; groups];
+    let mut any = false;
+    for (&boundary, &fraction) in &layout.heights {
+        // The border index depends on the layout: wide screens fold the first two sections into
+        // one top-pair group, so their lower boundary is Horizontal(2) and sizes the pair.
+        let slot = match (wide, boundary) {
+            (true, boundary) if boundary >= 2 => boundary - 2,
+            (false, boundary) if boundary >= 1 => boundary - 1,
+            _ => continue,
+        };
+        let Some(target) = targets.get_mut(slot) else {
+            continue; // a stale index for a section that is no longer in the view
+        };
+        *target = ((fraction.clamp(0.0, 1.0) * f32::from(total)).round() as u16).max(MIN_SECTION_H);
+        overridden[slot] = true;
+        any = true;
+    }
+    if !any {
+        return;
+    }
+
+    let mut excess = targets
+        .iter()
+        .map(|&h| u32::from(h))
+        .sum::<u32>()
+        .saturating_sub(u32::from(budget));
+    if excess > 0 {
+        // Keep the dragged group when possible: take rows from the other groups first.
+        shrink_groups(&mut targets, &overridden, false, &mut excess);
+        shrink_groups(&mut targets, &overridden, true, &mut excess);
+    }
+    if excess > 0 {
+        return;
+    }
+    let sum: u16 = targets.iter().copied().sum();
+    heights[..groups].copy_from_slice(&targets);
+    heights[groups] = total.saturating_sub(sum);
+}
+
+/// Shrinks the largest selected group by one row at a time, never below `MIN_SECTION_H`.
+fn shrink_groups(
+    targets: &mut [u16],
+    overridden: &[bool],
+    overridden_pass: bool,
+    excess: &mut u32,
+) {
+    while *excess > 0 {
+        let mut pick = None;
+        for (i, &height) in targets.iter().enumerate() {
+            if height <= MIN_SECTION_H || overridden[i] != overridden_pass {
+                continue;
+            }
+            if pick.is_none_or(|j: usize| height > targets[j]) {
+                pick = Some(i);
+            }
+        }
+        let Some(i) = pick else {
+            break; // every group of this pass is at its floor
+        };
+        targets[i] -= 1;
+        *excess -= 1;
+    }
+}
+
 fn section_title(sec: Section) -> &'static str {
     match sec {
         Section::Quota => "Quota",
@@ -380,7 +494,7 @@ fn draw_sections(
             width: area.width,
             height: pair_h.min(area.height),
         };
-        let (left_w, right_w) = pair_column_widths(pair.width, &chosen, data, ctx);
+        let (left_w, right_w) = pair_column_widths(pair.width, &chosen, data, ctx, &state.layout);
         let constraints = [Constraint::Length(left_w), Constraint::Length(right_w)];
         let cols = Layout::default()
             .direction(Direction::Horizontal)
@@ -1504,7 +1618,12 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::{fit_heights, message_row_count};
+    use super::{
+        Ctx, MESSAGES_MIN, MIN_SECTION_H, apply_height_overrides, fit_heights, message_row_count,
+        pair_column_widths,
+    };
+    use crate::board::global::{GlobalData, LayoutOverride};
+    use crate::dashboard::Section;
     use ratatui::text::Line;
 
     #[test]
@@ -1576,5 +1695,123 @@ mod tests {
             assert!(got.iter().all(|&h| h >= 3), "below min: {got:?}");
         }
         assert_eq!(fit_heights(&[3, 14, 3, 4], 3, 38, 3), vec![3, 14, 3, 18]);
+    }
+
+    fn test_ctx() -> Ctx<'static> {
+        let theme: &'static crate::board::theme::Theme = Box::leak(Box::new(
+            crate::board::theme::theme(crate::board::theme::ThemeName::CatppuccinMocha),
+        ));
+        Ctx {
+            theme,
+            ascii: false,
+            now_ms: 0,
+        }
+    }
+
+    fn override_height(boundary: usize, fraction: f32) -> LayoutOverride {
+        let mut layout = LayoutOverride::default();
+        layout.set_height(boundary, fraction);
+        layout
+    }
+
+    #[test]
+    fn layout_override_height_keeps_floors_and_messages_flexible() {
+        // Narrow layout: Horizontal(2) sits above the second stacked section (slot 1).
+        let layout = override_height(2, 0.5);
+        let mut heights = vec![4, 4, 4, 4];
+        apply_height_overrides(&mut heights, false, &layout, 20);
+        assert_eq!(
+            heights[1], 10,
+            "the group above Horizontal(2) takes half of 20 rows"
+        );
+        assert!(
+            heights[..3].iter().all(|&h| h >= MIN_SECTION_H),
+            "{heights:?}"
+        );
+        assert_eq!(heights.iter().sum::<u16>(), 20, "{heights:?}");
+        assert!(
+            heights[3] >= MESSAGES_MIN,
+            "Messages lost its floor: {heights:?}"
+        );
+    }
+
+    #[test]
+    fn layout_override_tiny_size_ignores_an_impossible_override() {
+        // 40x10: main is 8 rows, too short for three groups plus Messages at their floors.
+        let layout = override_height(1, 0.9);
+        let mut heights = vec![3, 3, 3, 3];
+        apply_height_overrides(&mut heights, false, &layout, 8);
+        assert_eq!(
+            heights,
+            vec![3, 3, 3, 3],
+            "an override that cannot keep the floors must not shrink a panel"
+        );
+    }
+
+    #[test]
+    fn layout_override_shrinks_with_the_window() {
+        let layout = override_height(2, 0.5);
+        let mut tall = vec![4, 4, 4, 4];
+        apply_height_overrides(&mut tall, false, &layout, 38);
+        assert_eq!(tall[1], 19);
+        assert_eq!(tall.iter().sum::<u16>(), 38);
+
+        // The same ratio in a shorter window is recomputed from rows, never reused as 19 rows.
+        let mut short = vec![4, 4, 4, 4];
+        apply_height_overrides(&mut short, false, &layout, 15);
+        assert!(short[..3].iter().all(|&h| h >= MIN_SECTION_H), "{short:?}");
+        assert!(short[3] >= MESSAGES_MIN, "{short:?}");
+        assert_eq!(short.iter().sum::<u16>(), 15);
+        assert!(short[1] < 19, "the stale row count survived: {short:?}");
+    }
+
+    #[test]
+    fn layout_override_ignores_a_stale_boundary_index() {
+        let mut heights = vec![4, 4, 4, 4];
+        let layout = override_height(9, 0.5);
+        apply_height_overrides(&mut heights, false, &layout, 20);
+        assert_eq!(
+            heights,
+            vec![4, 4, 4, 4],
+            "Horizontal(9) is not in this view"
+        );
+
+        // The narrow layout has no boundary above its first section (Horizontal(0)).
+        let layout = override_height(0, 0.9);
+        apply_height_overrides(&mut heights, false, &layout, 20);
+        assert_eq!(heights, vec![4, 4, 4, 4]);
+    }
+
+    #[test]
+    fn layout_override_top_pair_width_clamped_to_twenty_columns() {
+        let data = GlobalData::default();
+        let ctx = test_ctx();
+        let chosen = [Section::Quota, Section::Terminals];
+
+        let mut layout = LayoutOverride::default();
+        layout.set_top_pair_width(0.25);
+        assert_eq!(
+            pair_column_widths(100, &chosen, &data, ctx, &layout),
+            (25, 75)
+        );
+
+        layout.set_top_pair_width(0.05);
+        assert_eq!(
+            pair_column_widths(100, &chosen, &data, ctx, &layout),
+            (20, 80)
+        );
+        layout.set_top_pair_width(0.95);
+        assert_eq!(
+            pair_column_widths(100, &chosen, &data, ctx, &layout),
+            (80, 20)
+        );
+
+        // Too narrow for two 20-column panels: the content-fitted split wins.
+        let fallback = pair_column_widths(30, &chosen, &data, ctx, &LayoutOverride::default());
+        layout.set_top_pair_width(0.5);
+        assert_eq!(
+            pair_column_widths(30, &chosen, &data, ctx, &layout),
+            fallback
+        );
     }
 }

@@ -149,3 +149,10 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
   `cargo test --test actions_test approval_revoke` 1 passed; `approval_rule_revoked` 1 passed;
   `cargo fmt --check` sạch. EOL không đổi (main.rs CRLF, còn lại LF).
 - Commit: `fix(approval): report zero matched rows when revoking`.
+
+### Item 4 — trim đồng nhất giữa config/decide/store (covered by item 1)
+- Không có thay đổi mã riêng: item 1 đã đưa mọi đầu vào (action, lane, task, từng `delegated_actions`) qua
+  `normalize_action`/`normalize_key` ở `decide`, `is_hard_prohibited`, `Policy::validate`, add/revoke và MCP.
+- Các test của item 1 (`approval_delegated_actions_match_case_insensitively`,
+  `approval_check_normalizes_action_lane_and_task`, `approval_revoke_grant_reports_zero_rows_and_normalizes`)
+  là bằng chứng phủ lỗi. Chỉ cập nhật log; commit để đánh dấu item đã xử lý.

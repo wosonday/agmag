@@ -552,8 +552,10 @@ impl GlobalState {
     /// confirmation popup is open or the Output overlay covers the sections.
     pub fn on_mouse(&mut self, ev: MouseEvent, data: &GlobalData, now_ms: i64) -> (bool, GEffect) {
         if self.popup.is_some() {
-            // A popup is keyboard-only: forget earlier clicks so closing it cannot pair with one.
+            // A popup is keyboard-only: forget earlier clicks so closing it cannot pair with one,
+            // and drop any half-finished drag so it cannot resume underneath the popup.
             self.last_click = None;
+            self.drag = None;
             return (false, GEffect::None);
         }
         match ev.kind {
@@ -570,6 +572,9 @@ impl GlobalState {
 
         if data.output.is_some() {
             // The overlay is modal: only its own panel scrolls (its top border is not resizable).
+            // A click or drag armed under it must not come back when the panel closes.
+            self.last_click = None;
+            self.drag = None;
             return match (ev.kind, target) {
                 (MouseEventKind::ScrollUp, Some(Hit::Panel(HitPanel::Output))) => {
                     let before = self.output_scroll;
@@ -2284,6 +2289,60 @@ mod tests {
             Some(0.6),
             "a drag leaked into last_click and reset the boundary"
         );
+    }
+
+    #[test]
+    fn mouse_popup_and_output_overlay_drop_a_pending_drag_and_click() {
+        let mut data = data_with(vec![Section::Quota, Section::Inbox], vec![], vec![]);
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        st.layout.set_height(2, 0.4);
+        drag_map(&st);
+
+        // A Down on the boundary arms a drag and remembers a click.
+        st.on_mouse(down(5, 10), &data, 1_000);
+
+        // The popup owns the mouse: the event also forgets both.
+        st.popup = Some(Popup::Confirm {
+            prompt: "kill?".into(),
+            input: String::new(),
+        });
+        let (changed, eff) = st.on_mouse(drag(5, 15), &data, 1_100);
+        assert!(!changed);
+        assert_eq!(eff, GEffect::None);
+        st.popup = None;
+
+        // The drag is gone: the same Drag no longer resizes anything.
+        let (changed, eff) = st.on_mouse(drag(5, 15), &data, 1_200);
+        assert!(!changed, "a drag survived the popup");
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.layout.height(2), Some(0.4));
+        // The click is gone too: a Down 300 ms after the armed one is not a double-click.
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 1_300);
+        assert!(
+            !changed,
+            "a click survived the popup and reset the boundary"
+        );
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.layout.height(2), Some(0.4));
+
+        // Same for the Output overlay.
+        st.on_mouse(up(5, 10), &data, 1_400);
+        st.on_mouse(down(5, 10), &data, 2_000);
+        data.output = Some("cleanup 1 t2".into());
+        let (changed, eff) = st.on_mouse(down(5, 15), &data, 2_100);
+        assert!(!changed);
+        assert_eq!(eff, GEffect::None);
+        data.output = None;
+        let (changed, eff) = st.on_mouse(drag(5, 15), &data, 2_200);
+        assert!(!changed, "a drag survived the Output overlay");
+        assert_eq!(eff, GEffect::None);
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 2_300);
+        assert!(
+            !changed,
+            "a click survived the Output overlay and reset the boundary"
+        );
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.layout.height(2), Some(0.4));
     }
 
     #[test]

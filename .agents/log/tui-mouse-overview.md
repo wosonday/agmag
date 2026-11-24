@@ -159,4 +159,7 @@ test-only items say so explicitly).
 4. Test-only fix (no production change): `mouse_double_click_border_resets_only_that_boundary` now
    sends the second Down at 3_100 ms, so the `!stored` branch of `on_double_click` is really
    exercised (the earlier pair consumed `last_click`; a single Down could never reach it).
+5. Modal mouse state — new test `mouse_popup_and_output_overlay_drop_a_pending_drag_and_click`
+   (red: a drag armed before a popup resumed after it closed; green after clearing `drag` in the
+   popup guard and `last_click` + `drag` in the Output-overlay guard).
 

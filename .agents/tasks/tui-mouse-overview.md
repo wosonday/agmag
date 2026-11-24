@@ -65,3 +65,33 @@ Code you build on:
 - Final gates clean and recorded: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`
   (report binaries and passed/failed totals).
 - Finish with `DONE tui-mouse-overview <HEAD sha>` or `BLOCKED: <reason>`.
+
+## Round 2 — read this before starting (an earlier attempt was rejected)
+
+The first attempt (kept on branch `attic/tui-mouse-overview-beam`, do NOT reuse it) was rejected because: all steps
+in one commit; zero new tests; `cargo fmt --check` failing while the log claimed it clean; three duplicate layout
+fields; a guessed border→section mapping; existing comments deleted. The CEO re-runs every gate and counts tests.
+
+Hard rules:
+- Each step = at least one NEW `#[test]` written first and seen failing, then code, then `cargo fmt`, then commit.
+  Main has 745 tests; your final count must be clearly higher. Record per-step test names in the log.
+- ONE layout field on `GlobalState` (e.g. `layout: LayoutOverride`) plus the drag state. No duplicates.
+- Do not delete or rewrite existing comments/tests that are unrelated to your change.
+- Help footer must still fit 100 columns: keep the footer line as it is; put the mouse/layout text in the `?`
+  help popup/output instead.
+
+Exact semantics (no guessing):
+- `BorderId::Horizontal(i)` is the boundary directly ABOVE group `i` of the stacked layout as `draw_stacked`/
+  `split_messages` push it (read those functions to see which index each pushed border gets; the Messages boundary
+  is `Horizontal(visible_sections(&data.view).len() - 1)`). Write a test that draws a frame and asserts each
+  `Horizontal(i)` rect sits at the bottom border of the group above it — then build the mapping from that.
+- `LayoutOverride.heights[i]` = fraction of `main.height` given to the group directly ABOVE `Horizontal(i)` (the top
+  pair counts as one group when wide). Dragging `Horizontal(i)` to row `y` sets that group's height to
+  `y - group_top` (+1 for the border row as needed), as a fraction of `main.height`. Messages stays the flexible
+  section and absorbs the difference; every group keeps ≥ `MIN_SECTION_H` rows and Messages ≥ `MESSAGES_MIN`.
+- `top_pair_width` = fraction of `main.width` for the LEFT panel of the top pair; both panels ≥ 20 columns.
+- Tests to include at least: parse/to_string round trip and garbage; clamping at tiny sizes (e.g. 40x10) and after a
+  window shrink; drag `TopPairVertical` and a `Horizontal(i)` through `on_mouse` changes the next frame's rects as
+  expected; double-click a border resets only that boundary; `layout reset`; mouse ignored while a popup is open;
+  Output overlay case; anti-goal test over every hit target (no `GEffect::Run`, no dispatch, popup never
+  confirmed); `on_mouse` returns "no change" for `Moved`, right/middle button, wheel outside panels.

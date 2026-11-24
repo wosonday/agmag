@@ -1,0 +1,49 @@
+model: agy/gemini-4-hydrogen-high (--mode plan)
+
+Đối tượng: feat/tui-layout @ 7ac6af6
+Kết luận: CHƯA ĐẠT
+
+### Bắt buộc sửa
+
+- `src/board/global_view.rs:draw_messages` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L1245-L1268)): Khi `scroll > 0`, công thức tính `height` của `RowTarget::Message(i)` trộn hai hệ tọa độ khác nhau: `visible_top = top.saturating_sub(scroll_rows)` tính theo khung nhìn (`0..view_rows`), còn `visible_bottom = bottom.min(scroll_rows + view_rows)` vẫn tính theo tài liệu (`scroll_rows..scroll_rows + view_rows`). Hệ quả là `height: (visible_bottom - visible_top) as u16` bị cộng dư thêm `scroll_rows` dòng:
+  - Các rect `RowTarget::Message(i)` bị kéo dài chồng đè lên toàn bộ các tin nhắn phía dưới (làm `hit()` trả về nhầm tin nhắn đầu tiên còn ló ra thay vì tin nhắn dưới con trỏ ở T3).
+  - Đáy rect là `inner.y + visible_bottom`, vượt khỏi `inner.bottom()`, khung `Messages` và vùng `main` (ví dụ `view_rows = 4`, `scroll_rows = 5`, tin nhắn có `top = 3, bottom = 7` cho `visible_top = 0`, `visible_bottom = 7`, `height = 7 > 4`, tràn xuống `cmd` và `footer`).
+  - Cách sửa: quy `visible_bottom` về hệ khung nhìn (`visible_bottom = bottom.min(scroll_rows + view_rows) - scroll_rows`), tức `height = (visible_bottom - visible_top) as u16`.
+
+### Nên sửa
+
+- `src/board/global_view.rs:wrapped_line_rows` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L1132-L1176)): Phép đếm dòng wrap chưa khớp hoàn toàn với `Paragraph::wrap(Wrap { trim: true })` của ratatui trong 3 trường hợp biên:
+  1. **Nhiều khoảng trắng liên tiếp sau điểm xuống dòng / khoảng trắng cuối dòng**: Khi `used + symbols[i].1 > width`, vòng lặp đặt `used = 0` nhưng các ký tự trắng kế tiếp thấy `used == 0` vẫn rơi vào nhánh `else { used += symbols[i].1; }` thay vì bị cắt bỏ như `Wrap { trim: true }`. Ví dụ tại `width = 10`, chuỗi `"1234567890   123456789"` chỉ tốn 2 dòng khi vẽ nhưng `wrapped_line_rows` đếm thành 3 dòng; chuỗi `"1234567890 "` (có 1 dấu cách ở cuối) bị đếm dư thành 2 dòng.
+  2. **Ký tự rộng 2 cột (`width >= 2`) trong từ dài hơn chiều rộng khung**: `while remaining > width - used { remaining -= width - used; ... }` giả định phần dư `width - used` luôn lấp kín đến cột cuối, nên một từ gồm 3 ký tự rộng 2 cột (`word_width = 6`) ở `width = 3` thực tế chiếm 3 dòng (không đặt được ký tự rộng 2 vào 1 cột còn lại) nhưng hàm đếm ra 2 dòng.
+- `tests/global_view_test.rs` ([fix.diff](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/fix.diff#L617-L921)): Cần tăng độ phủ test cho các kịch bản:
+  - `draw_messages` khi `state.scroll.insert(Section::Messages, k)` (`scroll > 0`), kiểm tra rect `RowTarget::Message` không chồng nhau, không vượt `Messages` và `hit()` trúng đúng tin nhắn được vẽ.
+  - Wrap tin nhắn có nhiều từ, nhiều khoảng trắng liên tiếp qua ranh giới wrap và ký tự rộng 2 cột.
+  - Khẳng định tường minh trong test chiều cao nhỏ rằng các section bị loại bỏ (`*height == 0` ở `draw_stacked`) không có mặt trong `map.panels`, `map.rows` và `map.borders` (bao gồm `BorderId::Horizontal`), cũng như kiểm tra `map.rows` không chồng lấn nhau.
+
+### Lỗi phát sinh mới
+
+- **Kẹp rect theo kích thước (`rect clamping`)**:
+  - `split_messages`, `draw_sections` (kể cả `TopPairVertical` với `divider_x`/`divider_w`), `draw_stacked` và `draw_global` (`if messages.height > 0`) giữ tất cả `Panel` và `BorderId` trong `main` ở mọi chiều cao `1..=10`.
+  - **Phát sinh lỗi mới**: `draw_messages` tính `height = (visible_bottom - visible_top) as u16` sai hệ tọa độ khi `scroll > 0`, làm rect `RowTarget::Message` tràn khỏi `Messages` và `main` (đã nêu ở mục **Bắt buộc sửa**).
+  - Lưu ý nhỏ: ở `draw_sections` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L384-L392)), nếu `Quota` có tên `provider` quá dài làm `quota_panel_width` chiếm trọn `pair.width`, panel còn lại có `width = 0` vẫn bị `push_panel` đẩy vào `HitMap` (không thể trúng `hit()` vì `width == 0`, nhưng nên bỏ qua `col.width == 0`).
+- **Section bị bỏ không vào `HitMap` (`dropped sections`)**:
+  - `draw_stacked` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L459-L476)) trừ phần dư từ cuối danh sách lên nên chỉ phần đuôi về `0`, và `if *height == 0 { continue; }` bỏ qua hoàn toàn `push_panel`, `push_border` lẫn `draw_section`. Các section bị bỏ không còn trong `HitMap`.
+- **Toán học dòng wrap của `Messages` (`wrapped-message row math`)**:
+  - Khớp với `Paragraph` ở `scroll == 0` cho chuỗi không có nhiều khoảng trắng qua biên wrap và không có ký tự rộng 2 cột trong từ quá khổ, nhưng sai lệch ở 2 trường hợp biên của `wrapped_line_rows` (đã nêu ở **Nên sửa**) và sai lệch nặng khi `scroll > 0` trong `draw_messages` (đã nêu ở **Bắt buộc sửa**).
+- **Cắt `HitMap` khi có overlay `Output` (`Output overlay clipping`)**:
+  - `output_rect`, `GlobalState::clip_hit_map`, `HitPanel::Output` và `BorderId::OutputTop` ([global.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global.rs.txt#L338-L380), [global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L73-L87)) hoạt động đúng: mọi panel, hàng và viền nằm dưới nửa dưới `sections` bị cắt phần che hoặc loại bỏ, phần phía trên và toàn bộ `Messages` được giữ nguyên, `Output` và `OutputTop` thay thế đúng vị trí.
+- **Tính số dòng mong muốn theo chiều rộng thực (`desired rows by real width`)**:
+  - `pair_column_widths` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L199-L208)) được dùng chung giữa `section_layout` và `draw_sections`, đảm bảo `Quota` và các panel `Usage`/`Budgets`/`System` được đo đúng theo chiều rộng cột thực tế (kể cả bề rộng lẻ).
+- **Độ mạnh của bộ test (`test strength`)**:
+  - Test cho cặp trên cùng, bảng `Terminals`/`Inbox` cuộn, `Terminals` rỗng, chiều rộng cột cặp trên cùng và `Output` overlay đều kiểm chứng đúng hành vi và vị trí vẽ thật (`find`, `panel_rect`, `hit`); điểm yếu lớn nhất là test wrap `Messages` chỉ chạy ở `scroll == 0` với một từ `"x".repeat(250)` nên để lọt lỗi `scroll > 0` và các ca biên wrap.
+- **`render_after.txt`**: Cả 3 khung `200x50`, `140x40`, `100x40` hiển thị khớp hoàn toàn với dữ liệu thật, không thừa dòng trắng ở `Quota`/`Terminals`/`Inbox (0)`, `Messages` lấp đúng phần dư.
+
+### Đối chiếu vòng 1
+
+1. **`section_layout`: sàn `2 * MIN_SECTION_H` và kẹp `cap` ở cặp panel trên cùng** — **Đã sửa**. Đã hạ sàn `pair` xuống `MIN_SECTION_H`, bỏ nâng `cap` lên `2 * MIN_SECTION_H` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L218-L229)); có test `top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages`.
+2. **`split_messages`: không kẹp `layout.messages` theo `main.height` khi cửa sổ rất thấp** — **Đã sửa**. Đã kẹp `layout.messages = layout.messages.min(main.height)` và chỉ đẩy `Panel`/`Border` của `Messages` khi `messages.height > 0` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L61-L72), [L253](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L253)); có test tại chiều cao `1..=10`.
+3. **`draw_stacked`: cắt giảm dùng `saturating_sub(1)` gây tràn đè lên `Messages` khi `area.height < sections.len()`** — **Đã sửa**. Đã đổi sang `(*height).min(excess)` và bỏ qua phần tử `*height == 0` ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L459-L476)).
+4. **`draw_messages`: giả định cứng `per_message = 2` khi `Paragraph` bật wrap (`inner.width < 100`)** — **Đã sửa (nhưng chưa trọn vẹn / phát sinh lỗi mới)**. Đã thêm `wrapped_line_rows` tính theo từng dòng, nhưng vẫn còn sai lệch ở ca biên nhiều khoảng trắng / ký tự rộng 2 cột và làm phát sinh lỗi trộn tọa độ khi `scroll > 0` (xem **Bắt buộc sửa** và **Nên sửa**).
+5. **`draw_global`: `HitMap` còn giữ các mục bị `Output` overlay che** — **Đã sửa**. Đã thêm `clip_hit_map`, `HitPanel::Output`, `BorderId::OutputTop` và test `output_overlay_hides_covered_hit_entries`.
+6. **`section_desired_rows`: `Terminals` rỗng bị dư 1 dòng và `Usage`/`Budgets`/`System` trong top pair đo theo `main.width`** — **Đã sửa**. Đã trả `1` dòng nội dung cho `Terminals` rỗng và dùng `pair_column_widths` đo theo chiều rộng cột thực ([global_view.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global_view.rs.txt#L164-L208)).
+7. **Bộ test thiếu phủ ưu tiên chồng lấn `Border > Row`, chiều cao cực nhỏ, cặp trên cùng ít dòng, bảng cuộn** — **Đã sửa**. Đã sửa `hit_map_prefers_borders_then_rows_then_panels` ([global.rs.txt](file:///C:/Users/thanh/AppData/Local/Temp/claude/cecfd803e5a33a03/dd2783fa-abc6-45ce-937e-e9a18a28c5c8/scratchpad/review-t1/global.rs.txt#L903-L934)) và bổ sung các test tương ứng trong `tests/global_view_test.rs` (cần bổ sung thêm test `Messages` có `scroll > 0` như nêu ở **Nên sửa**).

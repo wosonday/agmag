@@ -76,3 +76,9 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - RED: `empty_terminals_panel_is_three_rows` (empty Terminals was 4 rows) and `top_pair_bridged_sections_use_their_column_width` (Usage in a 60-column top-pair column was sized from the 120-column window: 7 rows instead of ≥8). Re-verified the second test fails with the old width argument before restoring the fix.
 - CODE: `section_desired_rows` counts one `-` line (3 rows with borders) for an empty Terminals; `pair_column_widths` mirrors `draw_sections`' two columns and is used both to measure bridged bodies in `section_layout` and to build the same constraints in `draw_sections`.
 - GREEN: both tests pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+
+### Item 7 - test gaps
+
+- RED (each verified with a temporary local regression, then restored): (1) the priority test's row `x: 1..19` did not overlap the border `x: 19..20` - swapping the `hit()` priority made it fail only after the fix; (2) `tiny_heights_two_and_three_stay_inside_main` failed at 140x2 when the Messages clamp was removed (a height-3 rect in a zero-height main); (3) `scrolled_table_row_rects_match_drawn_rows` failed when the `visible_table_rows` offset was forced to 0.
+- CODE (tests only): the row now spans `x: 1..20` so Border > Row is genuinely tested; tiny heights 2 and 3 get explicit bounds/overlap coverage; a scrolled Terminals (45 rows, t44 selected) and Inbox (20 rows, id 19 selected) test asserts the hit-map rect y and hit target match the row actually drawn. No production-code changes survived.
+- GREEN: all new tests pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.

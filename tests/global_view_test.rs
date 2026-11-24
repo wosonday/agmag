@@ -1073,6 +1073,77 @@ fn top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages() {
 }
 
 #[test]
+fn tiny_heights_two_and_three_stay_inside_main() {
+    let d = dense_overview_data();
+    for height in [2, 3] {
+        assert_everything_inside_main((140, height), &d);
+        assert_no_panel_overlap((140, height), &d);
+    }
+}
+
+#[test]
+fn scrolled_table_row_rects_match_drawn_rows() {
+    let mut d = data(&[Section::Terminals]);
+    for i in 0..45 {
+        d.snap
+            .as_mut()
+            .unwrap()
+            .terminals
+            .push(terminal(&format!("t{i}"), &format!("worker-{i}")));
+    }
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.sel_terminal = Some("t44".into());
+    let buf = render((140, 14), &state, &d, false);
+    let map = state.hit_map();
+    let (x, y) = find(&buf, "worker-44");
+    let rect = map
+        .rows
+        .iter()
+        .find(|(_, target)| matches!(target, RowTarget::Terminal(address) if address == "t44"))
+        .expect("selected terminal row")
+        .0;
+    assert_eq!(
+        rect.y,
+        y,
+        "hit row must sit on the drawn row:\n{}",
+        text(&buf)
+    );
+    assert_eq!(
+        hit(&map, x, y),
+        Some(Hit::Row(RowTarget::Terminal("t44".into()))),
+        "the selected row below the first page must be hit-testable:\n{}",
+        text(&buf)
+    );
+    let (ix, iy) = find(&buf, "worker-40");
+    assert_eq!(
+        hit(&map, ix, iy),
+        Some(Hit::Row(RowTarget::Terminal("t40".into()))),
+        "the first visible scrolled row must be hit-testable too"
+    );
+
+    let mut d = data(&[Section::Inbox]);
+    for i in 0..20 {
+        d.snap.as_mut().unwrap().inbox.push(InboxRow {
+            id: i,
+            ts_ms: NOW,
+            text: format!("item-{i}"),
+            ..InboxRow::default()
+        });
+    }
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    state.sel_inbox = Some(19);
+    let buf = render((140, 14), &state, &d, false);
+    let map = state.hit_map();
+    let (ix, iy) = find(&buf, "item-19");
+    assert_eq!(
+        hit(&map, ix, iy),
+        Some(Hit::Row(RowTarget::Inbox(19))),
+        "scrolled inbox row must be hit-testable:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
 fn empty_terminals_panel_is_three_rows() {
     let d = data(&[Section::Terminals]);
     let state = GlobalState::new(ThemeName::CatppuccinMocha);

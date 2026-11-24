@@ -902,7 +902,8 @@ mod tests {
     #[test]
     fn hit_map_prefers_borders_then_rows_then_panels() {
         let panel = Rect::new(0, 0, 20, 10);
-        let row = Rect::new(1, 1, 18, 1);
+        // The row reaches x = 20 and shares x = 19 with the border, so the priority is real.
+        let row = Rect::new(1, 1, 19, 1);
         let border = Rect::new(19, 0, 1, 10);
         let map = HitMap {
             panels: vec![(panel, HitPanel::Section(Section::Terminals))],
@@ -918,8 +919,14 @@ mod tests {
             Some(Hit::Row(RowTarget::Terminal("t1".into())))
         );
         assert_eq!(
+            hit(&map, 18, 1),
+            Some(Hit::Row(RowTarget::Terminal("t1".into()))),
+            "the row is still reachable just before the border"
+        );
+        assert_eq!(
             hit(&map, 19, 1),
-            Some(Hit::Border(BorderId::TopPairVertical))
+            Some(Hit::Border(BorderId::TopPairVertical)),
+            "border wins where the row and the border overlap"
         );
         assert_eq!(hit(&map, 20, 1), None, "the right edge is outside");
         assert_eq!(hit(&map, 0, 10), None, "the bottom edge is outside");

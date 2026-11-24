@@ -362,6 +362,17 @@ enum ApprovalCmd {
         task: String,
         action: String,
     },
+    /// Check whether an action is allowed (no TTY needed): exit 0 allowed, 5 requires human, 6 hard-prohibited
+    Check {
+        /// Action name (for example `spawn_worker`)
+        action: String,
+        /// Lane of the task grant
+        #[arg(long)]
+        lane: Option<String>,
+        /// Task of the task grant
+        #[arg(long)]
+        task: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -781,6 +792,50 @@ fn run(cli: Cli) -> Result<()> {
             let _ = emit(json, &serde_json::json!({"revoked": true}), || {
                 println!("Approval revoked.")
             });
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd: ApprovalCmd::Check { action, lane, task },
+        } => {
+            let decision = agmag::actions::decide(
+                &store,
+                &cfg()?,
+                &action,
+                lane.as_deref(),
+                task.as_deref(),
+                now,
+            )?;
+            let action = action.trim();
+            let _ = emit(
+                json,
+                &decision.to_json(action, lane.as_deref(), task.as_deref()),
+                || {
+                    println!(
+                        "{}",
+                        decision.human_line(action, lane.as_deref(), task.as_deref())
+                    )
+                },
+            );
+            store.log_action(
+                &ops::hc_terminal().unwrap_or_else(|| "agent".into()),
+                "approval_check",
+                &format!(
+                    "{}/{}:{action}",
+                    lane.as_deref().unwrap_or(""),
+                    task.as_deref().unwrap_or("")
+                ),
+                &format!("{} ({})", decision.decision.as_str(), decision.source),
+                decision.decision == agmag::actions::ApprovalDecision::Allowed,
+                now,
+            )?;
+            if decision.decision != agmag::actions::ApprovalDecision::Allowed {
+                return Err(agmag::actions::ApprovalRefused {
+                    decision: decision.decision,
+                    action: action.to_string(),
+                    source: decision.source,
+                }
+                .into());
+            }
             Ok(())
         }
         Cmd::Policy { state } => match state.as_str() {

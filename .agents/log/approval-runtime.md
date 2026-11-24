@@ -50,3 +50,20 @@
 - Xanh: `cargo test --test actions_test approval_grant_input` 1 passed;
   `cargo test --test cli_test approval_add_and_revoke` 1 passed; `cargo fmt --check` sạch.
 - Commit: `feat(approval): validate new grants and fix revoke TTY message`.
+
+### Step 3: `agm approval check` (RED → GREEN)
+- tests/cli_test.rs: thêm 5 test:
+  `approval_check_hard_prohibited_exits_6_with_json` (exit 6, JSON đủ 5 khóa, source `hard`),
+  `approval_check_requires_human_exits_5_with_json` (exit 5, lane/task giữ nguyên),
+  `approval_check_global_whitelist_exits_0` (providers.toml `delegated_actions`, action có khoảng trắng
+  quanh vẫn trim, source `global`), `approval_check_active_grant_exits_0_and_writes_nothing` (grant trong
+  agm.db → `grant:<id>`, vẫn đúng 1 hàng sau khi check), `approval_check_empty_action_fails` (exit 1).
+- Đỏ: `unrecognized subcommand 'check'` (exit 2).
+- src/actions.rs: `Decision::to_json` (đúng 5 khóa `decision/action/lane/task/source`) và `human_line`;
+  hằng `EXIT_APPROVAL_REQUIRES_HUMAN = 5`, `EXIT_APPROVAL_HARD_PROHIBITED = 6`; lỗi `ApprovalRefused`;
+  `exit_code` ánh xạ 5/6 (giữ 3 cho `BriefUndelivered`).
+- src/main.rs: `ApprovalCmd::Check { action, #[arg(long)] lane, #[arg(long)] task }` không đòi TTY; in JSON
+  theo `--json`/non-TTY (hoặc một dòng khi TTY), ghi một hàng action `approval_check`, rồi trả
+  `ApprovalRefused` khi không `allowed`. Chỉ đọc grant, không ghi grant.
+- Xanh: `cargo test --test cli_test approval_check` → 5 passed. `cargo fmt --check` sạch.
+- Commit: `feat(approval): add agm approval check with exit codes 5/6`.

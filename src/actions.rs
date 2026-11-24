@@ -54,6 +54,40 @@ pub struct Decision {
     pub source: String,
 }
 
+impl Decision {
+    /// JSON chung cho `agm approval check` và MCP `agm_approval_check` (action đã trim ở phía gọi).
+    pub fn to_json(
+        &self,
+        action: &str,
+        lane: Option<&str>,
+        task: Option<&str>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "decision": self.decision.as_str(),
+            "action": action,
+            "lane": lane,
+            "task": task,
+            "source": self.source,
+        })
+    }
+
+    /// Một dòng cho người dùng ở TTY.
+    pub fn human_line(&self, action: &str, lane: Option<&str>, task: Option<&str>) -> String {
+        let mut line = format!(
+            "{}: {action} (source: {})",
+            self.decision.as_str(),
+            self.source
+        );
+        if let Some(lane) = lane {
+            line.push_str(&format!(" lane={lane}"));
+        }
+        if let Some(task) = task {
+            line.push_str(&format!(" task={task}"));
+        }
+        line
+    }
+}
+
 /// Luật BOT-CEO §2.1: hard-prohibited luôn thắng; rồi whitelist toàn cục; rồi grant lane+task còn hiệu lực;
 /// còn lại cần người. `action` được trim trước khi so khớp.
 pub fn decide(
@@ -867,13 +901,51 @@ impl std::fmt::Display for BriefUndelivered {
 
 impl std::error::Error for BriefUndelivered {}
 
-/// Mã thoát cho lỗi CLI: `EXIT_BRIEF_UNDELIVERED` nếu là `BriefUndelivered` (kể cả đã bọc context), còn lại 1.
+/// Mã thoát khi quyết định là `requires_human` / `hard_prohibited` (agent đọc mã, không đọc câu chữ).
+pub const EXIT_APPROVAL_REQUIRES_HUMAN: u8 = 5;
+pub const EXIT_APPROVAL_HARD_PROHIBITED: u8 = 6;
+
+/// `agm approval check` đã in JSON nhưng hành động không được tự duyệt; `exit_code` ánh xạ 5/6.
+#[derive(Debug)]
+pub struct ApprovalRefused {
+    pub decision: ApprovalDecision,
+    pub action: String,
+    pub source: String,
+}
+
+impl std::fmt::Display for ApprovalRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.decision {
+            ApprovalDecision::HardProhibited => write!(
+                f,
+                "hành động {} bị cấm (hard-prohibited), luôn cần người",
+                self.action
+            ),
+            _ => write!(
+                f,
+                "cần người duyệt hành động {} (nguồn: {})",
+                self.action, self.source
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ApprovalRefused {}
+
+/// Mã thoát cho lỗi CLI: `EXIT_BRIEF_UNDELIVERED` nếu là `BriefUndelivered` (kể cả đã bọc context),
+/// 5/6 cho `ApprovalRefused`, còn lại 1.
 pub fn exit_code(err: &anyhow::Error) -> u8 {
     if err.downcast_ref::<BriefUndelivered>().is_some() {
-        EXIT_BRIEF_UNDELIVERED
-    } else {
-        1
+        return EXIT_BRIEF_UNDELIVERED;
     }
+    if let Some(refused) = err.downcast_ref::<ApprovalRefused>() {
+        return match refused.decision {
+            ApprovalDecision::Allowed => 0,
+            ApprovalDecision::RequiresHuman => EXIT_APPROVAL_REQUIRES_HUMAN,
+            ApprovalDecision::HardProhibited => EXIT_APPROVAL_HARD_PROHIBITED,
+        };
+    }
+    1
 }
 
 fn send_spawn_brief(

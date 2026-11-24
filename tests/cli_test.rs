@@ -976,3 +976,139 @@ fn approval_add_and_revoke_stay_tty_only_and_revoke_says_thu_hoi() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("TTY"));
 }
+
+#[test]
+fn approval_check_hard_prohibited_exits_6_with_json() {
+    let tmp = sandbox(None);
+    let out = agm(tmp.path(), &["approval", "check", "push", "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "decision": "hard_prohibited",
+            "action": "push",
+            "lane": null,
+            "task": null,
+            "source": "hard",
+        })
+    );
+}
+
+#[test]
+fn approval_check_requires_human_exits_5_with_json() {
+    let tmp = sandbox(None);
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "check",
+            "spawn_worker",
+            "--lane",
+            "lane-a",
+            "--task",
+            "task-a",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "decision": "requires_human",
+            "action": "spawn_worker",
+            "lane": "lane-a",
+            "task": "task-a",
+            "source": "none",
+        })
+    );
+}
+
+#[test]
+fn approval_check_global_whitelist_exits_0() {
+    let tmp = sandbox(None);
+    fs::write(
+        tmp.path().join("home/providers.toml"),
+        "[policy]\ndelegated_actions = [\"continue_review\"]\n",
+    )
+    .unwrap();
+    let out = agm(
+        tmp.path(),
+        &["approval", "check", "  continue_review  ", "--json"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "allowed");
+    assert_eq!(v["action"], "continue_review");
+    assert_eq!(v["source"], "global");
+}
+
+#[test]
+fn approval_check_active_grant_exits_0_and_writes_nothing() {
+    let tmp = sandbox(None);
+    assert!(agm(tmp.path(), &["policy", "status"]).status.success());
+    let id = {
+        let store =
+            agmag::store::Store::open(&tmp.path().join("home/agm.db")).expect("open agm.db");
+        store
+            .upsert_approval_grant(&agmag::store::ApprovalGrant {
+                lane: Some("lane-a".into()),
+                task: Some("task-a".into()),
+                action: "spawn_worker".into(),
+                approved_by: "user".into(),
+                approved_ms: 1,
+                expires_ms: None,
+                reason: "test".into(),
+                ..Default::default()
+            })
+            .unwrap()
+    };
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "check",
+            "spawn_worker",
+            "--lane",
+            "lane-a",
+            "--task",
+            "task-a",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "allowed");
+    assert_eq!(v["source"], format!("grant:{id}"));
+    let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+    assert_eq!(store.approval_grants(false, 0).unwrap().len(), 1);
+}
+
+#[test]
+fn approval_check_empty_action_fails() {
+    let tmp = sandbox(None);
+    let out = agm(tmp.path(), &["approval", "check", "  ", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("action"));
+}

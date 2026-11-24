@@ -1188,3 +1188,45 @@ fn draw_in_respects_area() {
         }
     }
 }
+
+#[test]
+fn single_child_connector_is_straight() {
+    let mut c = agent("c1", "ceo-one", 0);
+    c.role = None;
+    let mut w = agent("w1", "only-worker", 1);
+    w.role = Some("worker".into());
+    let d = data(vec![c, w]);
+    let buf = render((140, 36), &selected_state("c1"), &d, false);
+    let all = text(&buf);
+    assert!(
+        !all.contains('┼'),
+        "one child must not draw a cross junction:\n{all}"
+    );
+}
+
+#[test]
+fn hidden_cards_show_more_indicator() {
+    // Two CEO blocks stacked at 100x24 cannot show every card: say how many are hidden.
+    let mut agents = Vec::new();
+    for c in 0..2 {
+        let mut ceo = agent(&format!("c{c}"), &format!("ceo-{c}"), 0);
+        ceo.role = None;
+        agents.push(ceo);
+        for w in 0..3 {
+            let mut worker = agent(&format!("w{c}{w}"), &format!("w-{c}-{w}"), 1);
+            worker.role = Some("worker".into());
+            agents.push(worker);
+        }
+    }
+    let mut orphan = agent("x1", "lost-worker", 0);
+    orphan.role = Some("worker".into());
+    agents.push(orphan);
+    let d = data(agents);
+    let buf = render((100, 24), &selected_state("c0"), &d, false);
+    let all = text(&buf);
+    assert!(
+        !all.contains("lost-worker"),
+        "test assumes the orphan is hidden:\n{all}"
+    );
+    assert!(all.contains("more"), "no hidden-cards indicator:\n{all}");
+}

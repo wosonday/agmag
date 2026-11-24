@@ -593,6 +593,7 @@ fn draw_orchestration(
     let nodes = agent_nodes(&view.agents);
     let blocks = layout::ceo_blocks(&nodes);
     let parents = flows::parents(&view.agents);
+    let mut drawn = 0usize;
     match layout::block_widths(&blocks, inner.width, CARD_MIN_W, CARD_GAP) {
         Some(widths) => {
             let mut x = inner.x;
@@ -603,7 +604,7 @@ fn draw_orchestration(
                     width: width.min(inner.right().saturating_sub(x)),
                     height: inner.height,
                 };
-                draw_block(frame, rect, block, &parents, state, data, ctx);
+                draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn);
                 x = x.saturating_add(width).saturating_add(CARD_GAP);
             }
         }
@@ -622,9 +623,26 @@ fn draw_orchestration(
                     width: inner.width,
                     height: inner.bottom().saturating_sub(y),
                 };
-                y = draw_block(frame, rect, block, &parents, state, data, ctx);
+                y = draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn);
             }
         }
+    }
+    // Cards that did not fit: say so on the bottom border instead of hiding them silently.
+    let hidden = view.agents.len().saturating_sub(drawn);
+    if hidden > 0 && area.height > 1 && area.width > 4 {
+        let note = format!(" ↓ {hidden} more ");
+        let width = (note.chars().count() as u16).min(area.width.saturating_sub(4));
+        render_text(
+            frame,
+            Rect {
+                x: area.x + 2,
+                y: area.bottom() - 1,
+                width,
+                height: 1,
+            },
+            &note,
+            Style::new().fg(ctx.theme.warn),
+        );
     }
 }
 
@@ -637,6 +655,7 @@ fn draw_block(
     state: &BoardState,
     data: &BoardData,
     ctx: Ctx,
+    drawn: &mut usize,
 ) -> u16 {
     let Some(view) = &data.view else {
         return area.y;
@@ -668,6 +687,7 @@ fn draw_block(
     };
 
     let (rows, end_y) = block_card_rows(cards_area, &block.levels);
+    *drawn += rows.iter().map(|row| row.cards.len()).sum::<usize>();
     for row in &rows {
         for slot in &row.cards {
             draw_card(
@@ -958,6 +978,8 @@ fn draw_connectors(
         let is_parent = adjacent && x == parent_cx;
         let is_child = child_centres.contains(&x);
         let symbol = match (is_parent, is_child) {
+            // Parent straight above its only child: a plain vertical, not a junction.
+            (true, true) if bus_start == bus_end => glyphs.vertical,
             (true, true) => glyphs.cross,
             (true, false) => glyphs.up,
             (false, true) if x == bus_start => glyphs.corner_left,

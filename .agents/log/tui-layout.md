@@ -70,3 +70,9 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - RED: `output_overlay_hides_covered_hit_entries` (140x40, 11 terminals, Output open): no `HitPanel::Output` existed and compile failed on the missing type/border variant.
 - CODE: `HitPanel { Section, Output }` replaces `Section` in `HitMap.panels`/`Hit::Panel` (`From<Section>` keeps call sites simple); added `BorderId::OutputTop`. Extracted `output_rect` so drawing and hit mapping agree; `draw_global` clips away entries under the overlay, then records the Output panel and its top boundary.
 - GREEN: new test passes (covered panels/rows/borders clipped, Output and its border hit-testable); `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+
+### Item 6 - desired rows for empty Terminals and top-pair columns
+
+- RED: `empty_terminals_panel_is_three_rows` (empty Terminals was 4 rows) and `top_pair_bridged_sections_use_their_column_width` (Usage in a 60-column top-pair column was sized from the 120-column window: 7 rows instead of ≥8). Re-verified the second test fails with the old width argument before restoring the fix.
+- CODE: `section_desired_rows` counts one `-` line (3 rows with borders) for an empty Terminals; `pair_column_widths` mirrors `draw_sections`' two columns and is used both to measure bridged bodies in `section_layout` and to build the same constraints in `draw_sections`.
+- GREEN: both tests pass; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.

@@ -55,7 +55,7 @@ pub fn draw_global(
         now_ms: data.now_ms,
     };
     let (main, cmd, footer) = split_bottom(area);
-    let (sections, messages, layout) = split_messages(main, data);
+    let (sections, messages, layout) = split_messages(main, data, ctx);
     draw_sections(frame, sections, &layout, state, data, ctx);
     draw_messages(frame, messages, state, data, ctx);
     if messages.height > 0 {
@@ -160,7 +160,13 @@ fn section_desired_rows(sec: Section, data: &GlobalData, width: u16) -> u16 {
         Section::Terminals => data
             .snap
             .as_ref()
-            .map(|snap| snap.terminals.len().max(1) + 1) // header + rows (or one `-`)
+            .map(|snap| {
+                if snap.terminals.is_empty() {
+                    1 // one muted `-` line, no table header
+                } else {
+                    snap.terminals.len() + 1 // header + rows
+                }
+            })
             .unwrap_or(1),
         Section::Inbox => data
             .snap
@@ -188,8 +194,21 @@ fn section_desired_rows(sec: Section, data: &GlobalData, width: u16) -> u16 {
         .clamp(MIN_SECTION_H, u16::MAX - 2)
 }
 
+/// Widths of the two top-panel columns, mirroring the constraints used by `draw_sections` so a
+/// section's desired rows are measured against the width it is actually drawn at.
+fn pair_column_widths(width: u16, chosen: &[Section], data: &GlobalData, ctx: Ctx) -> (u16, u16) {
+    let quota_w = quota_panel_width(data, ctx, width);
+    if chosen[0] == Section::Quota {
+        (quota_w, width.saturating_sub(quota_w))
+    } else if chosen[1] == Section::Quota {
+        (width.saturating_sub(quota_w), quota_w)
+    } else {
+        (width / 2, width - width / 2)
+    }
+}
+
 /// Fit every section group into `main` at once: Messages gets what nobody needs.
-fn section_layout(main: Rect, data: &GlobalData) -> LayoutHeights {
+fn section_layout(main: Rect, data: &GlobalData, ctx: Ctx) -> LayoutHeights {
     let mut chosen = visible_sections(&data.view);
     chosen.pop(); // Messages is drawn separately; it stays the last group below.
     let wide = main.width >= 120 && chosen.len() >= 2;
@@ -202,8 +221,9 @@ fn section_layout(main: Rect, data: &GlobalData) -> LayoutHeights {
         let cap = (u32::from(main.height.saturating_sub(MESSAGES_MIN))
             .saturating_mul(PAIR_CAP_PERCENT)
             / 100) as u16;
-        let pair = section_desired_rows(chosen[0], data, main.width)
-            .max(section_desired_rows(chosen[1], data, main.width))
+        let (left_w, right_w) = pair_column_widths(main.width, &chosen, data, ctx);
+        let pair = section_desired_rows(chosen[0], data, left_w)
+            .max(section_desired_rows(chosen[1], data, right_w))
             .min(cap)
             .max(MIN_SECTION_H);
         desired.push(pair);
@@ -226,8 +246,8 @@ fn section_layout(main: Rect, data: &GlobalData) -> LayoutHeights {
 }
 
 /// Sections get everything except the height Messages needs, which is fitted with the rest.
-fn split_messages(main: Rect, data: &GlobalData) -> (Rect, Rect, LayoutHeights) {
-    let mut layout = section_layout(main, data);
+fn split_messages(main: Rect, data: &GlobalData, ctx: Ctx) -> (Rect, Rect, LayoutHeights) {
+    let mut layout = section_layout(main, data, ctx);
     // `fit_heights` keeps its one-panel floor even for a window shorter than the floor. The
     // floor may win over the requested total, but no rect may spill into the command bar/footer.
     layout.messages = layout.messages.min(main.height);
@@ -361,19 +381,8 @@ fn draw_sections(
             width: area.width,
             height: pair_h.min(area.height),
         };
-        let constraints = if chosen[0] == Section::Quota {
-            [
-                Constraint::Length(quota_panel_width(data, ctx, pair.width)),
-                Constraint::Min(0),
-            ]
-        } else if chosen[1] == Section::Quota {
-            [
-                Constraint::Min(0),
-                Constraint::Length(quota_panel_width(data, ctx, pair.width)),
-            ]
-        } else {
-            [Constraint::Percentage(50), Constraint::Percentage(50)]
-        };
+        let (left_w, right_w) = pair_column_widths(pair.width, &chosen, data, ctx);
+        let constraints = [Constraint::Length(left_w), Constraint::Length(right_w)];
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(constraints)

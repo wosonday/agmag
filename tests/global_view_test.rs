@@ -1073,6 +1073,40 @@ fn top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages() {
 }
 
 #[test]
+fn empty_terminals_panel_is_three_rows() {
+    let d = data(&[Section::Terminals]);
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    let (_, _, _, h) = panel_rect(&buf, "Terminals");
+    assert_eq!(
+        h,
+        3,
+        "empty Terminals is a border and one dash line:\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
+fn top_pair_bridged_sections_use_their_column_width() {
+    let mut d = data(&[Section::Usage, Section::System]);
+    let snap = d.snap.as_mut().unwrap();
+    snap.usage_summary.incomplete_coverage = true;
+    snap.usage_summary.four_months_start_day =
+        "2026-01-01 (then a deliberately long label so the warning wraps in a half-width column)"
+            .repeat(3);
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((120, 40), &state, &d, false);
+    // Measured at the real 60-column width the warning wraps many times; at 120 columns it fits
+    // on far fewer lines, which used to leave the panel too short for its content.
+    let (_, _, _, usage_h) = panel_rect(&buf, "Usage");
+    assert!(
+        usage_h >= 8,
+        "Usage was sized for the whole window, not its 60-column half: {usage_h}\n{}",
+        text(&buf)
+    );
+}
+
+#[test]
 fn output_overlay_hides_covered_hit_entries() {
     let mut d = data(&Section::DEFAULT);
     let snap = d.snap.as_mut().unwrap();

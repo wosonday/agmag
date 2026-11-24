@@ -228,6 +228,11 @@ enum Cmd {
         #[arg(value_parser = ["on", "off", "status"])]
         state: String,
     },
+    /// Manage delegated user approvals
+    Approval {
+        #[command(subcommand)]
+        cmd: ApprovalCmd,
+    },
     /// Manually link a terminal to a session
     Link {
         /// Terminal address
@@ -331,6 +336,31 @@ enum BudgetCmd {
     Rm {
         /// Budget scope to remove
         scope: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApprovalCmd {
+    /// Grant an action for one lane/task. This command requires a user TTY.
+    Add {
+        lane: String,
+        task: String,
+        action: String,
+        #[arg(long)]
+        expires_ms: Option<i64>,
+        #[arg(long, default_value = "user approved")]
+        reason: String,
+    },
+    /// List active or all grants
+    Ls {
+        #[arg(long)]
+        all: bool,
+    },
+    /// Revoke a lane/task/action grant
+    Revoke {
+        lane: String,
+        task: String,
+        action: String,
     },
 }
 
@@ -682,6 +712,94 @@ fn run(cli: Cli) -> Result<()> {
             if !store.rm_budget(&scope)? {
                 anyhow::bail!("không có ngân sách {scope}");
             }
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd:
+                ApprovalCmd::Add {
+                    lane,
+                    task,
+                    action,
+                    expires_ms,
+                    reason,
+                },
+        } => {
+            if !std::io::stdin().is_terminal() {
+                anyhow::bail!("approval add chỉ người dùng TTY mới được tạo");
+            }
+            let cfg = cfg()?;
+            let global_actions: Vec<&str> = cfg
+                .policy
+                .delegated_actions
+                .iter()
+                .map(String::as_str)
+                .collect();
+            let decision = agmag::actions::evaluate_delegated_approval(
+                &action,
+                Some(&lane),
+                Some(&task),
+                &global_actions,
+                &[],
+                Some(&lane),
+                Some(&task),
+                true,
+            );
+            if decision != agmag::actions::ApprovalDecision::Allowed {
+                anyhow::bail!("approval add bị từ chối: {decision:?}");
+            }
+            let id = store.upsert_approval_grant(&agmag::store::ApprovalGrant {
+                lane: Some(lane.clone()),
+                task: Some(task.clone()),
+                action: action.clone(),
+                approved_by: "user".into(),
+                approved_ms: now,
+                expires_ms,
+                revoked_ms: None,
+                reason,
+                ..Default::default()
+            })?;
+            store.log_action(
+                "user",
+                "approval_add",
+                &format!("{lane}/{task}:{action}"),
+                "approved",
+                true,
+                now,
+            )?;
+            let _ = emit(json, &serde_json::json!({"id": id}), || {
+                println!("Approval #{id} added.")
+            });
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd: ApprovalCmd::Ls { all },
+        } => {
+            let grants = store.approval_grants(!all, now)?;
+            let _ = emit(json, &serde_json::json!({"grants": grants}), || {
+                for grant in grants {
+                    println!("{:?}", grant);
+                }
+            });
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd: ApprovalCmd::Revoke { lane, task, action },
+        } => {
+            if !std::io::stdin().is_terminal() {
+                anyhow::bail!("approval revoke chỉ người dùng TTY mới được tạo");
+            }
+            store.revoke_approval_grant(&lane, &task, &action, now)?;
+            store.log_action(
+                "user",
+                "approval_revoke",
+                &format!("{lane}/{task}:{action}"),
+                "revoked",
+                true,
+                now,
+            )?;
+            let _ = emit(json, &serde_json::json!({"revoked": true}), || {
+                println!("Approval revoked.")
+            });
             Ok(())
         }
         Cmd::Policy { state } => match state.as_str() {

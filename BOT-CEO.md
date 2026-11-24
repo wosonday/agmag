@@ -38,6 +38,16 @@ Chi tiết đầy đủ về model, phân quyền bộ nhớ và Ponytail nằm 
 
 *Lưu ý:* [NVIDIA nền](docs/NVIDIA-BACKGROUND.md) chỉ đọc, không chặn merge, tối đa 1 việc thủ công trên cả nhóm alias.
 
+## 2.1. Ủy quyền CEO theo whitelist
+
+CEO chỉ được auto-approve hành động đã nằm trong whitelist toàn cục hoặc grant theo task:
+
+- Cấu hình toàn cục dùng `[policy].delegated_actions` trong `providers.toml`.
+- Grant theo task dùng `agm approval add <lane> <task> <action> ...` và chỉ người dùng TTY được tạo/revoke.
+- Grant task không được vượt lane/task/action đã ủy quyền và chỉ được áp dụng trong thời hạn còn hiệu lực.
+- Hành động ngoài whitelist hoặc grant hết hiệu lực gửi `HỎI/CHẶN` và dừng ở điểm cần quyết định.
+- Các hành động rủi ro như merge/push/deploy, Extra Usage, thay đổi billing/quota, kill Claude/Codex, đổi harness hoặc tự mở rộng grant là `hard prohibited` dù whitelist có ghi.
+
 ---
 
 ## 3. Giao thức `BRANCHES.md` và khóa ghi song song

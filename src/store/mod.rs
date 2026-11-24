@@ -9,14 +9,14 @@ use crate::model::{
 
 mod project;
 mod v2;
-pub use v2::{BudgetRow, InboxRow, MessageRow, TerminalRow};
+pub use v2::{ApprovalGrant, BudgetRow, InboxRow, MessageRow, TerminalRow};
 
 pub struct Store {
     conn: Connection,
 }
 
 /// `PRAGMA user_version` mà mã này tạo ra.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
@@ -117,6 +117,10 @@ impl Store {
                 // v4: reasoning effort / variant of the session's model, shown in `agm tui`.
                 Self::add_column_if_missing(&conn, "sessions", "effort", "TEXT")?;
                 conn.execute_batch("PRAGMA user_version = 4;")?;
+            }
+            if version < 5 {
+                conn.execute_batch(include_str!("schema_v5.sql"))?;
+                conn.execute_batch("PRAGMA user_version = 5;")?;
             }
             Ok(())
         };

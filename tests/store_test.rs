@@ -178,7 +178,7 @@ fn open_creates_file() -> anyhow::Result<()> {
         store
             .conn()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-        4
+        5
     );
     assert_eq!(
         store
@@ -299,6 +299,7 @@ fn dedupe_is_scoped_to_session_and_no_future_tables_exist() -> anyhow::Result<()
         tables,
         [
             "actions",
+            "approval_grants",
             "budgets",
             "cursors",
             "inbox",
@@ -338,7 +339,7 @@ fn concurrent_open_on_fresh_db_all_succeed() -> anyhow::Result<()> {
         store
             .conn()
             .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-        4
+        5
     );
     Ok(())
 }

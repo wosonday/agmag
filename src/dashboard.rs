@@ -43,7 +43,8 @@ pub struct TermView {
     pub model: String,
     /// Reasoning effort / variant (`high`, `medium`, ...); "" when unknown.
     pub effort: String,
-    /// Working directory: terminal cwd, else the linked session's cwd.
+    /// Working directory: the linked session's cwd (where the agent works now), else the terminal's
+    /// cwd (the pane's start directory, which herdr keeps even after the agent moves elsewhere).
     pub cwd: String,
     /// herdr location like `hc ls` shows it (`agmag / agm-ceo`); "" when unknown.
     pub place: String,
@@ -145,7 +146,10 @@ pub fn snapshot(store: &Store, cfg: &Config, now_ms: i64) -> Result<Snapshot> {
             model,
             effort,
             place: t.labels.get("where").cloned().unwrap_or_default(),
-            cwd: t.cwd.or(session_cwd).unwrap_or_default(),
+            cwd: session_cwd
+                .filter(|c| !c.is_empty())
+                .or(t.cwd)
+                .unwrap_or_default(),
             last_msg,
             tokens,
             context_pct: ctx,

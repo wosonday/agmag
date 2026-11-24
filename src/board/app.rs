@@ -11,10 +11,12 @@ use anyhow::Result;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::layout::{Position, Rect};
 
 use super::cmd::{Dispatched, NoteKind, Outcome};
-use super::global::{Focus, GEffect, GlobalData, GlobalState, Popup};
+use super::global::{CmdKey, Focus, GEffect, GlobalData, GlobalState, Popup};
 use super::global_view;
+use super::state::{Mode, Panel};
 use super::{BoardKeyResult, BoardScreen, theme};
 use crate::config::Config;
 use crate::dashboard::{self, Section};
@@ -114,6 +116,7 @@ pub fn run_app(
         let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         terminal.clear()?;
         let ascii = std::env::var("AGM_ASCII").as_deref() == Ok("1");
+        let mut board_cmd_focus = false;
 
         loop {
             let _ = scan(store);
@@ -126,7 +129,14 @@ pub fn run_app(
             {
                 board.refresh(store, cfg, super::clock_ms());
             }
-            draw(&mut terminal, &screen, &state, &data, ascii)?;
+            draw(
+                &mut terminal,
+                &screen,
+                &state,
+                &data,
+                board_cmd_focus,
+                ascii,
+            )?;
 
             let until = Instant::now() + refresh;
             loop {
@@ -141,11 +151,17 @@ pub fn run_app(
                             return Ok(());
                         }
                         let next = if let Screen::Board(board) = &mut screen {
-                            match board.on_key(key, store, hc, super::clock_ms()) {
-                                BoardKeyResult::Leave => Next::Global(board.theme()),
-                                BoardKeyResult::Stay if board.needs_refresh() => Next::Restart,
-                                BoardKeyResult::Stay => Next::Redraw,
-                            }
+                            handle_board_key(
+                                key,
+                                board,
+                                store,
+                                hc,
+                                &mut state,
+                                &mut data,
+                                &mut board_cmd_focus,
+                                dispatch,
+                                super::clock_ms(),
+                            )
                         } else {
                             match handle_global_key(key, store, &mut state, &mut data, dispatch) {
                                 AppAction::Stay => Next::Redraw,
@@ -169,7 +185,14 @@ pub fn run_app(
                         match next {
                             Next::Quit => return Ok(()),
                             Next::Redraw => {
-                                draw(&mut terminal, &screen, &state, &data, ascii)?;
+                                draw(
+                                    &mut terminal,
+                                    &screen,
+                                    &state,
+                                    &data,
+                                    board_cmd_focus,
+                                    ascii,
+                                )?;
                             }
                             Next::Restart => break,
                             Next::Global(board_theme) => {
@@ -179,11 +202,15 @@ pub fn run_app(
                                 screen = Screen::Global;
                                 state.theme = board_theme;
                                 state.focus = Focus::CmdLine;
+                                board_cmd_focus = false;
+                                data.output = None;
+                                state.output_scroll = 0;
                                 break;
                             }
                             Next::Board(key) => {
                                 data.output = None;
                                 state.output_scroll = 0;
+                                board_cmd_focus = false;
                                 screen = Screen::Board(Box::new(BoardScreen::new(
                                     Some(key),
                                     state.theme,
@@ -192,7 +219,14 @@ pub fn run_app(
                             }
                         }
                     }
-                    Event::Resize(_, _) => draw(&mut terminal, &screen, &state, &data, ascii)?,
+                    Event::Resize(_, _) => draw(
+                        &mut terminal,
+                        &screen,
+                        &state,
+                        &data,
+                        board_cmd_focus,
+                        ascii,
+                    )?,
                     _ => {}
                 }
             }
@@ -411,19 +445,222 @@ fn draw(
     screen: &Screen,
     state: &GlobalState,
     data: &GlobalData,
+    board_cmd_focus: bool,
     ascii: bool,
 ) -> Result<()> {
-    terminal.draw(|frame| match screen {
+    terminal.draw(|frame| draw_frame(frame, screen, state, data, board_cmd_focus, ascii))?;
+    Ok(())
+}
+
+fn draw_frame(
+    frame: &mut ratatui::Frame,
+    screen: &Screen,
+    state: &GlobalState,
+    data: &GlobalData,
+    board_cmd_focus: bool,
+    ascii: bool,
+) {
+    match screen {
         Screen::Global => {
             let palette = theme::theme(state.theme);
             global_view::draw_global(frame, state, data, &palette, ascii);
         }
         Screen::Board(board) => {
+            let area = frame.area();
+            if area.width == 0 || area.height == 0 {
+                return;
+            }
             let palette = theme::theme(board.theme());
-            board.draw(frame, &palette, ascii);
+            let footer_h = area.height.min(1);
+            let cmd_h = area.height.saturating_sub(1).min(1);
+            let main_h = area.height.saturating_sub(footer_h + cmd_h);
+            let board_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: area.height.saturating_sub(1),
+            };
+            let main_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: main_h,
+            };
+            let cmd_area = Rect {
+                x: area.x,
+                y: area.y + main_h,
+                width: area.width,
+                height: cmd_h,
+            };
+            let footer_area = Rect {
+                x: area.x,
+                y: area.y + main_h + cmd_h,
+                width: area.width,
+                height: footer_h,
+            };
+            super::view::draw_in(
+                frame,
+                board_area,
+                &board.state,
+                &board.data,
+                &palette,
+                ascii,
+            );
+            if let Some(output) = &data.output {
+                global_view::draw_output_overlay(
+                    frame,
+                    main_area,
+                    output,
+                    state.output_scroll,
+                    &palette,
+                    ascii,
+                );
+            }
+            let mut cursor = global_view::draw_cmdline_bar(
+                frame,
+                cmd_area,
+                &state.cmd,
+                state.popup.is_none() && board_cmd_focus,
+                &palette,
+            );
+            let board_note = board.state.note.as_ref().map(|n| {
+                (
+                    if n.ok { NoteKind::Ok } else { NoteKind::Err },
+                    n.text.clone(),
+                )
+            });
+            let note = state.note.as_ref().or(board_note.as_ref());
+            let help = if ascii {
+                " up/down select  tab panel  enter open  r reply  d done  s send  / filter  : cmd  t theme  q back"
+            } else {
+                " ↑↓ select  tab panel  ⏎ open  r reply  d done  s send  / filter  : cmd  t theme  q back"
+            };
+            global_view::draw_footer_bar(frame, footer_area, note, help, &palette);
+            if let Some(pos) = global_view::draw_confirm_popup(frame, area, state, &palette, ascii)
+            {
+                cursor = Some(pos);
+            }
+            if let Some(pos) = cursor {
+                let x = pos.x.min(area.right().saturating_sub(1));
+                let y = pos.y.min(area.bottom().saturating_sub(1));
+                frame.set_cursor_position(Position::new(x, y));
+            }
         }
-    })?;
-    Ok(())
+    }
+}
+
+fn run_board_dispatch(
+    line: &str,
+    board: &mut Box<BoardScreen>,
+    state: &mut GlobalState,
+    data: &mut GlobalData,
+    board_cmd_focus: &mut bool,
+    dispatch: &mut dyn FnMut(&str) -> Dispatched,
+) -> Next {
+    let dispatched = dispatch(line);
+    let quit = dispatched.outcome == Outcome::Quit;
+    let refresh = effect_requests_refresh(&dispatched.outcome);
+    let open_board = apply_dispatched(state, data, dispatched);
+    if quit {
+        Next::Quit
+    } else if let Some(key) = open_board {
+        **board = BoardScreen::new(Some(key), board.theme());
+        *board_cmd_focus = false;
+        Next::Restart
+    } else if refresh {
+        Next::Restart
+    } else {
+        Next::Redraw
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_board_key(
+    key: KeyEvent,
+    board: &mut Box<BoardScreen>,
+    store: &Store,
+    hc: &dyn Hc,
+    state: &mut GlobalState,
+    data: &mut GlobalData,
+    board_cmd_focus: &mut bool,
+    dispatch: &mut dyn FnMut(&str) -> Dispatched,
+    now_ms: i64,
+) -> Next {
+    if key.kind == KeyEventKind::Release {
+        return Next::Redraw;
+    }
+    if state.popup.is_some() {
+        return match state.handle_popup_key(key) {
+            GEffect::Run(line) => {
+                run_board_dispatch(&line, board, state, data, board_cmd_focus, dispatch)
+            }
+            GEffect::Quit => Next::Quit,
+            _ => Next::Redraw,
+        };
+    }
+    if *board_cmd_focus {
+        return match state.cmd.on_key(key) {
+            CmdKey::Submit(line) => {
+                run_board_dispatch(&line, board, state, data, board_cmd_focus, dispatch)
+            }
+            CmdKey::Esc => {
+                *board_cmd_focus = false;
+                data.output = None;
+                state.output_scroll = 0;
+                Next::Redraw
+            }
+            CmdKey::Edited | CmdKey::SubmitEmpty => Next::Redraw,
+            CmdKey::Unhandled => match key.code {
+                KeyCode::PageUp => {
+                    if data.output.is_some() {
+                        state.output_scroll = state.output_scroll.saturating_sub(5);
+                    }
+                    Next::Redraw
+                }
+                KeyCode::PageDown => {
+                    if data.output.is_some() {
+                        state.output_scroll = state.output_scroll.saturating_add(5);
+                    }
+                    Next::Redraw
+                }
+                KeyCode::Tab => {
+                    *board_cmd_focus = false;
+                    board.state.panel = Panel::Projects;
+                    Next::Redraw
+                }
+                KeyCode::BackTab => {
+                    *board_cmd_focus = false;
+                    board.state.panel = Panel::Inbox;
+                    Next::Redraw
+                }
+                _ => Next::Redraw,
+            },
+        };
+    }
+    if data.output.is_some() && key.code == KeyCode::Esc {
+        data.output = None;
+        state.output_scroll = 0;
+        return Next::Redraw;
+    }
+    if board.state.mode == Mode::Normal {
+        state.note = None;
+        if key.code == KeyCode::Char(':')
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
+        {
+            *board_cmd_focus = true;
+            return Next::Redraw;
+        }
+        if key.code == KeyCode::Tab && board.state.panel == Panel::Inbox {
+            *board_cmd_focus = true;
+            return Next::Redraw;
+        }
+    }
+    match board.on_key(key, store, hc, now_ms) {
+        BoardKeyResult::Leave => Next::Global(board.theme()),
+        BoardKeyResult::Stay if board.needs_refresh() => Next::Restart,
+        BoardKeyResult::Stay => Next::Redraw,
+    }
 }
 
 #[cfg(test)]
@@ -580,5 +817,178 @@ mod tests {
             terminal_project(&data, "t7", ""),
             Err("t7 has no project".to_string())
         );
+    }
+
+    fn key_ev(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    struct FakeHc;
+
+    impl Hc for FakeHc {
+        fn ls(&self, _all: bool) -> Result<Vec<serde_json::Value>> {
+            Ok(vec![])
+        }
+        fn get(&self, _terminal: &str) -> Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+        fn send(
+            &self,
+            _terminal: &str,
+            _text: &str,
+            _if_idle: bool,
+            _force: bool,
+        ) -> Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+        fn run(&self, _spec: &crate::hc::RunSpec) -> Result<serde_json::Value> {
+            Ok(serde_json::Value::Null)
+        }
+        fn kill(&self, _terminal: &str) -> Result<()> {
+            Ok(())
+        }
+        fn interrupt(&self, _terminal: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn fake_board_screen() -> Box<BoardScreen> {
+        Box::new(BoardScreen::new(
+            Some(pk("agmag")),
+            theme::ThemeName::CatppuccinMocha,
+        ))
+    }
+
+    #[test]
+    fn board_in_app_shows_command_bar() {
+        let screen = Screen::Board(fake_board_screen());
+        let state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let data = GlobalData::default();
+        let backend = ratatui::backend::TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_frame(f, &screen, &state, &data, false, false))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let cmd_row: String = (0..buf.area.width).map(|x| buf[(x, 22)].symbol()).collect();
+        assert!(
+            cmd_row.contains("agm> "),
+            "board screen in app missing command bar on row above footer: {cmd_row:?}"
+        );
+    }
+
+    #[test]
+    fn colon_focuses_board_command_bar() {
+        let store = Store::open_in_memory().unwrap();
+        let hc = FakeHc;
+        let mut board = fake_board_screen();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        let mut cmd_focus = false;
+        let mut noop = |_: &str| Dispatched {
+            outcome: Outcome::None,
+            view: vec![],
+        };
+        let next = handle_board_key(
+            key_ev(KeyCode::Char(':')),
+            &mut board,
+            &store,
+            &hc,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut noop,
+            0,
+        );
+        assert!(matches!(next, Next::Redraw));
+        assert!(cmd_focus, "':' must focus the board command bar");
+    }
+
+    #[test]
+    fn board_command_bar_enter_runs_dispatch() {
+        let store = Store::open_in_memory().unwrap();
+        let hc = FakeHc;
+        let mut board = fake_board_screen();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        let mut cmd_focus = true;
+        let mut recorded = Vec::new();
+        let mut fake_dispatch = |line: &str| {
+            recorded.push(line.to_string());
+            Dispatched {
+                outcome: Outcome::Note(NoteKind::Ok, "ok-note".into()),
+                view: vec![],
+            }
+        };
+        for c in "ls".chars() {
+            handle_board_key(
+                key_ev(KeyCode::Char(c)),
+                &mut board,
+                &store,
+                &hc,
+                &mut state,
+                &mut data,
+                &mut cmd_focus,
+                &mut fake_dispatch,
+                0,
+            );
+        }
+        let next = handle_board_key(
+            key_ev(KeyCode::Enter),
+            &mut board,
+            &store,
+            &hc,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut fake_dispatch,
+            0,
+        );
+        assert_eq!(recorded, vec!["ls".to_string()]);
+        assert_eq!(state.note, Some((NoteKind::Ok, "ok-note".into())));
+        assert!(matches!(next, Next::Restart));
+    }
+
+    #[test]
+    fn esc_returns_to_board_keys() {
+        let store = Store::open_in_memory().unwrap();
+        let hc = FakeHc;
+        let mut board = fake_board_screen();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        let mut cmd_focus = true;
+        let mut noop = |_: &str| Dispatched {
+            outcome: Outcome::None,
+            view: vec![],
+        };
+        let next = handle_board_key(
+            key_ev(KeyCode::Esc),
+            &mut board,
+            &store,
+            &hc,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut noop,
+            0,
+        );
+        assert!(
+            matches!(next, Next::Redraw),
+            "esc in board command bar must stay on board, not leave"
+        );
+        assert!(!cmd_focus, "esc must return focus to board panels");
+        // Pressing 'q' now that we're unfocused runs the board key (leaves board).
+        let next = handle_board_key(
+            key_ev(KeyCode::Char('q')),
+            &mut board,
+            &store,
+            &hc,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut noop,
+            0,
+        );
+        assert!(matches!(next, Next::Global(_)));
     }
 }

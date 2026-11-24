@@ -49,3 +49,15 @@ Task: `.agents/tasks/hide-idle-projects.md`. Ẩn dự án idle (`live_agents ==
   idle trong `cd` và cột dự án của bảng, dòng báo số lượng, và `cd <name>` vẫn mở được chúng.
 - `git ls-files --eol CHANGELOG.md` = `i/crlf w/crlf` (diff đúng 1 dòng thêm, không đổi toàn tệp).
 - Commit: `docs(changelog): note idle projects are hidden from lists`.
+
+### Gates (final, 2026-11-24)
+- `cargo fmt --check`: lần đầu báo 1 diff trong `tests/project_test.rs` (rustfmt gộp lời gọi
+  `split_idle(…)` thành một dòng); đã sửa, chạy lại sạch (exit 0).
+- `cargo clippy --all-targets -- -D warnings`: sạch (exit 0).
+- `cargo test`: mọi test binary xanh, 0 failed (exit 0), gồm project_test `split_idle_*` 6/6,
+  project_render_test 14/14, board_runtime_test 7/7, `--bin agm` `cd_list_*` 1/1.
+- `git ls-files --eol` trước mỗi commit: không có `w/mixed`; CHANGELOG.md `i/crlf w/crlf`,
+  còn lại (src/project.rs, src/project_render.rs, src/tui_cmd.rs, src/board/mod.rs, tests/*, log) `i/lf w/lf`.
+- Không push / merge / đổi branch; làm việc trên `feat/hide-idle-projects` tại
+  D:/Project/agmag.wt/ghost-projects.
+- Commit: `chore: record final gates for hide-idle-projects`.

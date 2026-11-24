@@ -198,10 +198,7 @@ fn split_idle_counts_only_the_idle_projects_that_were_hidden() {
     live.live_agents = 1;
     let keep = summary(r"D:\wt\keep", "keep");
     let ghost = summary(r"D:\wt\ghost", "ghost");
-    let (visible, hidden) = split_idle(
-        vec![keep.clone(), live.clone(), ghost],
-        Some(&keep.key),
-    );
+    let (visible, hidden) = split_idle(vec![keep.clone(), live.clone(), ghost], Some(&keep.key));
     assert_eq!(visible, vec![keep, live]);
     assert_eq!(hidden, 1);
 }

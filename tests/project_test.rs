@@ -1080,3 +1080,66 @@ fn load_project_view_carries_task_and_role() -> anyhow::Result<()> {
     assert_eq!(a2.role, None);
     Ok(())
 }
+
+/// A pane opened in one repository whose agent now works in another (herdr keeps the pane's start
+/// cwd): the live session's cwd decides the project, so `cd agmag` does not show SpySWAT's CEO.
+#[test]
+fn live_session_cwd_beats_the_pane_start_cwd() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    let now: i64 = 1_000_000;
+    let sid = store.session_id_for_path(Source::Claude, "p-spy")?;
+    store.set_session_identity(sid, "conv-spy", Some(r"D:\SWAT-model\SpySWAT"))?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t81".into(),
+        cwd: Some(r"D:\Project\agmag".into()),
+        state: "live".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+    store.link_terminal("t81", sid, "auto")?;
+    // An exited terminal has no live session view: its row cwd is all we know.
+    store.upsert_terminal(&TerminalRow {
+        address: "t70".into(),
+        cwd: Some(r"D:\Project\agmag".into()),
+        state: "finished".into(),
+        created_ms: 1,
+        ..Default::default()
+    })?;
+
+    let snap = snapshot(&store, &Config::builtin(), now)?;
+    let view = snap.terminals.iter().find(|v| v.address == "t81").unwrap();
+    assert_eq!(norm_cwd(&view.cwd), norm_cwd(r"D:\SWAT-model\SpySWAT"));
+
+    let terms = store.terminals(false)?;
+    let resolve = |cwd: &str| -> Option<String> { Some(cwd.to_string()) };
+    let mut cache = RootCache::new();
+    let roots = compute_roots(&terms, &snap, &mut cache, &resolve);
+    assert_eq!(
+        roots.get("t81").map(String::as_str),
+        Some(norm_cwd(r"D:\SWAT-model\SpySWAT").as_str())
+    );
+    assert_eq!(
+        roots.get("t70").map(String::as_str),
+        Some(norm_cwd(r"D:\Project\agmag").as_str())
+    );
+    Ok(())
+}
+
+/// A worker whose worktree inside the repo was already removed (`<repo>/.wt/<slug>`) still belongs
+/// to that repo: the nearest existing ancestor decides.
+#[test]
+fn git_common_root_of_a_removed_worktree_dir_uses_the_nearest_existing_ancestor()
+-> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let d = tmp.path();
+    git(d, &["init", "-q"]);
+    let gone = d.join(".wt").join("par-1");
+    assert!(!gone.exists());
+    let root = git_common_root(gone.to_str().unwrap()).expect("root from ancestor");
+    assert_eq!(norm_cwd(&root), norm_cwd(d.to_str().unwrap()));
+
+    let outside = tempfile::tempdir()?;
+    let gone_outside = outside.path().join("nothing").join("here");
+    assert_eq!(git_common_root(gone_outside.to_str().unwrap()), None);
+    Ok(())
+}

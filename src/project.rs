@@ -104,11 +104,16 @@ impl RootCache {
     }
 }
 
-/// `git -C cwd rev-parse --path-format=absolute --git-common-dir` → its parent directory.
+/// `git -C <cwd or its nearest existing ancestor> rev-parse --git-common-dir` → its parent directory.
 pub fn git_common_root(cwd: &str) -> Option<String> {
+    // A removed worktree (`<repo>/.wt/<slug>` deleted while its terminal is still listed) still
+    // belongs to its repository: ask git from the nearest directory that exists.
+    let start = std::path::Path::new(cwd)
+        .ancestors()
+        .find(|p| !p.as_os_str().is_empty() && p.is_dir())?;
     let out = Command::new("git")
         .arg("-C")
-        .arg(cwd)
+        .arg(start)
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .output()
         .ok()?;
@@ -400,17 +405,18 @@ pub fn branch_entry_for(cwd: Option<&str>, task: Option<&str>) -> Option<String>
 /// The cwd a row is resolved by: its own, else the live `TermView.cwd` (linked session cwd).
 /// Empty cwds count as missing.
 fn row_cwd<'a>(t: &'a TerminalRow, snap: &'a crate::dashboard::Snapshot) -> Option<&'a str> {
-    t.cwd.as_deref().filter(|c| !c.is_empty()).or_else(|| {
-        snap.terminals
-            .iter()
-            .find(|v| v.address == t.address)
-            .map(|v| v.cwd.as_str())
-            .filter(|c| !c.is_empty())
-    })
+    // A live terminal's view cwd is its session's cwd first: where the agent works now, not the
+    // pane's start directory. Exited terminals have no view, so their row cwd is all we know.
+    snap.terminals
+        .iter()
+        .find(|v| v.address == t.address)
+        .map(|v| v.cwd.as_str())
+        .filter(|c| !c.is_empty())
+        .or_else(|| t.cwd.as_deref().filter(|c| !c.is_empty()))
 }
 
-/// address → root for every terminal with a cwd: the row's cwd, else the live `TermView.cwd`
-/// (the linked session's cwd) from the snapshot. Empty cwds are skipped.
+/// address → root for every terminal with a cwd: the live `TermView.cwd` (session cwd first) from
+/// the snapshot, else the row's cwd. Empty cwds are skipped.
 pub fn compute_roots(
     terms: &[TerminalRow],
     snap: &crate::dashboard::Snapshot,

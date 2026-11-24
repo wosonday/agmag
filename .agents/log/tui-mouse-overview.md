@@ -121,3 +121,19 @@ The footer `HELP`/`HELP_ASCII` line is untouched (no diff there). Docs: one over
 `README.md` and `README_vi.md`; one Vietnamese bullet under `CHANGELOG.md` `[Unreleased]` ->
 `### Thêm mới`. CHANGELOG stayed CRLF (`git ls-files --eol` = `i/crlf w/crlf`), READMEs LF.
 
+
+## Final gates (recorded)
+
+- `cargo fmt --check` -> exit 0.
+- `cargo clippy --all-targets -- -D warnings` -> exit 0 (`Finished dev profile`).
+- `cargo test` -> exit 0, **773 passed, 0 failed, 0 ignored** across 42 binaries (baseline 745; +28
+  new tests, all from this task). Per binary: lib 134, main 20, actions 57, agy_quota 8, ask 3,
+  board_flows 4, board_runtime 7, board_view 44, branches 41, cli 39, codex_quota 5, config 20,
+  correlate 9, daemon 22, dashboard 29, git 4, global_view 45, hook 5, ingest 12, launch 7, mcp 30,
+  model 4, opencode_models 8, opencode_quota 5, opencode 8, parse_agy 7, parse_claude 11,
+  parse_codex 11, policy 13, project_render 14, project_store 4, project 25, project_tree 2,
+  report 18, rotation 39, safety 12, spawn_fallback 9, store 12, store_v2 14, sysmon 11,
+  tui_app 1, doctests 0.
+- EOL before the final commit: `src/board/*` + READMEs + tests LF; `CHANGELOG.md` CRLF
+  (`i/crlf w/crlf`); no `w/mixed`.
+

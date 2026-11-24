@@ -682,7 +682,8 @@ fn run_board_dispatch(
     }
 }
 
-/// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
+/// Routes one mouse event: the board has its own handler, the overview acts on the hit map of the
+/// last frame. Ignoring an event must not force a redraw.
 #[allow(clippy::too_many_arguments)]
 fn handle_mouse(
     mouse: event::MouseEvent,

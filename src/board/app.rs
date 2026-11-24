@@ -14,7 +14,9 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::layout::{Position, Rect};
 
 use super::cmd::{Dispatched, NoteKind, Outcome};
-use super::global::{CmdKey, Focus, GEffect, GlobalData, GlobalState, Popup};
+use super::global::{
+    CmdKey, Focus, GEffect, GlobalData, GlobalState, LAYOUT_SETTING_KEY, LayoutOverride, Popup,
+};
 use super::global_view;
 use super::state::{Mode, Panel};
 use super::{BoardKeyResult, BoardScreen, theme};
@@ -106,6 +108,7 @@ pub fn run_app(
         .and_then(|s| theme::ThemeName::parse(&s))
         .unwrap_or_default();
     let mut state = GlobalState::new(theme_name);
+    state.layout = saved_layout(store)?;
     let mut data = GlobalData {
         view: initial_view,
         ..GlobalData::default()
@@ -382,6 +385,16 @@ fn handle_global_key(
     match state.on_key(key, data) {
         GEffect::None => AppAction::Stay,
         GEffect::Run(line) => {
+            // `layout reset` belongs to the overview itself (T3): it clears the drag overrides
+            // and saves the empty layout, without reaching the shared command dispatcher.
+            if line.trim() == "layout reset" {
+                state.layout.clear();
+                state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, "") {
+                    Ok(()) => (NoteKind::Ok, "layout reset".into()),
+                    Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+                });
+                return AppAction::Stay;
+            }
             let dispatched = dispatch(&line);
             let quit = dispatched.outcome == Outcome::Quit;
             let refresh = effect_requests_refresh(&dispatched.outcome);
@@ -410,6 +423,20 @@ fn handle_global_key(
         GEffect::SaveTheme(name) => {
             state.note = Some(match store.set_setting(theme::SETTING_KEY, name.as_str()) {
                 Ok(()) => (NoteKind::Ok, format!("theme: {}", name.as_str())),
+                Err(e) => (NoteKind::Err, format!("error: {e:#}")),
+            });
+            AppAction::Stay
+        }
+        GEffect::SaveLayout(text) => {
+            state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, &text) {
+                Ok(()) => (
+                    NoteKind::Ok,
+                    if text.is_empty() {
+                        "layout reset".into()
+                    } else {
+                        "layout saved".into()
+                    },
+                ),
                 Err(e) => (NoteKind::Err, format!("error: {e:#}")),
             });
             AppAction::Stay
@@ -452,6 +479,15 @@ pub(crate) fn apply_dispatched(
         Outcome::Quit | Outcome::None => {}
     }
     None
+}
+
+/// The overview layout saved under `LAYOUT_SETTING_KEY`; a corrupt value falls back to the
+/// content-fitted defaults instead of breaking the screen.
+fn saved_layout(store: &Store) -> Result<LayoutOverride> {
+    Ok(store
+        .setting(LAYOUT_SETTING_KEY)?
+        .and_then(|text| LayoutOverride::parse(&text))
+        .unwrap_or_default())
 }
 
 /// The project whose board a terminal row opens; `<name> has no project` when unknown.
@@ -791,6 +827,74 @@ mod tests {
 
     fn dispatched(outcome: Outcome, view: Vec<Section>) -> Dispatched {
         Dispatched { outcome, view }
+    }
+
+    #[test]
+    fn layout_reset_command_clears_and_persists() {
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        state.layout.set_top_pair_width(0.5);
+        state.layout.set_height(2, 0.3);
+        store
+            .set_setting(LAYOUT_SETTING_KEY, &state.layout.to_string())
+            .unwrap();
+        let mut data = GlobalData::default();
+        let mut recorded = Vec::new();
+        let mut fake_dispatch = |line: &str| {
+            recorded.push(line.to_string());
+            dispatched(Outcome::None, vec![])
+        };
+
+        for c in "layout reset".chars() {
+            handle_global_key(
+                key_ev(KeyCode::Char(c)),
+                &store,
+                &mut state,
+                &mut data,
+                &mut fake_dispatch,
+            );
+        }
+        let action = handle_global_key(
+            key_ev(KeyCode::Enter),
+            &store,
+            &mut state,
+            &mut data,
+            &mut fake_dispatch,
+        );
+
+        assert!(matches!(action, AppAction::Stay));
+        assert!(
+            recorded.is_empty(),
+            "`layout reset` is an app action, not a dispatch: {recorded:?}"
+        );
+        assert!(state.layout.is_empty());
+        assert_eq!(
+            store.setting(LAYOUT_SETTING_KEY).unwrap().as_deref(),
+            Some(""),
+            "the cleared layout must be persisted"
+        );
+        assert!(
+            matches!(&state.note, Some((NoteKind::Ok, text)) if text.contains("layout reset")),
+            "{:?}",
+            state.note
+        );
+    }
+
+    #[test]
+    fn saved_layout_roundtrips_and_ignores_garbage() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(saved_layout(&store).unwrap(), LayoutOverride::default());
+
+        store
+            .set_setting(LAYOUT_SETTING_KEY, "w=0.5000;h2=0.2500")
+            .unwrap();
+        let loaded = saved_layout(&store).unwrap();
+        assert_eq!(loaded.top_pair_width, Some(0.5));
+        assert_eq!(loaded.height(2), Some(0.25));
+
+        // A corrupt setting is ignored: the overview falls back to content fitting.
+        store.set_setting(LAYOUT_SETTING_KEY, "garbage").unwrap();
+        assert_eq!(saved_layout(&store).unwrap(), LayoutOverride::default());
     }
 
     #[test]

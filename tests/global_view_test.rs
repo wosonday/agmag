@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use agmag::board::global::{
-    BorderId, Focus, GlobalData, GlobalState, Hit, HitMap, HitPanel, Popup, RowTarget, hit,
+    BorderId, Focus, GEffect, GlobalData, GlobalState, Hit, HitMap, HitPanel, Popup, RowTarget, hit,
 };
 use agmag::board::global_view::draw_global;
 use agmag::board::theme::{ThemeName, theme};
@@ -14,6 +14,7 @@ use agmag::store::{InboxRow, MessageRow, Store};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::style::Color;
 
 const NOW: i64 = 1_000_000;
@@ -1535,4 +1536,144 @@ fn message_row_rects_follow_wrapped_height() {
         "message 1 rect is not where its text was drawn:\n{}",
         text(&buf)
     );
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn down(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+}
+
+fn drag(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::Drag(MouseButton::Left), column, row)
+}
+
+fn up(column: u16, row: u16) -> MouseEvent {
+    mouse(MouseEventKind::Up(MouseButton::Left), column, row)
+}
+
+/// Every recorded horizontal boundary must sit on the bottom row of the group it resizes:
+/// `Horizontal(2)` is the pair's lower edge, `Horizontal(3)` Inbox's.
+#[test]
+fn horizontal_borders_match_the_group_above_them() {
+    let d = dense_overview_data();
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    let map = state.hit_map();
+
+    let (_, qy, _, qh) = panel_rect(&buf, "Quota");
+    let (_, ty, _, th) = panel_rect(&buf, "Terminals");
+    let (_, iy, _, ih) = panel_rect(&buf, "Inbox");
+    let (_, my, _, _) = panel_rect(&buf, "Messages");
+    assert_eq!(qy + qh, ty + th, "the top pair shares one height");
+
+    let mut borders: Vec<(u16, BorderId)> = map
+        .borders
+        .iter()
+        .filter_map(|(rect, id)| match id {
+            BorderId::Horizontal(i) => Some((rect.y, BorderId::Horizontal(*i))),
+            _ => None,
+        })
+        .collect();
+    borders.sort_by_key(|(y, _)| *y);
+    assert_eq!(
+        borders,
+        vec![
+            (qy + qh, BorderId::Horizontal(2)),
+            (iy + ih, BorderId::Horizontal(3)),
+        ],
+        "each Horizontal(i) belongs to the group that ends on its row"
+    );
+    assert_eq!(iy, qy + qh, "Inbox starts on the pair's lower boundary");
+    assert_eq!(my, iy + ih, "Messages starts on Inbox's lower boundary");
+}
+
+#[test]
+fn mouse_drag_changes_the_next_frames_rects() {
+    // Enough terminals that the pair really wants more rows than its floor.
+    let mut d = dense_overview_data();
+    let snap = d.snap.as_mut().unwrap();
+    for i in 2..=8 {
+        snap.terminals
+            .push(terminal(&format!("t{i}"), &format!("worker-{i}")));
+    }
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+
+    let (_, qy, _, qh) = panel_rect(&buf, "Quota");
+    let (_, iy, _, ih) = panel_rect(&buf, "Inbox");
+    let (_, _, _, mh) = panel_rect(&buf, "Messages");
+    assert!(qh > 3, "the pair needs room before it can shrink: {qh}");
+    assert_eq!(iy, qy + qh);
+
+    // Drag the pair / Inbox boundary four rows up through `on_mouse`.
+    let boundary = state
+        .hit_map()
+        .borders
+        .iter()
+        .find_map(|(rect, id)| (*id == BorderId::Horizontal(2)).then_some(rect.y))
+        .expect("pair boundary recorded");
+    assert_eq!(boundary, qy + qh);
+    let target = boundary - 4;
+    let (changed, effect) = state.on_mouse(down(5, boundary), &d, 1_000);
+    assert!(!changed, "a plain border click only arms the drag");
+    assert_eq!(effect, GEffect::None);
+    let (changed, effect) = state.on_mouse(drag(5, target), &d, 1_100);
+    assert!(changed);
+    assert_eq!(effect, GEffect::None);
+
+    let buf = render((140, 40), &state, &d, false);
+    let (_, qy2, _, qh2) = panel_rect(&buf, "Quota");
+    let (_, ty2, _, th2) = panel_rect(&buf, "Terminals");
+    let (_, iy2, _, ih2) = panel_rect(&buf, "Inbox");
+    let (_, _, _, mh2) = panel_rect(&buf, "Messages");
+    assert_eq!(qy2 + qh2, target, "Quota bottom follows the pointer");
+    assert_eq!(ty2 + th2, target, "both top-pair panels shrink together");
+    assert_eq!(iy2, target, "the group below starts on the new boundary");
+    assert_eq!(ih2, ih, "Inbox keeps its content-fitted height");
+    assert!(mh2 > mh, "Messages absorbed the freed rows");
+
+    let (_, effect) = state.on_mouse(up(5, target), &d, 1_200);
+    match effect {
+        GEffect::SaveLayout(text) => assert!(text.contains("h2="), "{text}"),
+        other => panic!("Up did not persist the layout: {other:?}"),
+    }
+}
+
+#[test]
+fn mouse_drag_top_pair_divider_changes_drawn_widths() {
+    let d = dense_overview_data();
+    let mut state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+
+    let (qx, qy, qw, _) = panel_rect(&buf, "Quota");
+    let (tx, _, _, _) = panel_rect(&buf, "Terminals");
+    assert_eq!(tx, qx + qw, "Terminals starts where Quota ends");
+    let (border_x, border_w) = state
+        .hit_map()
+        .borders
+        .iter()
+        .find_map(|(rect, id)| (*id == BorderId::TopPairVertical).then_some((rect.x, rect.width)))
+        .expect("top-pair divider recorded");
+    assert!(border_w >= 1);
+
+    state.on_mouse(down(border_x, qy + 1), &d, 1_000);
+    let (changed, _) = state.on_mouse(drag(90, qy + 1), &d, 1_100);
+    assert!(changed);
+    let (_, effect) = state.on_mouse(up(90, qy + 1), &d, 1_200);
+    assert!(matches!(effect, GEffect::SaveLayout(_)));
+
+    let buf = render((140, 40), &state, &d, false);
+    let (_, _, qw2, _) = panel_rect(&buf, "Quota");
+    let (tx2, _, tw2, _) = panel_rect(&buf, "Terminals");
+    assert_eq!(qw2, 90, "the left panel takes the dragged width");
+    assert_eq!(tx2, 90, "the right panel starts on the divider");
+    assert_eq!(tw2, 50);
 }

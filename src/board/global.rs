@@ -10,6 +10,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Rect;
 
 use super::cmd::NoteKind;
+use super::global_view::{MESSAGES_MIN, MIN_PANEL_W, MIN_SECTION_H};
 use super::theme::ThemeName;
 use crate::dashboard::{Section, Snapshot, TermView, sanitize_one_line};
 use crate::project::ProjectKey;
@@ -359,6 +360,29 @@ pub fn hit(map: &HitMap, x: u16, y: u16) -> Option<Hit> {
     None
 }
 
+/// The section area (main content without the command bar and footer) as the last frame drew it:
+/// the union of its section panels. Output and the command line are not part of it.
+fn content_area(map: &HitMap) -> Option<Rect> {
+    let mut rects = map
+        .panels
+        .iter()
+        .filter(|(rect, panel)| {
+            matches!(panel, HitPanel::Section(_)) && rect.width > 0 && rect.height > 0
+        })
+        .map(|(rect, _)| *rect);
+    let first = rects.next()?;
+    Some(rects.fold(first, |a, b| {
+        let right = a.right().max(b.right());
+        let bottom = a.bottom().max(b.bottom());
+        Rect {
+            x: a.x.min(b.x),
+            y: a.y.min(b.y),
+            width: right.saturating_sub(a.x.min(b.x)),
+            height: bottom.saturating_sub(a.y.min(b.y)),
+        }
+    }))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GEffect {
     None,
@@ -367,6 +391,8 @@ pub enum GEffect {
     /// Open the board of this terminal's project (terminal address).
     OpenBoard(String),
     SaveTheme(ThemeName),
+    /// Persist these panel proportions under `LAYOUT_SETTING_KEY` (empty = reset).
+    SaveLayout(String),
     Quit,
 }
 
@@ -403,8 +429,22 @@ pub struct GlobalState {
     /// Last left-button down: the target and its clock, so the next down on the same target within
     /// `DOUBLE_CLICK_MS` is the second half of a double-click.
     last_click: Option<(Hit, i64)>,
+    /// The boundary drag in progress, if any.
+    drag: Option<DragState>,
     /// Rebuilt by `draw_global` every frame; read by the app loop after drawing.
     hit_map: RefCell<HitMap>,
+}
+
+/// An armed (or in-progress) drag of one boundary. `area` is the section area of the last frame,
+/// `start` the first row/column of the group that boundary resizes, so every drag recomputes the
+/// ratio from the pointer instead of replaying row counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DragState {
+    border: BorderId,
+    area: Rect,
+    start: u16,
+    /// Whether this drag moved the boundary at least once (so Up has something to persist).
+    changed: bool,
 }
 
 impl GlobalState {
@@ -423,6 +463,7 @@ impl GlobalState {
             prev_terminal_idx: None,
             prev_inbox_idx: None,
             last_click: None,
+            drag: None,
             hit_map: RefCell::new(HitMap::default()),
         }
     }
@@ -545,8 +586,11 @@ impl GlobalState {
         match ev.kind {
             MouseEventKind::ScrollUp => (self.on_wheel(target, -1, data), GEffect::None),
             MouseEventKind::ScrollDown => (self.on_wheel(target, 1, data), GEffect::None),
-            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(target, data, now_ms),
-            // Drag is only meaningful once a border drag started (T3 step 3); Up ends nothing yet.
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.on_left_down(target, &map, data, now_ms)
+            }
+            MouseEventKind::Drag(MouseButton::Left) => self.on_drag(ev.column, ev.row),
+            MouseEventKind::Up(MouseButton::Left) => self.end_drag(),
             _ => (false, GEffect::None),
         }
     }
@@ -602,11 +646,13 @@ impl GlobalState {
     fn on_left_down(
         &mut self,
         target: Option<Hit>,
+        map: &HitMap,
         data: &GlobalData,
         now_ms: i64,
     ) -> (bool, GEffect) {
         let Some(target) = target else {
             self.last_click = None;
+            self.drag = None;
             return (false, GEffect::None);
         };
         let is_double = self.last_click.as_ref().is_some_and(|(prev, ts)| {
@@ -616,16 +662,131 @@ impl GlobalState {
         if is_double {
             // A double-click consumes the pair.
             self.last_click = None;
+            self.drag = None;
             return self.on_double_click(target, data);
         }
         match target {
             Hit::Panel(HitPanel::Section(sec)) => {
+                self.drag = None;
                 (self.set_focus(Focus::Panel(sec)), GEffect::None)
             }
-            Hit::Panel(HitPanel::CmdLine) => (self.set_focus(Focus::CmdLine), GEffect::None),
-            Hit::Panel(HitPanel::Output) => (false, GEffect::None),
-            Hit::Row(row) => self.click_row(row, data),
-            Hit::Border(_) => (false, GEffect::None),
+            Hit::Panel(HitPanel::CmdLine) => {
+                self.drag = None;
+                (self.set_focus(Focus::CmdLine), GEffect::None)
+            }
+            Hit::Panel(HitPanel::Output) => {
+                self.drag = None;
+                (false, GEffect::None)
+            }
+            Hit::Row(row) => {
+                self.drag = None;
+                self.click_row(row, data)
+            }
+            Hit::Border(border) => {
+                // A press on a boundary arms a drag; the frame only changes on the first Drag.
+                self.start_drag(border, map);
+                (false, GEffect::None)
+            }
+        }
+    }
+
+    /// Arms a drag on a boundary that can move. `OutputTop` is not resizable and boundaries in a
+    /// window too small for their floors are ignored instead of starting a no-op drag.
+    fn start_drag(&mut self, border: BorderId, map: &HitMap) {
+        self.drag = None;
+        if border == BorderId::OutputTop {
+            return;
+        }
+        let Some(area) = content_area(map) else {
+            return;
+        };
+        let Some(border_rect) = map
+            .borders
+            .iter()
+            .find_map(|(rect, id)| (*id == border).then_some(*rect))
+        else {
+            return;
+        };
+        let start = match border {
+            BorderId::TopPairVertical => {
+                if area.width < MIN_PANEL_W.saturating_mul(2) {
+                    return;
+                }
+                area.x
+            }
+            BorderId::Horizontal(_) => {
+                if area.height <= MESSAGES_MIN.saturating_add(MIN_SECTION_H) {
+                    return;
+                }
+                // The group above ends on the border's row; its first panel row is the anchor.
+                let top = map
+                    .panels
+                    .iter()
+                    .filter(|(rect, panel)| {
+                        matches!(panel, HitPanel::Section(_))
+                            && rect.y < border_rect.y
+                            && rect.bottom() == border_rect.y
+                    })
+                    .map(|(rect, _)| rect.y)
+                    .min();
+                match top {
+                    Some(top) => top,
+                    None => return,
+                }
+            }
+            BorderId::OutputTop => return,
+        };
+        self.drag = Some(DragState {
+            border,
+            area,
+            start,
+            changed: false,
+        });
+    }
+
+    /// One drag event: the boundary follows the pointer as a ratio of the section area. Returns
+    /// whether this event visibly moved anything.
+    fn on_drag(&mut self, column: u16, row: u16) -> (bool, GEffect) {
+        let Some(drag) = self.drag.as_mut() else {
+            return (false, GEffect::None);
+        };
+        let fraction = match drag.border {
+            BorderId::TopPairVertical => {
+                let left = column
+                    .saturating_sub(drag.area.x)
+                    .clamp(MIN_PANEL_W, drag.area.width - MIN_PANEL_W);
+                f32::from(left) / f32::from(drag.area.width)
+            }
+            BorderId::Horizontal(_) => {
+                let height = row
+                    .saturating_sub(drag.start)
+                    .max(MIN_SECTION_H)
+                    .min(drag.area.height.saturating_sub(MESSAGES_MIN));
+                f32::from(height) / f32::from(drag.area.height)
+            }
+            BorderId::OutputTop => return (false, GEffect::None),
+        };
+        let changed = match drag.border {
+            BorderId::TopPairVertical => self.layout.top_pair_width != Some(fraction),
+            BorderId::Horizontal(i) => self.layout.height(i) != Some(fraction),
+            BorderId::OutputTop => false,
+        };
+        if changed {
+            match drag.border {
+                BorderId::TopPairVertical => self.layout.set_top_pair_width(fraction),
+                BorderId::Horizontal(i) => self.layout.set_height(i, fraction),
+                BorderId::OutputTop => {}
+            }
+            drag.changed = true;
+        }
+        (changed, GEffect::None)
+    }
+
+    /// Ends a drag; if it moved the boundary, the app persists the new ratios.
+    fn end_drag(&mut self) -> (bool, GEffect) {
+        match self.drag.take() {
+            Some(drag) if drag.changed => (false, GEffect::SaveLayout(self.layout.to_string())),
+            _ => (false, GEffect::None),
         }
     }
 
@@ -667,6 +828,7 @@ impl GlobalState {
     }
 
     fn on_double_click(&mut self, target: Hit, data: &GlobalData) -> (bool, GEffect) {
+        self.drag = None;
         match target {
             Hit::Row(RowTarget::Terminal(address)) => {
                 // Same effect as ⏎ on the Terminals panel.
@@ -678,6 +840,18 @@ impl GlobalState {
                 self.click_row(RowTarget::Inbox(id), data);
                 self.focus_cmdline_with(format!("reply {id} "));
                 (true, GEffect::None)
+            }
+            Hit::Border(border) => {
+                let stored = match border {
+                    BorderId::TopPairVertical => self.layout.top_pair_width.is_some(),
+                    BorderId::Horizontal(i) => self.layout.heights.contains_key(&i),
+                    BorderId::OutputTop => false,
+                };
+                if !stored {
+                    return (false, GEffect::None);
+                }
+                self.layout.reset(border);
+                (true, GEffect::SaveLayout(self.layout.to_string()))
             }
             _ => (false, GEffect::None),
         }
@@ -1965,6 +2139,133 @@ mod tests {
 
         layout.clear();
         assert!(layout.is_empty());
+    }
+
+    fn drag_map(st: &GlobalState) {
+        st.push_panel(Rect::new(0, 0, 60, 10), Section::Quota);
+        st.push_panel(Rect::new(0, 10, 60, 10), Section::Inbox);
+        st.push_panel(Rect::new(0, 20, 60, 5), Section::Messages);
+        st.push_border(Rect::new(0, 10, 60, 1), BorderId::Horizontal(2));
+    }
+
+    fn drag_map_vertical(st: &GlobalState) {
+        st.push_panel(Rect::new(0, 0, 50, 10), Section::Quota);
+        st.push_panel(Rect::new(50, 0, 50, 10), Section::Terminals);
+        st.push_panel(Rect::new(0, 10, 100, 5), Section::Messages);
+        st.push_border(Rect::new(49, 0, 2, 10), BorderId::TopPairVertical);
+    }
+
+    #[test]
+    fn mouse_drag_horizontal_resizes_and_clamps() {
+        let data = data_with(vec![Section::Quota, Section::Inbox], vec![], vec![]);
+
+        // Down starts the drag, Drag resizes live, Up persists what the frame now shows.
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        drag_map(&st);
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 1_000);
+        assert!(!changed, "starting a drag only arms it");
+        assert_eq!(eff, GEffect::None);
+        let (changed, eff) = st.on_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), 5, 15),
+            &data,
+            1_100,
+        );
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.layout.height(2), Some(0.6), "15 rows of a 25-row main");
+        let (_, eff) = st.on_mouse(
+            mouse(MouseEventKind::Up(MouseButton::Left), 5, 15),
+            &data,
+            1_200,
+        );
+        assert_eq!(eff, GEffect::SaveLayout("h2=0.6000".into()));
+
+        // The group above never drops below MIN_SECTION_H...
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        drag_map(&st);
+        st.on_mouse(down(5, 10), &data, 1_000);
+        st.on_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), 5, 0),
+            &data,
+            1_100,
+        );
+        assert_eq!(st.layout.height(2), Some(0.12), "3 rows of 25");
+        // ... and Messages keeps MESSAGES_MIN rows.
+        st.on_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), 5, 200),
+            &data,
+            1_200,
+        );
+        assert_eq!(st.layout.height(2), Some(21.0 / 25.0), "25 - MESSAGES_MIN");
+
+        // A drag that ends without moving persists nothing.
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        drag_map(&st);
+        st.on_mouse(down(5, 10), &data, 1_000);
+        let (_, eff) = st.on_mouse(
+            mouse(MouseEventKind::Up(MouseButton::Left), 5, 10),
+            &data,
+            1_100,
+        );
+        assert_eq!(eff, GEffect::None);
+    }
+
+    #[test]
+    fn mouse_drag_top_pair_vertical_keeps_twenty_columns() {
+        let data = data_with(
+            vec![Section::Quota, Section::Terminals],
+            vec![term("t1", "worker-1")],
+            vec![],
+        );
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        drag_map_vertical(&st);
+        st.on_mouse(down(49, 5), &data, 1_000);
+        let (changed, eff) = st.on_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), 45, 5),
+            &data,
+            1_100,
+        );
+        assert!(changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.layout.top_pair_width, Some(0.45), "45 of 100 columns");
+
+        // Both panels keep at least 20 columns whatever the pointer does.
+        st.on_mouse(down(49, 5), &data, 2_000);
+        st.on_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), 0, 5),
+            &data,
+            2_100,
+        );
+        assert_eq!(st.layout.top_pair_width, Some(0.2));
+        st.on_mouse(
+            mouse(MouseEventKind::Drag(MouseButton::Left), 200, 5),
+            &data,
+            2_200,
+        );
+        assert_eq!(st.layout.top_pair_width, Some(0.8));
+    }
+
+    #[test]
+    fn mouse_double_click_border_resets_only_that_boundary() {
+        let data = data_with(vec![Section::Quota, Section::Inbox], vec![], vec![]);
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        st.layout.set_top_pair_width(0.5);
+        st.layout.set_height(2, 0.4);
+        st.layout.set_height(3, 0.3);
+        drag_map(&st);
+
+        st.on_mouse(down(5, 10), &data, 1_000);
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 1_200);
+        assert!(changed);
+        assert_eq!(eff, GEffect::SaveLayout("w=0.5000;h3=0.3000".into()));
+        assert_eq!(st.layout.height(2), None, "only Horizontal(2) was reset");
+        assert_eq!(st.layout.height(3), Some(0.3));
+        assert_eq!(st.layout.top_pair_width, Some(0.5));
+
+        // A double-click on a boundary with no override is not a visible change.
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 3_000);
+        assert!(!changed);
+        assert_eq!(eff, GEffect::None);
     }
 
     #[test]

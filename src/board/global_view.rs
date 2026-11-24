@@ -26,11 +26,11 @@ use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
 /// Messages is the flexible section: it absorbs the space no other section needs.
-const MESSAGES_MIN: u16 = 4;
+pub(crate) const MESSAGES_MIN: u16 = 4;
 /// A panel is its border plus at least one usable row.
-const MIN_SECTION_H: u16 = 3;
+pub(crate) const MIN_SECTION_H: u16 = 3;
 /// A dragged top-pair panel never gets narrower than this.
-const MIN_PANEL_W: u16 = 20;
+pub(crate) const MIN_PANEL_W: u16 = 20;
 /// The top pair may never take more than this share of the sections area.
 const PAIR_CAP_PERCENT: u32 = 60;
 const PROMPT: &str = "agm> ";

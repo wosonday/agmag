@@ -59,3 +59,28 @@ Code: `LayoutOverride { top_pair_width: Option<f32>, heights: BTreeMap<usize, f3
 `MESSAGES_MIN`, >= 20 columns per top panel, stale keys ignored, impossible windows ignore the
 override. Green: `cargo test` = **758 passed, 0 failed** (lib 122); clippy clean.
 
+
+## Step 3 — drag-resize, reset, persistence
+
+New tests (written first, seen failing: no `GEffect::SaveLayout`, no drag routing):
+
+- `mouse_drag_horizontal_resizes_and_clamps` (global.rs)
+- `mouse_drag_top_pair_vertical_keeps_twenty_columns` (global.rs)
+- `mouse_double_click_border_resets_only_that_boundary` (global.rs)
+- `layout_reset_command_clears_and_persists` (app.rs)
+- `saved_layout_roundtrips_and_ignores_garbage` (app.rs)
+- `horizontal_borders_match_the_group_above_them` (tests/global_view_test.rs)
+- `mouse_drag_changes_the_next_frames_rects` (tests/global_view_test.rs)
+- `mouse_drag_top_pair_divider_changes_drawn_widths` (tests/global_view_test.rs)
+
+Code: `DragState` on `GlobalState` (one drag field next to the one `layout` field). Down on a border
+arms the drag from the last frame's `content_area` + group top; Drag recomputes the ratio live,
+clamped (>= `MIN_SECTION_H`, Messages >= `MESSAGES_MIN`, top panels >= 20 columns); Up emits
+`GEffect::SaveLayout`; double-click a border resets only that boundary. `handle_global_key` handles
+`layout reset` (clears + persists `tui_layout` = "") and `SaveLayout`, and `run_app` loads
+`tui_layout` through `saved_layout` next to the theme.
+
+The border mapping test proves `Horizontal(2)`/`Horizontal(3)` sit on the pair's and Inbox's bottom
+row in a real 140x40 frame, so the group-above mapping is measured, not guessed.
+Green: `cargo test` = **766 passed, 0 failed** (lib 127, global_view_test 45); clippy clean.
+

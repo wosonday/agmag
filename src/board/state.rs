@@ -1581,10 +1581,8 @@ mod tests {
         assert_eq!(e.effect, Effect::None);
     }
 
-    #[test]
-    fn mouse_cannot_reach_destructive_or_send_actions() {
-        let (mut s, d) = state_with_data();
-        let map = BoardHitMap {
+    fn safety_map() -> BoardHitMap {
+        BoardHitMap {
             panels: vec![
                 (Rect::new(0, 0, 20, 10), Panel::Orchestration),
                 (Rect::new(20, 0, 20, 10), Panel::Detail),
@@ -1593,10 +1591,17 @@ mod tests {
             ],
             project_rows: vec![(Rect::new(1, 16, 10, 1), 0)],
             agent_cards: vec![(Rect::new(1, 1, 8, 3), "t1".into())],
-            inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10)],
+            inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10), (Rect::new(1, 12, 38, 1), 11)],
             picker_rows: vec![(Rect::new(1, 17, 10, 1), 1)],
             overlay: None,
-        };
+        }
+    }
+
+    #[test]
+    fn mouse_cannot_reach_destructive_or_send_actions() {
+        // Every event starts from a FRESH Mode::Normal state: one shared state could enter Reply on
+        // the first click and hide the rest of the matrix behind the popup guard.
+        let map = safety_map();
         let kinds = [
             MouseEventKind::Down(MouseButton::Left),
             MouseEventKind::Down(MouseButton::Right),
@@ -1610,24 +1615,167 @@ mod tests {
             MouseEventKind::ScrollUp,
         ];
         let coords = [(1u16, 1u16), (25, 2), (2, 11), (2, 16), (2, 17), (99, 99)];
-        let mut t = 0i64;
         for kind in kinds {
             for (c, r) in coords {
-                for _ in 0..3 {
-                    t += 10;
-                    let e = s.on_mouse(mouse(kind, c, r), &map, &d, t);
-                    assert!(
-                        matches!(e.effect, Effect::None | Effect::SwitchProject(_)),
-                        "mouse produced unsafe effect: {e:?}"
+                let (mut s, d) = state_with_data();
+                assert_eq!(s.mode, Mode::Normal);
+                let out = s.on_mouse(mouse(kind, c, r), &map, &d, 1_000);
+                assert!(
+                    matches!(out.effect, Effect::None | Effect::SwitchProject(_)),
+                    "mouse produced unsafe effect: {out:?}"
+                );
+                assert!(
+                    !matches!(
+                        out.effect,
+                        Effect::Done { .. }
+                            | Effect::Reply { .. }
+                            | Effect::Send { .. }
+                            | Effect::Quit
+                            | Effect::SaveTheme(_)
+                    ),
+                    "mouse reached a send/destructive effect: {out:?}"
+                );
+                assert!(
+                    !matches!(
+                        s.mode,
+                        Mode::ConfirmDone { .. }
+                            | Mode::Send { .. }
+                            | Mode::ShowItem { .. }
+                            | Mode::Filter { .. }
+                            | Mode::Help
+                    ),
+                    "mouse entered a modal mode: {:?}",
+                    s.mode
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn mouse_is_ignored_in_every_modal_mode() {
+        let map = safety_map();
+        let (_, d) = state_with_data();
+        let modes = [
+            Mode::Reply {
+                id: 10,
+                input: "draft".into(),
+            },
+            Mode::Send {
+                to: "t1".into(),
+                kind: 0,
+                input: "draft".into(),
+            },
+            Mode::ShowItem { id: 10 },
+            Mode::Filter { input: "x".into() },
+            Mode::Help,
+            Mode::ConfirmDone { id: 10 },
+        ];
+        let kinds = [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ];
+        let coords = [(1u16, 1u16), (2, 11), (2, 16), (2, 17), (99, 99)];
+        for mode in modes {
+            for kind in kinds {
+                for (c, r) in coords {
+                    let (mut s, _) = state_with_data();
+                    s.mode = mode.clone();
+                    let before = (
+                        s.panel,
+                        s.sel_agent.clone(),
+                        s.sel_inbox,
+                        s.msg_scroll,
+                        s.sel_project,
                     );
-                    assert!(
-                        !matches!(s.mode, Mode::ConfirmDone { .. }),
-                        "mouse entered confirm mode"
+                    let out = s.on_mouse(mouse(kind, c, r), &map, &d, 5_000);
+                    assert_eq!(out.effect, Effect::None, "{mode:?} + {kind:?}");
+                    assert!(!out.changed, "{mode:?} + {kind:?} changed state");
+                    assert_eq!(s.mode, mode, "{mode:?} was left by {kind:?}");
+                    assert_eq!(
+                        (
+                            s.panel,
+                            s.sel_agent.clone(),
+                            s.sel_inbox,
+                            s.msg_scroll,
+                            s.sel_project
+                        ),
+                        before,
+                        "{mode:?} + {kind:?} moved the board behind the popup"
                     );
-                    // Reply mode is allowed only as prefill (no send effect produced).
                 }
             }
         }
+    }
+
+    #[test]
+    fn double_click_edges() {
+        let map = safety_map();
+        let (_, d) = state_with_data();
+        let down = |c: u16, r: u16| mouse(MouseEventKind::Down(MouseButton::Left), c, r);
+
+        // 401 ms apart is two clicks, not a double-click.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        s.on_mouse(down(2, 11), &map, &d, 1_401);
+        assert!(
+            !matches!(s.mode, Mode::Reply { .. }),
+            "401 ms apart counted as a double-click"
+        );
+
+        // The documented 400 ms window is inclusive.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        s.on_mouse(down(2, 11), &map, &d, 1_400);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
+
+        // Two different targets within the window: two plain clicks, never a double-click.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        let out = s.on_mouse(down(2, 12), &map, &d, 1_100);
+        assert_eq!(out.effect, Effect::None);
+        assert!(!matches!(s.mode, Mode::Reply { .. }));
+        assert_eq!(s.sel_inbox, Some(11));
+
+        // Windows sends a release between the two downs; it must not break the pair.
+        let (mut s, _) = state_with_data();
+        s.on_mouse(down(2, 11), &map, &d, 1_000);
+        s.on_mouse(
+            mouse(MouseEventKind::Up(MouseButton::Left), 2, 11),
+            &map,
+            &d,
+            1_010,
+        );
+        s.on_mouse(down(2, 11), &map, &d, 1_050);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
+
+        // Triple click: the pair opens the reply prefill, the third down is ignored by the popup.
+        let out = s.on_mouse(down(2, 11), &map, &d, 1_060);
+        assert_eq!(out.effect, Effect::None);
+        assert!(!out.changed);
+        assert_eq!(
+            s.mode,
+            Mode::Reply {
+                id: 10,
+                input: String::new()
+            }
+        );
     }
 
     #[test]

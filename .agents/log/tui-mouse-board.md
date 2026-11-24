@@ -66,3 +66,15 @@
   `mouse_reports_whether_it_changed_anything` (plus `board_screen_mouse_only_redraws_on_change` and
   `mouse_events_that_change_nothing_skip_the_redraw`) pins the skipped events.
 - Status: green
+
+### Item 3 - Safety tests
+- Rewrote `mouse_cannot_reach_destructive_or_send_actions`: every (kind, coord) starts from a FRESH
+  `Mode::Normal` state and asserts the effect is only `None`/`SwitchProject` plus no reply/done/send/theme/quit.
+- Added `mouse_is_ignored_in_every_modal_mode` (Reply/Send/ShowItem/Filter/Help/ConfirmDone × every kind ×
+  in/out targets: no effect, no change, mode and selection untouched).
+- Added `double_click_edges`: 401 ms apart is not a double-click, 400 ms is (inclusive), two different targets
+  within the window are two clicks, Down/Up/Down (Windows release between) still pairs, triple click leaves the
+  prefill open with the third down ignored.
+- TDD evidence (temporary mutations, reverted): removing the modal-mode guard made
+  `mouse_is_ignored_in_every_modal_mode` fail; setting `DOUBLE_CLICK_MS = 4000` made `double_click_edges` fail.
+- Status: green

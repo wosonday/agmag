@@ -18,3 +18,17 @@ Task: `.agents/tasks/hide-idle-projects.md`. Ẩn dự án idle (`live_agents ==
   `list_projects` / `match_project` / `load_project_view`.
 - Xanh: 6/6 test `split_idle_*` (`cargo test --test project_test split_idle`).
 - Commit: `feat(project): add split_idle for display lists`.
+
+### Step 2: danh sách `cd` dùng `split_idle` (RED → GREEN)
+- `tests/project_render_test.rs`: thêm `project_list_reports_hidden_idle_projects` — dòng
+  `N idle project(s) hidden — cd <name> still opens them` có khi N>0, vắng khi N=0, và vẫn còn
+  `(no projects)` khi mọi dự án đều bị ẩn. Đỏ: `E0061` (hàm nhận 3 đối số).
+- `src/tui_cmd.rs`: thêm `cd_list_hides_idle_projects_and_reports_them` — store có một dự án live
+  (`shop`) và một dự án exited (`ghost`); gõ `cd` → `Outcome::Shown` chứa `shop`, không chứa
+  `ghost`, có dòng báo `1 idle project(s) hidden …`. Đỏ: danh sách vẫn in `ghost`.
+- `src/project_render.rs`: `render_project_list` nhận thêm `idle_hidden: usize`; thêm dòng báo
+  cuối danh sách (style `paint(GRAY, …)` như các dòng khác), giữ `(no projects)` khi rỗng.
+- `src/tui_cmd.rs`: nhánh `TuiCmd::Cd(None)` gọi `split_idle(all, None)` rồi truyền số bị ẩn
+  vào renderer. `cd <name>` / `match_project` vẫn nhận full list, không đổi.
+- Xanh: 14/14 `project_render_test`, 1/1 test `cd_list_*` (`--bin agm`).
+- Commit: `feat(tui): hide idle projects in the cd listing`.

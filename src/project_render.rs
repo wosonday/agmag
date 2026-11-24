@@ -60,10 +60,26 @@ pub fn render_project_body(pv: &ProjectView, width: usize, now_ms: i64) -> Strin
     bounded_block(lines, width)
 }
 
-/// The `cd` listing: one line per project plus `(no project)` when `no_project > 0`.
-pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: usize) -> String {
+/// The `cd` listing: one line per project, `(no project)` when `no_project > 0`, and a note when
+/// `idle_hidden > 0` projects were left out of the display list.
+pub fn render_project_list(
+    list: &[ProjectSummary],
+    no_project: usize,
+    idle_hidden: usize,
+    width: usize,
+) -> String {
+    let idle_line = || {
+        paint(
+            GRAY,
+            &format!("  {idle_hidden} idle project(s) hidden — cd <name> still opens them"),
+        )
+    };
     if list.is_empty() && no_project == 0 {
-        return bounded_block(vec![paint(GRAY, "  (no projects)")], width);
+        let mut lines = vec![paint(GRAY, "  (no projects)")];
+        if idle_hidden > 0 {
+            lines.push(idle_line());
+        }
+        return bounded_block(lines, width);
     }
 
     let display_name = |p: &ProjectSummary| -> String {
@@ -115,6 +131,9 @@ pub fn render_project_list(list: &[ProjectSummary], no_project: usize, width: us
             paint(GRAY, "-"),
             paint(GRAY, &format!("{no_project} inbox")),
         ));
+    }
+    if idle_hidden > 0 {
+        lines.push(idle_line());
     }
     bounded_block(lines, width)
 }

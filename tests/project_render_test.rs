@@ -317,7 +317,7 @@ fn untrusted_text_is_inert() {
         live_agents: 1,
         open_inbox: 0,
     }];
-    let list_out = render_project_list(&list, 0, 80);
+    let list_out = render_project_list(&list, 0, 0, 80);
     assert!(
         !list_out.contains("\x1b]"),
         "OSC survived in list: {list_out:?}"
@@ -516,7 +516,7 @@ fn zero_width_does_not_panic() {
         assert_eq!(UnicodeWidthStr::width(line), 0, "{line:?}");
     }
 
-    let _ = render_project_list(&[], 1, 0);
+    let _ = render_project_list(&[], 1, 0, 0);
     let _ = render_inbox_item(
         &InboxRow {
             text: "x".repeat(10),
@@ -579,15 +579,40 @@ fn project_list_disambiguates_duplicate_names() {
             open_inbox: 1,
         },
     ];
-    let plain = strip_ansi(&render_project_list(&list, 0, 100));
+    let plain = strip_ansi(&render_project_list(&list, 0, 0, 100));
     assert!(plain.contains("shop (D:\\a\\shop)"), "{plain}");
     assert!(plain.contains("shop (D:\\b\\shop)"), "{plain}");
 }
 
 #[test]
 fn project_list_empty_shows_no_projects() {
-    let plain = strip_ansi(&render_project_list(&[], 0, 60));
+    let plain = strip_ansi(&render_project_list(&[], 0, 0, 60));
     assert!(plain.contains("(no projects)"), "{plain}");
+}
+
+#[test]
+fn project_list_reports_hidden_idle_projects() {
+    let list = vec![ProjectSummary {
+        key: key("shop"),
+        live_agents: 1,
+        open_inbox: 0,
+    }];
+    let plain = strip_ansi(&render_project_list(&list, 0, 2, 100));
+    assert!(
+        plain.contains("2 idle project(s) hidden — cd <name> still opens them"),
+        "{plain}"
+    );
+
+    let plain = strip_ansi(&render_project_list(&list, 0, 0, 100));
+    assert!(!plain.contains("idle project"), "{plain}");
+
+    // Hiding every project must still report the count, not just "(no projects)".
+    let plain = strip_ansi(&render_project_list(&[], 0, 3, 100));
+    assert!(plain.contains("(no projects)"), "{plain}");
+    assert!(
+        plain.contains("3 idle project(s) hidden — cd <name> still opens them"),
+        "{plain}"
+    );
 }
 
 #[test]
@@ -610,7 +635,7 @@ fn project_list_and_show() {
         },
     ];
 
-    let plain = strip_ansi(&render_project_list(&list, 3, 60));
+    let plain = strip_ansi(&render_project_list(&list, 3, 0, 60));
     assert!(plain.contains("agmag"), "{plain}");
     assert!(plain.contains("4 live · 2 inbox"), "{plain}");
     assert!(plain.contains("shop"), "{plain}");
@@ -634,7 +659,7 @@ fn project_list_and_show() {
         assert!(UnicodeWidthStr::width(line) <= 59, "{line:?}");
     }
 
-    let without = strip_ansi(&render_project_list(&list, 0, 60));
+    let without = strip_ansi(&render_project_list(&list, 0, 0, 60));
     assert!(!without.contains("(no project)"), "{without}");
 
     let item = InboxRow {

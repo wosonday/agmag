@@ -253,9 +253,13 @@ fn outcome(line: &str, st: &mut CmdState, ctx: &Ctx, front: Front) -> Outcome {
                         &mut st.roots_cache,
                         &project::git_common_root,
                     );
-                    let (list, no_project) = project::list_projects(&terms, &inbox, &roots);
+                    let (all, no_project) = project::list_projects(&terms, &inbox, &roots);
+                    let (list, idle_hidden) = project::split_idle(all, None);
                     Outcome::Shown(project_render::render_project_list(
-                        &list, no_project, width,
+                        &list,
+                        no_project,
+                        idle_hidden,
+                        width,
                     ))
                 }
                 (Err(e), _) | (_, Err(e)) => Outcome::Note(NoteKind::Err, format!("error: {e:#}")),
@@ -576,6 +580,41 @@ mod tests {
                 rusqlite::params![rotation_id, old, new],
             )
             .expect("rotation");
+    }
+
+    #[test]
+    fn cd_list_hides_idle_projects_and_reports_them() {
+        let (tmp, store) = shop_store();
+        let ghost_dir = tmp.path().join("ghost");
+        std::fs::create_dir_all(&ghost_dir).expect("ghost dir");
+        store
+            .upsert_terminal(&TerminalRow {
+                address: "t2".into(),
+                name: Some("ghost".into()),
+                cwd: Some(ghost_dir.to_str().expect("utf-8 path").into()),
+                state: "exited".into(),
+                created_ms: 2,
+                ..Default::default()
+            })
+            .expect("terminal");
+
+        let cfg = Config::builtin();
+        let hc = FakeHc::default();
+        let who = user();
+        let mut st = CmdState::new(&store);
+
+        let d = run("cd", &mut st, &store, &cfg, &hc, &who, Front::Plain);
+        match &d.outcome {
+            Outcome::Shown(text) => {
+                assert!(text.contains("shop"), "{text}");
+                assert!(!text.contains("ghost"), "{text}");
+                assert!(
+                    text.contains("1 idle project(s) hidden — cd <name> still opens them"),
+                    "{text}"
+                );
+            }
+            other => panic!("expected Shown, got {other:?}"),
+        }
     }
 
     #[test]

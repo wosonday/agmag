@@ -630,7 +630,8 @@ fn draw_orchestration(
     // Cards that did not fit: say so on the bottom border instead of hiding them silently.
     let hidden = view.agents.len().saturating_sub(drawn);
     if hidden > 0 && area.height > 1 && area.width > 4 {
-        let note = format!(" ↓ {hidden} more ");
+        let arrow = if ctx.ascii { "v" } else { "↓" };
+        let note = format!(" {arrow} {hidden} more ");
         let width = (note.chars().count() as u16).min(area.width.saturating_sub(4));
         render_text(
             frame,
@@ -664,6 +665,10 @@ fn draw_block(
         return area.y;
     }
     let is_no_ceo = block.kind == BlockKind::NoCeo;
+    // No room for a card under the caption: draw nothing (the "more" note counts the cards).
+    if is_no_ceo && area.height < 2 {
+        return area.y;
+    }
     let cards_area = if is_no_ceo {
         render_text(
             frame,

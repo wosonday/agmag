@@ -566,6 +566,8 @@ fn run_board_dispatch(
     } else if let Some(key) = open_board {
         **board = BoardScreen::new(Some(key), board.theme());
         *board_cmd_focus = false;
+        data.output = None;
+        state.output_scroll = 0;
         Next::Restart
     } else if refresh {
         Next::Restart
@@ -625,7 +627,7 @@ fn handle_board_key(
                 }
                 KeyCode::Tab => {
                     *board_cmd_focus = false;
-                    board.state.panel = Panel::Projects;
+                    board.state.panel = Panel::Orchestration;
                     Next::Redraw
                 }
                 KeyCode::BackTab => {
@@ -652,6 +654,11 @@ fn handle_board_key(
             return Next::Redraw;
         }
         if key.code == KeyCode::Tab && board.state.panel == Panel::Inbox {
+            *board_cmd_focus = true;
+            return Next::Redraw;
+        }
+        // Shift+Tab from the first board panel wraps to the command bar (mirror of Tab from Inbox).
+        if key.code == KeyCode::BackTab && board.state.panel == Panel::Orchestration {
             *board_cmd_focus = true;
             return Next::Redraw;
         }
@@ -875,6 +882,114 @@ mod tests {
             cmd_row.contains("agm> "),
             "board screen in app missing command bar on row above footer: {cmd_row:?}"
         );
+    }
+
+    fn press(
+        code: KeyCode,
+        board: &mut Box<BoardScreen>,
+        state: &mut GlobalState,
+        data: &mut GlobalData,
+        cmd_focus: &mut bool,
+        dispatch: &mut dyn FnMut(&str) -> Dispatched,
+    ) -> Next {
+        let store = Store::open_in_memory().unwrap();
+        handle_board_key(
+            key_ev(code),
+            board,
+            &store,
+            &FakeHc,
+            state,
+            data,
+            cmd_focus,
+            dispatch,
+            0,
+        )
+    }
+
+    #[test]
+    fn tab_from_board_command_bar_goes_to_orchestration() {
+        let mut board = fake_board_screen();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        let mut cmd_focus = true;
+        let mut noop = |_: &str| Dispatched {
+            outcome: Outcome::None,
+            view: vec![],
+        };
+        press(
+            KeyCode::Tab,
+            &mut board,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut noop,
+        );
+        assert!(!cmd_focus);
+        assert_eq!(board.state.panel, Panel::Orchestration);
+    }
+
+    #[test]
+    fn backtab_from_orchestration_focuses_board_command_bar() {
+        let mut board = fake_board_screen();
+        board.state.panel = Panel::Orchestration;
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData::default();
+        let mut cmd_focus = false;
+        let mut noop = |_: &str| Dispatched {
+            outcome: Outcome::None,
+            view: vec![],
+        };
+        press(
+            KeyCode::BackTab,
+            &mut board,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut noop,
+        );
+        assert!(
+            cmd_focus,
+            "shift+tab from the first panel must reach the command bar"
+        );
+    }
+
+    #[test]
+    fn open_board_from_board_bar_clears_output() {
+        let mut board = fake_board_screen();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut data = GlobalData {
+            output: Some("old list".into()),
+            ..GlobalData::default()
+        };
+        state.output_scroll = 3;
+        let mut cmd_focus = true;
+        let mut open = |_: &str| Dispatched {
+            outcome: Outcome::OpenBoard(pk("other")),
+            view: vec![],
+        };
+        for c in "cd other".chars() {
+            press(
+                KeyCode::Char(c),
+                &mut board,
+                &mut state,
+                &mut data,
+                &mut cmd_focus,
+                &mut open,
+            );
+        }
+        press(
+            KeyCode::Enter,
+            &mut board,
+            &mut state,
+            &mut data,
+            &mut cmd_focus,
+            &mut open,
+        );
+        assert_eq!(
+            data.output, None,
+            "old Output overlay must not cover the new board"
+        );
+        assert_eq!(state.output_scroll, 0);
     }
 
     #[test]

@@ -1202,6 +1202,39 @@ fn single_child_connector_is_straight() {
         !all.contains('┼'),
         "one child must not draw a cross junction:\n{all}"
     );
+    // The stem under the CEO card continues straight down through the bus row.
+    let (sx, sy) = (0..buf.area.height)
+        .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+        .find(|&(x, y)| buf[(x, y)].symbol() == "┬")
+        .expect("stem under the CEO card");
+    assert_eq!(
+        buf[(sx, sy + 1)].symbol(),
+        "│",
+        "bus row is not straight:\n{all}"
+    );
+}
+
+#[test]
+fn ascii_more_indicator_has_no_unicode_arrow() {
+    let mut agents = Vec::new();
+    for c in 0..2 {
+        let mut ceo = agent(&format!("c{c}"), &format!("ceo-{c}"), 0);
+        ceo.role = None;
+        agents.push(ceo);
+        for w in 0..3 {
+            let mut worker = agent(&format!("w{c}{w}"), &format!("w-{c}-{w}"), 1);
+            worker.role = Some("worker".into());
+            agents.push(worker);
+        }
+    }
+    let d = data(agents);
+    let buf = render((100, 24), &selected_state("c0"), &d, true);
+    let all = text(&buf);
+    assert!(all.contains("more"), "no hidden-cards indicator:\n{all}");
+    assert!(
+        !all.contains('↓'),
+        "ASCII mode drew a Unicode arrow:\n{all}"
+    );
 }
 
 #[test]

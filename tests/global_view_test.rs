@@ -579,11 +579,20 @@ fn terminals_gets_remaining_width() {
         150 - term_start > 75,
         "Terminals should get more than half the width:\n{top}"
     );
-    for hdr in ["name", "app", "model", "st", "ctx", "tok", "last", "task"] {
+    // Whole header tokens of the Terminals table (a substring check would let `last` satisfy `st`).
+    let header = (0..buf.area.height)
+        .map(|y| row_text(&buf, y))
+        .find(|row| row.contains(" name ") && row.contains(" model "))
+        .expect("terminals header row");
+    let tokens: Vec<&str> = header
+        .split(|c: char| c.is_whitespace() || c == '│')
+        .filter(|t| !t.is_empty())
+        .collect();
+    for hdr in ["name", "app", "model", "st", "ctx", "tok", "task"] {
         assert!(
-            has(&buf, hdr),
-            "missing short header {hdr:?}:\n{}",
-            text(&buf)
+            tokens.contains(&hdr),
+            "missing short header {hdr:?}: {header:?}"
         );
     }
+    assert!(!tokens.contains(&"status"), "long header left: {header:?}");
 }

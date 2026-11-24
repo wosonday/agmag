@@ -64,7 +64,11 @@ fn render(size: (u16, u16), state: &BoardState, data: &BoardData, ascii: bool) -
     let backend = TestBackend::new(size.0, size.1);
     let mut terminal = Terminal::new(backend).unwrap();
     let th = theme(state.theme);
-    terminal.draw(|f| draw(f, state, data, &th, ascii)).unwrap();
+    terminal
+        .draw(|f| {
+            draw(f, state, data, &th, ascii);
+        })
+        .unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -1171,7 +1175,9 @@ fn draw_in_respects_area() {
         height: 30,
     };
     terminal
-        .draw(|f| draw_in(f, sub, &state, &d, &th, false))
+        .draw(|f| {
+            draw_in(f, sub, &state, &d, &th, false);
+        })
         .unwrap();
     let buf = terminal.backend().buffer();
     for y in 0..40 {

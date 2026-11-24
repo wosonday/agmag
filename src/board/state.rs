@@ -199,9 +199,7 @@ impl BoardState {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.on_scroll(&target, -1, data),
             MouseEventKind::ScrollDown => self.on_scroll(&target, 1, data),
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.on_left_down(target, data, now_ms)
-            }
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(target, data, now_ms),
             // Drag/Up(Left): no action, but don't count as stale for unrelated reasons.
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
                 Effect::None
@@ -249,10 +247,9 @@ impl BoardState {
     }
 
     fn on_left_down(&mut self, target: HitTarget, data: &BoardData, now_ms: i64) -> Effect {
-        let is_double = self
-            .last_click
-            .as_ref()
-            .is_some_and(|(prev, ts)| *prev == target && now_ms.saturating_sub(*ts) <= Self::DOUBLE_CLICK_MS);
+        let is_double = self.last_click.as_ref().is_some_and(|(prev, ts)| {
+            *prev == target && now_ms.saturating_sub(*ts) <= Self::DOUBLE_CLICK_MS
+        });
         self.last_click = Some((target.clone(), now_ms));
 
         if is_double {
@@ -1345,7 +1342,10 @@ mod tests {
                 (Rect::new(20, 0, 20, 10), Panel::Detail),
                 (Rect::new(0, 10, 40, 5), Panel::Inbox),
             ],
-            agent_cards: vec![(Rect::new(1, 1, 8, 3), "t1".into()), (Rect::new(1, 4, 8, 3), "t2".into())],
+            agent_cards: vec![
+                (Rect::new(1, 1, 8, 3), "t1".into()),
+                (Rect::new(1, 4, 8, 3), "t2".into()),
+            ],
             inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10), (Rect::new(1, 12, 38, 1), 11)],
             ..BoardHitMap::default()
         }
@@ -1355,16 +1355,31 @@ mod tests {
     fn mouse_down_focuses_panel_and_selects_targets() {
         let (mut s, d) = state_with_data();
         let map = hit_map();
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 2), &map, &d, 1);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 25, 2),
+            &map,
+            &d,
+            1,
+        );
         assert_eq!(e, Effect::None);
         assert_eq!(s.panel, Panel::Detail);
 
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 5), &map, &d, 2);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 5),
+            &map,
+            &d,
+            2,
+        );
         assert_eq!(e, Effect::None);
         assert_eq!(s.panel, Panel::Orchestration);
         assert_eq!(s.sel_agent.as_deref(), Some("t2"));
 
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 12), &map, &d, 3);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 12),
+            &map,
+            &d,
+            3,
+        );
         assert_eq!(e, Effect::None);
         assert_eq!(s.panel, Panel::Inbox);
         assert_eq!(s.sel_inbox, Some(11));
@@ -1402,24 +1417,54 @@ mod tests {
             ..BoardHitMap::default()
         };
 
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1), &map, &d, 100);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 1),
+            &map,
+            &d,
+            100,
+        );
         assert_eq!(e, Effect::None);
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 1), &map, &d, 300);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 1),
+            &map,
+            &d,
+            300,
+        );
         assert_eq!(e, Effect::SwitchProject(pk("shop")));
         assert_eq!(s.project, Some(pk("shop")));
 
         let (mut s, d) = state_with_data();
         s.mode = Mode::PickProject { idx: 0 };
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 6, 5), &map, &d, 100);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 6, 5),
+            &map,
+            &d,
+            100,
+        );
         assert_eq!(e, Effect::None);
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 6, 5), &map, &d, 400);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 6, 5),
+            &map,
+            &d,
+            400,
+        );
         assert_eq!(e, Effect::SwitchProject(pk("agmag")));
         assert_eq!(s.mode, Mode::Normal);
 
         let (mut s, d) = state_with_data();
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 11), &map, &d, 100);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 11),
+            &map,
+            &d,
+            100,
+        );
         assert_eq!(e, Effect::None);
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 11), &map, &d, 450);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 11),
+            &map,
+            &d,
+            450,
+        );
         assert_eq!(e, Effect::None);
         assert_eq!(
             s.mode,
@@ -1435,12 +1480,22 @@ mod tests {
         let (mut s, d) = state_with_data();
         let map = hit_map();
         s.mode = Mode::ConfirmDone { id: 10 };
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 2), &map, &d, 1);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 2),
+            &map,
+            &d,
+            1,
+        );
         assert_eq!(e, Effect::None);
         assert_eq!(s.mode, Mode::ConfirmDone { id: 10 });
 
         s.mode = Mode::Normal;
-        let e = s.on_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 2, 2), &map, &d, 2);
+        let e = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Right), 2, 2),
+            &map,
+            &d,
+            2,
+        );
         assert_eq!(e, Effect::None);
         assert_eq!(s.sel_agent.as_deref(), Some("t1"));
         let e = s.on_mouse(mouse(MouseEventKind::Moved, 2, 2), &map, &d, 3);

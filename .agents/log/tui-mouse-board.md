@@ -31,3 +31,10 @@
 - Added short TUI mouse paragraph to README.md and README_vi.md.
 - Added CHANGELOG.md [Unreleased] ### Thêm mới bullet for board mouse capture.
 - Status: green
+
+## Final gates
+- cargo fmt --check: pass (after fmt)
+- cargo clippy --all-targets -- -D warnings: pass
+- cargo test: pass (all suites ok, 0 failed)
+- Fixed test call sites in tests/board_view_test.rs for new draw/draw_in return type.
+- Status: green

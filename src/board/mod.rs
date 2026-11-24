@@ -325,7 +325,12 @@ fn enter_console() -> io::Result<()> {
 
 fn leave_console() -> io::Result<()> {
     let shown = if mouse_enabled(std::env::var("AGM_MOUSE").ok().as_deref()) {
-        execute!(io::stdout(), Show, DisableMouseCapture, LeaveAlternateScreen)
+        execute!(
+            io::stdout(),
+            Show,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )
     } else {
         execute!(io::stdout(), Show, LeaveAlternateScreen)
     };
@@ -447,7 +452,9 @@ impl BoardScreen {
     ) {
         self.needs_refresh = false;
         let prev_agent = self.state.sel_agent.clone();
-        let effect = self.state.on_mouse(mouse, &self.hit_map, &self.data, now_ms);
+        let effect = self
+            .state
+            .on_mouse(mouse, &self.hit_map, &self.data, now_ms);
         if let Effect::SwitchProject(key) = &effect {
             self.state.project = Some(key.clone());
         }

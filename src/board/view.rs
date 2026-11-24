@@ -38,9 +38,15 @@ pub fn layout_mode(width: u16, height: u16) -> LayoutMode {
     }
 }
 
-pub use super::state::{hit, BoardHitMap, HitTarget};
+pub use super::state::{BoardHitMap, HitTarget, hit};
 
-pub fn draw(frame: &mut Frame, state: &BoardState, data: &BoardData, theme: &Theme, ascii: bool) -> BoardHitMap {
+pub fn draw(
+    frame: &mut Frame,
+    state: &BoardState,
+    data: &BoardData,
+    theme: &Theme,
+    ascii: bool,
+) -> BoardHitMap {
     draw_in(frame, frame.area(), state, data, theme, ascii)
 }
 
@@ -656,7 +662,9 @@ fn draw_orchestration(
                     width: width.min(inner.right().saturating_sub(x)),
                     height: inner.height,
                 };
-                draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn, hit);
+                draw_block(
+                    frame, rect, block, &parents, state, data, ctx, &mut drawn, hit,
+                );
                 x = x.saturating_add(width).saturating_add(CARD_GAP);
             }
         }
@@ -675,7 +683,9 @@ fn draw_orchestration(
                     width: inner.width,
                     height: inner.bottom().saturating_sub(y),
                 };
-                y = draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn, hit);
+                y = draw_block(
+                    frame, rect, block, &parents, state, data, ctx, &mut drawn, hit,
+                );
             }
         }
     }
@@ -1668,7 +1678,10 @@ fn draw_popup(
                     "mouse: click focus/select · wheel scroll · double-click open/reply prefill",
                     ctx,
                 ),
-                muted_line("Shift+drag selects text · set AGM_MOUSE=0 to disable mouse capture", ctx),
+                muted_line(
+                    "Shift+drag selects text · set AGM_MOUSE=0 to disable mouse capture",
+                    ctx,
+                ),
                 Line::from(""),
                 muted_line(
                     "every refresh is live; failed actions show in the footer",
@@ -1776,7 +1789,12 @@ mod tests {
     use super::*;
 
     fn rect(x: u16, y: u16, width: u16, height: u16) -> Rect {
-        Rect { x, y, width, height }
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[test]
@@ -1789,7 +1807,10 @@ mod tests {
         };
         assert_eq!(hit(&map, 3, 3), Some(HitTarget::AgentCard("t1".into())));
         assert_eq!(hit(&map, 1, 8), Some(HitTarget::InboxRow(42)));
-        assert_eq!(hit(&map, 1, 1), Some(HitTarget::Panel(Panel::Orchestration)));
+        assert_eq!(
+            hit(&map, 1, 1),
+            Some(HitTarget::Panel(Panel::Orchestration))
+        );
         assert_eq!(hit(&map, 99, 99), None);
     }
 

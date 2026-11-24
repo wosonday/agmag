@@ -9,6 +9,7 @@ pub mod cmd;
 pub mod flows;
 pub mod global;
 pub mod global_view;
+pub mod layout;
 pub mod state;
 pub mod theme;
 pub mod view;

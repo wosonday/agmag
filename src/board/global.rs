@@ -2303,10 +2303,16 @@ mod tests {
         assert_eq!(st.layout.height(3), Some(0.3));
         assert_eq!(st.layout.top_pair_width, Some(0.5));
 
-        // A double-click on a boundary with no override is not a visible change.
+        // A double-click on a boundary with no override left is not a visible change. The first
+        // Down below is a fresh press (the earlier pair was consumed), the second one is the
+        // double-click that really reaches the `!stored` branch.
         let (changed, eff) = st.on_mouse(down(5, 10), &data, 3_000);
         assert!(!changed);
         assert_eq!(eff, GEffect::None);
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 3_100);
+        assert!(!changed);
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(st.layout.height(2), None, "the reset boundary came back");
     }
 
     #[test]

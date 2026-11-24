@@ -156,4 +156,7 @@ test-only items say so explicitly).
    `layout_reset_with_extra_spaces_closes_the_output_overlay` (red: the spaced command reached the
    dispatcher and `output_scroll` stayed 9; green with `split_whitespace().eq(["layout",
    "reset"])` plus `data.output = None; state.output_scroll = 0`).
+4. Test-only fix (no production change): `mouse_double_click_border_resets_only_that_boundary` now
+   sends the second Down at 3_100 ms, so the `!stored` branch of `on_double_click` is really
+   exercised (the earlier pair consumed `last_click`; a single Down could never reach it).
 

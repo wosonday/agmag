@@ -1299,3 +1299,71 @@ fn interactive_pending_cancels_only_below_interactive_warn() -> Result<()> {
     assert_eq!(state(&store), "cancelled", "30% < 40%: hủy");
     Ok(())
 }
+
+/// Phiên Claude/Codex chưa `agm manage`: cảnh báo `unmanaged` ở 50% (không còn đợi 70%), chưa có ở 45%.
+#[test]
+fn unmanaged_claude_and_codex_warn_at_interactive_rotate() -> Result<()> {
+    for app in ["claude-code", "codex"] {
+        for (pct, expect) in [(45_u64, 0_usize), (55, 1)] {
+            let store = Store::open_in_memory()?;
+            store.upsert_terminal(&TerminalRow {
+                address: "t1".into(),
+                app: Some(app.into()),
+                state: "live".into(),
+                ..Default::default()
+            })?;
+            let sid =
+                store.session_id_for_path(Source::Claude, &format!("claude://{app}-{pct}"))?;
+            store.set_context(
+                sid,
+                &ContextSnapshot {
+                    ts_ms: 1,
+                    used_tokens: pct * 1_000,
+                    window_tokens: Some(100_000),
+                },
+            )?;
+            store.link_terminal("t1", sid, "hook")?;
+            rotation::tick(
+                &store,
+                &Config::builtin(),
+                &FakeHc::default(),
+                &FakeGit::default(),
+                1_000,
+            )?;
+            let warns = store
+                .inbox(false)?
+                .into_iter()
+                .filter(|i| i.source == "rotation" && i.kind.as_deref() == Some("unmanaged"))
+                .count();
+            assert_eq!(warns, expect, "{app} {pct}%");
+            assert_eq!(rotation_count(&store)?, 0, "{app} {pct}%");
+        }
+    }
+    Ok(())
+}
+
+/// Ngưỡng hủy theo app của vòng xoay (đã chọn nhánh interactive), không theo `terminals.app` hiện tại.
+#[test]
+fn interactive_cancel_uses_rotation_app_and_covers_claude() -> Result<()> {
+    for (app, source) in [("claude-code", Source::Claude), ("codex", Source::Codex)] {
+        let (store, sid, _tmp) = managed_at(app, source, 55)?;
+        let git = FakeGit::default();
+        rotation::tick(&store, &Config::builtin(), &FakeHc::default(), &git, 1_000)?;
+        assert_eq!(state(&store), "pending", "{app}");
+        // App của terminal bị xóa sau khi vòng đã bắt đầu; vòng vẫn là của Claude/Codex.
+        store
+            .conn()
+            .execute("UPDATE terminals SET app = NULL WHERE address = 't1'", [])?;
+        store.set_context(
+            sid,
+            &ContextSnapshot {
+                ts_ms: 2,
+                used_tokens: 45_000,
+                window_tokens: Some(100_000),
+            },
+        )?;
+        rotation::tick(&store, &Config::builtin(), &FakeHc::default(), &git, 2_000)?;
+        assert_eq!(state(&store), "pending", "{app}: 45% ≥ 40% không được hủy");
+    }
+    Ok(())
+}

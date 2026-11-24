@@ -304,3 +304,46 @@ fn interactive_ctx_thresholds_default_and_parse() {
     assert_eq!(cfg.policy.ctx_thresholds(Some("codex")), (35.0, 45.0));
     assert_eq!(cfg.policy.ctx_thresholds(Some("opencode")), (60.0, 80.0));
 }
+
+/// providers.toml cũ chỉ có `ctx_warn`/`ctx_rotate` vẫn nạp được và giữ mặc định 40/50 cho Claude/Codex.
+#[test]
+fn old_policy_without_interactive_keys_keeps_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.toml");
+    std::fs::write(
+        &path,
+        "[policy]\nmax_workers = 2\nctx_warn = 50\nctx_rotate = 70\n",
+    )
+    .unwrap();
+    let p = Config::load(&path).unwrap().policy;
+    assert_eq!(p.ctx_thresholds(Some("claude-code")), (40.0, 50.0));
+    assert_eq!(p.ctx_thresholds(Some("opencode")), (50.0, 70.0));
+}
+
+/// Ngưỡng phải hữu hạn, trong (0, 100] và warn ≤ rotate; nếu không daemon sẽ tạo rồi hủy vòng xoay mỗi tick.
+#[test]
+fn invalid_ctx_thresholds_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.toml");
+    for policy in [
+        "interactive_ctx_rotate = 35",
+        "ctx_warn = 80",
+        "interactive_ctx_warn = -1",
+        "interactive_ctx_warn = 0",
+        "ctx_rotate = 101",
+        "interactive_ctx_rotate = nan",
+        "ctx_warn = inf",
+    ] {
+        std::fs::write(&path, format!("[policy]\n{policy}\n")).unwrap();
+        let err = Config::load(&path).expect_err(policy);
+        assert!(format!("{err:#}").contains("ctx_"), "{policy}: {err:#}");
+    }
+    for policy in [
+        "interactive_ctx_warn = 30\ninteractive_ctx_rotate = 35",
+        "interactive_ctx_warn = 50\ninteractive_ctx_rotate = 50",
+        "ctx_warn = 100\nctx_rotate = 100",
+    ] {
+        std::fs::write(&path, format!("[policy]\n{policy}\n")).unwrap();
+        assert!(Config::load(&path).is_ok(), "{policy}");
+    }
+}

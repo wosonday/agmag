@@ -171,6 +171,30 @@ impl Policy {
             _ => (self.ctx_warn, self.ctx_rotate),
         }
     }
+
+    /// Each threshold must be finite and in (0, 100], and warn ≤ rotate in each pair. Otherwise the daemon
+    /// would start a rotation at `rotate` and cancel it below `warn` on every tick, or never act at all.
+    pub fn validate(&self) -> Result<()> {
+        for (warn_key, warn, rotate_key, rotate) in [
+            ("ctx_warn", self.ctx_warn, "ctx_rotate", self.ctx_rotate),
+            (
+                "interactive_ctx_warn",
+                self.interactive_ctx_warn,
+                "interactive_ctx_rotate",
+                self.interactive_ctx_rotate,
+            ),
+        ] {
+            for (key, value) in [(warn_key, warn), (rotate_key, rotate)] {
+                if !value.is_finite() || value <= 0.0 || value > 100.0 {
+                    anyhow::bail!("{key} = {value} must be a number in (0, 100]");
+                }
+            }
+            if warn > rotate {
+                anyhow::bail!("{warn_key} = {warn} must not exceed {rotate_key} = {rotate}");
+            }
+        }
+        Ok(())
+    }
 }
 
 fn default_quota_stale_min() -> u64 {
@@ -194,7 +218,12 @@ impl Config {
                 return Err(err).with_context(|| format!("Read config {}", path.display()));
             }
         };
-        toml::from_str(&text).with_context(|| format!("Parse config {}", path.display()))
+        let cfg: Config =
+            toml::from_str(&text).with_context(|| format!("Parse config {}", path.display()))?;
+        cfg.policy
+            .validate()
+            .with_context(|| format!("Invalid [policy] in {}", path.display()))?;
+        Ok(cfg)
     }
 
     pub fn builtin() -> Config {

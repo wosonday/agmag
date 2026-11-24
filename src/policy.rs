@@ -1,4 +1,5 @@
-//! Policy: ngân sách (spec §5.7), cảnh báo ngữ cảnh và xoay vòng thợ OpenCode (§5.9).
+//! Policy: ngân sách (spec §5.7) và cảnh báo ngữ cảnh theo app (`Policy::ctx_thresholds`); xoay vòng
+//! phiên nằm ở `rotation.rs` (§5.9).
 //! Mọi hành động tự động tắt được bằng `agm policy off` (setting `policy = off`).
 
 use anyhow::Result;
@@ -224,7 +225,7 @@ fn context_tick(store: &Store, cfg: &Config, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// Một vòng policy: ngân sách, cảnh báo ngữ cảnh, xoay vòng thợ.
+/// Một vòng policy: ngân sách và cảnh báo ngữ cảnh (xoay vòng chạy ở `rotation::tick`).
 pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, now: i64) -> Result<()> {
     if !enabled(store)? {
         return Ok(());

@@ -339,3 +339,27 @@ fn ctx_warn_uses_interactive_threshold_for_claude_and_codex() -> Result<()> {
     }
     Ok(())
 }
+
+/// Biên dưới: Claude Code ở 35% chưa cảnh báo; ở 40% cảnh báo và câu báo ghi đúng ngưỡng 40%.
+#[test]
+fn interactive_ctx_warn_boundary_and_text() -> Result<()> {
+    for (used, expect) in [(35_000, 0), (40_000, 1)] {
+        let store = Store::open_in_memory()?;
+        let sid = worker(&store, "t1", "claude-code", "a", 1);
+        store.set_context(
+            sid,
+            &ContextSnapshot {
+                ts_ms: 1,
+                used_tokens: used,
+                window_tokens: Some(100_000),
+            },
+        )?;
+        policy::tick(&store, &Config::builtin(), &FakeHc::default(), 2)?;
+        let inbox = store.inbox(true)?;
+        assert_eq!(inbox.len(), expect, "{used}");
+        if let Some(item) = inbox.first() {
+            assert!(item.text.contains("40%"), "{}", item.text);
+        }
+    }
+    Ok(())
+}

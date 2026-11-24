@@ -67,3 +67,16 @@
   `ApprovalRefused` khi không `allowed`. Chỉ đọc grant, không ghi grant.
 - Xanh: `cargo test --test cli_test approval_check` → 5 passed. `cargo fmt --check` sạch.
 - Commit: `feat(approval): add agm approval check with exit codes 5/6`.
+
+### Step 4: tool MCP `agm_approval_check` (RED → GREEN)
+- tests/mcp_test.rs: `tool_list_is_exactly_the_phase1_set` thêm `agm_approval_check` (thứ 8);
+  `tools_list_has_schema_for_each_tool` thêm tool; `no_tool_call_ever_kills` gọi thêm tool (xác nhận read-only);
+  thêm `approval_check_tool_returns_decision_json_and_reads_global_and_grants`: global whitelist (action trim),
+  hard-prohibited, requires_human, grant còn hiệu lực (`grant:<id>`, vẫn 1 hàng grant), `action` rỗng,
+  thiếu `action`, tham số lạ bị từ chối.
+- Đỏ: `unknown tool: agm_approval_check`; danh sách tool thiếu mục thứ 8.
+- src/mcp.rs: thêm định nghĩa tool (action bắt buộc; lane/task chuỗi tùy chọn; `additionalProperties:false`)
+  và nhánh `call_tool` dùng `actions::decide` + `Decision::to_json`, chỉ đọc (không ghi action log/grant).
+- Xanh: `cargo test --test mcp_test approval` 1 passed; `tool_list_is_exactly` 1 passed;
+  `no_tool_call_ever_kills` 1 passed; `cargo fmt --check` sạch.
+- Commit: `feat(mcp): add agm_approval_check read-only tool`.

@@ -107,6 +107,16 @@ pub fn tool_definitions() -> Vec<Value> {
             }),
             &["branches_file", "entry", "fields"],
         ),
+        tool(
+            "agm_approval_check",
+            "Check whether an action may be auto-approved for a lane/task (hard-prohibited, global whitelist, or an active grant). Read-only: decision, action, lane, task, source.",
+            json!({
+                "action": {"type": "string"},
+                "lane": {"type": "string"},
+                "task": {"type": "string"},
+            }),
+            &["action"],
+        ),
     ]
 }
 
@@ -241,6 +251,15 @@ fn call_tool(ctx: &McpCtx, name: &str, args: &Value) -> Result<Value, ToolError>
                 (ctx.clock)(),
             )?;
             Ok(serde_json::to_value(out).map_err(anyhow::Error::from)?)
+        }
+        "agm_approval_check" => {
+            let action = req_str(args, "action")?;
+            let lane = opt_str(args, "lane")?;
+            let task = opt_str(args, "task")?;
+            let cfg = crate::config::Config::load(&ctx.cfg_path)?;
+            let decision =
+                crate::actions::decide(ctx.store, &cfg, action, lane, task, (ctx.clock)())?;
+            Ok(decision.to_json(action.trim(), lane, task))
         }
         "agm_ps" => {
             let all = opt_bool(args, "all")?;

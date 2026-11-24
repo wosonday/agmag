@@ -24,7 +24,7 @@ use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::{Hide, Show};
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -308,13 +308,27 @@ impl<T: TermControl> Drop for TermGuard<T> {
     }
 }
 
+/// Whether mouse capture should be enabled. `AGM_MOUSE=0` disables it as an escape hatch;
+/// any other value (or unset) leaves it on.
+pub fn mouse_enabled(env_value: Option<&str>) -> bool {
+    !matches!(env_value, Some("0"))
+}
+
 fn enter_console() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, Hide)
+    if mouse_enabled(std::env::var("AGM_MOUSE").ok().as_deref()) {
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)
+    } else {
+        execute!(io::stdout(), EnterAlternateScreen, Hide)
+    }
 }
 
 fn leave_console() -> io::Result<()> {
-    let shown = execute!(io::stdout(), Show, LeaveAlternateScreen);
+    let shown = if mouse_enabled(std::env::var("AGM_MOUSE").ok().as_deref()) {
+        execute!(io::stdout(), Show, DisableMouseCapture, LeaveAlternateScreen)
+    } else {
+        execute!(io::stdout(), Show, LeaveAlternateScreen)
+    };
     let raw = disable_raw_mode();
     shown.and(raw)
 }
@@ -554,6 +568,15 @@ mod tests {
             self.calls.borrow_mut().push("leave");
             Ok(())
         }
+    }
+
+    #[test]
+    fn mouse_enabled_respects_env() {
+        assert!(mouse_enabled(None));
+        assert!(mouse_enabled(Some("1")));
+        assert!(mouse_enabled(Some("yes")));
+        assert!(mouse_enabled(Some("")));
+        assert!(!mouse_enabled(Some("0")));
     }
 
     #[test]

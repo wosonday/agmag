@@ -334,7 +334,7 @@ agm budget set task:login-7 --soft 2000000 --hard 5000000 --action kill # hard l
 **Claude Code & Codex session rotation (never auto-kills the old session):**
 
 1. A hand-opened session must be enabled once with `agm manage <t>` — only **you** can do this. agm stores a `launch_spec` (the launch command, sanitized per app; you can specify it with `--cmd "…"` or `-- <argv>…`). Claude requires `agm hook install`. Disable with `agm manage <t> --off`.
-2. When it reaches `ctx_rotate` and is idle (`idle` or `done`), agm asks it to write a hand-off to `.agents/handoff/<id>-<ts>.md` ending with the marker `<!-- agm:handoff-done -->`. agm adds `.agents/handoff/` to the repo's `info/exclude` (git worktrees supported) and does not force a WIP commit.
+2. When it reaches `interactive_ctx_rotate` (default 50%; warning at `interactive_ctx_warn`, 40%) and is idle (`idle` or `done`), agm asks it to write a hand-off to `.agents/handoff/<id>-<ts>.md` ending with the marker `<!-- agm:handoff-done -->`. agm adds `.agents/handoff/` to the repo's `info/exclude` (git worktrees supported) and does not force a WIP commit.
 3. Once the hand-off file is valid, agm opens a new session that reads it and then **waits for you** to continue; the old session stays as `[HANDED OFF]` so you can review it and clean it up manually with `agm cleanup` (or `c` in the TUI). This is a coordination convention (no OS-level write lock on the old session) — avoid editing in both windows; the TUI warns in red when both run in the same directory.
 
 `agm policy off` disables all automatic actions (works even if `providers.toml` is broken).
@@ -364,8 +364,10 @@ price = { input = 3.0, cache_read = 0.3, cache_write = 3.75, output = 15.0 }   #
 [policy]
 max_workers = 3                 # max concurrent workers
 manager = "codex-mgr"           # terminal receiving budget alerts; empty = inbox only
-ctx_warn = 50                   # % context: warn
-ctx_rotate = 70                 # % context: rotate session
+ctx_warn = 50                   # % context: warn (OpenCode workers and other apps)
+ctx_rotate = 70                 # % context: rotate session (OpenCode workers and other apps)
+interactive_ctx_warn = 40       # % context: warn, Claude Code/Codex sessions
+interactive_ctx_rotate = 50     # % context: rotate, Claude Code/Codex sessions
 handoff_timeout_min = 10
 link_timeout_min = 5
 stats_months = 4                # number of recent calendar months for statistics & backfill

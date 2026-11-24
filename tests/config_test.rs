@@ -283,3 +283,72 @@ fn undeclared_opencode_model_billed_by_provider_prefix() {
     );
     assert_eq!(cfg.billing_for_model("nope"), None);
 }
+
+/// Claude Code/Codex có ngưỡng riêng (mặc định 40/50); thợ OpenCode giữ `ctx_warn`/`ctx_rotate` chung.
+#[test]
+fn interactive_ctx_thresholds_default_and_parse() {
+    let p = Config::builtin().policy;
+    assert_eq!(
+        (p.interactive_ctx_warn, p.interactive_ctx_rotate),
+        (40.0, 50.0)
+    );
+    assert_eq!(p.ctx_thresholds(Some("claude-code")), (40.0, 50.0));
+    assert_eq!(p.ctx_thresholds(Some("codex")), (40.0, 50.0));
+    assert_eq!(p.ctx_thresholds(Some("opencode")), (50.0, 70.0));
+    assert_eq!(p.ctx_thresholds(None), (50.0, 70.0));
+
+    let cfg: Config = toml::from_str(
+        "[policy]\nctx_warn = 60\nctx_rotate = 80\ninteractive_ctx_warn = 35\ninteractive_ctx_rotate = 45\n",
+    )
+    .unwrap();
+    assert_eq!(cfg.policy.ctx_thresholds(Some("codex")), (35.0, 45.0));
+    assert_eq!(cfg.policy.ctx_thresholds(Some("opencode")), (60.0, 80.0));
+}
+
+/// providers.toml cũ chỉ có `ctx_warn`/`ctx_rotate` vẫn nạp được và giữ mặc định 40/50 cho Claude/Codex.
+#[test]
+fn old_policy_without_interactive_keys_keeps_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.toml");
+    std::fs::write(
+        &path,
+        "[policy]\nmax_workers = 2\nctx_warn = 50\nctx_rotate = 70\n",
+    )
+    .unwrap();
+    let p = Config::load(&path).unwrap().policy;
+    assert_eq!(p.ctx_thresholds(Some("claude-code")), (40.0, 50.0));
+    assert_eq!(p.ctx_thresholds(Some("opencode")), (50.0, 70.0));
+}
+
+/// Ngưỡng phải hữu hạn, trong (0, 100] và warn ≤ rotate; nếu không daemon sẽ tạo rồi hủy vòng xoay mỗi tick.
+#[test]
+fn invalid_ctx_thresholds_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.toml");
+    for policy in [
+        "interactive_ctx_rotate = 35",
+        "ctx_warn = 80",
+        "interactive_ctx_warn = -1",
+        "interactive_ctx_warn = 0",
+        "ctx_rotate = 101",
+        "interactive_ctx_rotate = nan",
+        "ctx_warn = inf",
+    ] {
+        std::fs::write(&path, format!("[policy]\n{policy}\n")).unwrap();
+        let err = Config::load(&path).expect_err(policy);
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Invalid [policy]"), "{policy}: {msg}");
+        assert!(
+            msg.contains("must be a number in (0, 100]") || msg.contains("must not exceed"),
+            "{policy}: {msg}"
+        );
+    }
+    for policy in [
+        "interactive_ctx_warn = 30\ninteractive_ctx_rotate = 35",
+        "interactive_ctx_warn = 50\ninteractive_ctx_rotate = 50",
+        "ctx_warn = 100\nctx_rotate = 100",
+    ] {
+        std::fs::write(&path, format!("[policy]\n{policy}\n")).unwrap();
+        assert!(Config::load(&path).is_ok(), "{policy}");
+    }
+}

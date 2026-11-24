@@ -117,6 +117,10 @@ pub struct Policy {
     pub ctx_warn: f64,
     /// % ngữ cảnh: xoay vòng phiên.
     pub ctx_rotate: f64,
+    /// % ngữ cảnh: cảnh báo cho phiên Claude Code/Codex (thay `ctx_warn`).
+    pub interactive_ctx_warn: f64,
+    /// % ngữ cảnh: xoay vòng phiên Claude Code/Codex (thay `ctx_rotate`).
+    pub interactive_ctx_rotate: f64,
     /// Phút chờ agent bàn giao trước khi bỏ cuộc và báo người dùng.
     pub handoff_timeout_min: u64,
     /// Phút chờ ghép phiên kế nhiệm trước khi chuyển `needs_attention`.
@@ -143,6 +147,8 @@ impl Default for Policy {
             manager: None,
             ctx_warn: 50.0,
             ctx_rotate: 70.0,
+            interactive_ctx_warn: 40.0,
+            interactive_ctx_rotate: 50.0,
             handoff_timeout_min: 10,
             link_timeout_min: 5,
             stats_months: 4,
@@ -151,6 +157,43 @@ impl Default for Policy {
             codex_quota_poll_min: 15,
             opencode_quota_poll_min: 15,
         }
+    }
+}
+
+impl Policy {
+    /// Ngưỡng `(cảnh báo, xoay vòng)` theo app: Claude Code/Codex dùng cặp `interactive_*`,
+    /// còn lại (thợ OpenCode, shell, app chưa rõ) dùng `ctx_warn`/`ctx_rotate` chung.
+    pub fn ctx_thresholds(&self, app: Option<&str>) -> (f64, f64) {
+        match app {
+            Some("claude-code" | "codex") => {
+                (self.interactive_ctx_warn, self.interactive_ctx_rotate)
+            }
+            _ => (self.ctx_warn, self.ctx_rotate),
+        }
+    }
+
+    /// Each threshold must be finite and in (0, 100], and warn ≤ rotate in each pair. Otherwise the daemon
+    /// would start a rotation at `rotate` and cancel it below `warn` on every tick, or never act at all.
+    pub fn validate(&self) -> Result<()> {
+        for (warn_key, warn, rotate_key, rotate) in [
+            ("ctx_warn", self.ctx_warn, "ctx_rotate", self.ctx_rotate),
+            (
+                "interactive_ctx_warn",
+                self.interactive_ctx_warn,
+                "interactive_ctx_rotate",
+                self.interactive_ctx_rotate,
+            ),
+        ] {
+            for (key, value) in [(warn_key, warn), (rotate_key, rotate)] {
+                if !value.is_finite() || value <= 0.0 || value > 100.0 {
+                    anyhow::bail!("{key} = {value} must be a number in (0, 100]");
+                }
+            }
+            if warn > rotate {
+                anyhow::bail!("{warn_key} = {warn} must not exceed {rotate_key} = {rotate}");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -175,7 +218,12 @@ impl Config {
                 return Err(err).with_context(|| format!("Read config {}", path.display()));
             }
         };
-        toml::from_str(&text).with_context(|| format!("Parse config {}", path.display()))
+        let cfg: Config =
+            toml::from_str(&text).with_context(|| format!("Parse config {}", path.display()))?;
+        cfg.policy
+            .validate()
+            .with_context(|| format!("Invalid [policy] in {}", path.display()))?;
+        Ok(cfg)
     }
 
     pub fn builtin() -> Config {

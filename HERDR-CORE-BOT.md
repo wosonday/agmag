@@ -49,8 +49,10 @@ context_window = 475000
 [policy]
 max_workers = 3                 # trần thợ (agm.role=worker) chạy đồng thời
 manager = "ceo-platform"        # terminal nhận cảnh báo (codex-mgr nếu 1 luồng)
-ctx_warn = 50                   # cảnh báo chung; không phải hạn mức dùng gói
-ctx_rotate = 70                 # fallback chung/workers; CEO/Codex High tự yêu cầu sớm theo policy riêng
+ctx_warn = 50                   # cảnh báo cho thợ OpenCode/app khác; không phải hạn mức dùng gói
+ctx_rotate = 70                 # xoay vòng thợ OpenCode/app khác
+interactive_ctx_warn = 40       # cảnh báo cho phiên Claude Code/Codex
+interactive_ctx_rotate = 50     # daemon xoay vòng phiên Claude Code/Codex đã `agm manage`
 handoff_timeout_min = 10
 link_timeout_min = 5
 stats_months = 4
@@ -90,7 +92,7 @@ Trên Windows, `hc run <template>` có thể lỗi `cannot start "sh"`; `agm` t�
 
 Các mẫu dưới đây dùng [Skill Routing](docs/SKILL-ROUTING.md): một workflow + một domain là mặc định; thêm skill đúng giai đoạn khi cần và luôn giữ verification. Đây là mẫu tài liệu; cập nhật chúng không tự sửa template đang cài trên máy hay cài skill cho mọi CLI.
 
-**Ngữ cảnh CEO/Codex High:** theo [Context Rotation](docs/CONTEXT-ROTATION.md), phiên đã managed tự gọi `agm rotate <terminal-của-mình>` ở 50%, dự trữ đến 55% chỉ để bàn giao; task dài thường chọn 40% (35–45%) hoặc thấp hơn khi có dự báo cụ thể. Không đổi `ctx_rotate` chung chỉ để đạt ngưỡng theo vai; `agm 0.4.0` chưa có cấu hình ngưỡng riêng hoặc flag `manage` cho việc đó. Trước khi giao lại phải giữ task đang chạy và quyền đã duyệt trong handoff.
+**Ngữ cảnh CEO/Codex High:** theo [Context Rotation](docs/CONTEXT-ROTATION.md), phiên đã managed tự gọi `agm rotate <terminal-của-mình>` ở 50%, dự trữ đến 55% chỉ để bàn giao; task dài thường chọn 40% (35–45%) hoặc thấp hơn khi có dự báo cụ thể. Daemon cũng tự xoay vòng mọi phiên Claude Code/Codex đã managed ở `interactive_ctx_rotate` (mặc định 50%), nên mốc 40% là việc phiên tự chủ động; không đổi `ctx_rotate` chung (dành cho thợ OpenCode) để đạt ngưỡng theo vai. Trước khi giao lại phải giữ task đang chạy và quyền đã duyệt trong handoff.
 
 > **Quy tắc `agm` nhúng vào `AGENTS.md` / `CLAUDE.md`:**
 > - Gửi tin ngắn (1–3 dòng, không truyền lịch sử hội thoại): `agm send <terminal> --type GIAO|BÁO CÁO|LỖI|HỎI|CHẶN|ĐẠT|CHƯA ĐẠT --task <ID> "<tóm tắt; xem tệp>"` (nhận cả mã tiếng Anh `ASSIGN|REPORT|ERROR|QUESTION|BLOCKED|PASS|FAIL`)

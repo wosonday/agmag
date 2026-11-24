@@ -1000,7 +1000,8 @@ pub fn exit_code(err: &anyhow::Error) -> u8 {
     }
     if let Some(refused) = err.downcast_ref::<ApprovalRefused>() {
         return match refused.decision {
-            ApprovalDecision::Allowed => 0,
+            // Err chứa `Allowed` là trường hợp bọc nhầm: không bao giờ được thoát 0 như lệnh thành công.
+            ApprovalDecision::Allowed => 1,
             ApprovalDecision::RequiresHuman => EXIT_APPROVAL_REQUIRES_HUMAN,
             ApprovalDecision::HardProhibited => EXIT_APPROVAL_HARD_PROHIBITED,
         };

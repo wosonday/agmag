@@ -835,6 +835,23 @@ fn non_shell_foreground_keeps_current_rules() -> Result<()> {
 }
 
 #[test]
+fn approval_refused_never_exits_zero() {
+    for (decision, expected) in [
+        (ApprovalDecision::Allowed, 1),
+        (ApprovalDecision::RequiresHuman, 5),
+        (ApprovalDecision::HardProhibited, 6),
+    ] {
+        let err: anyhow::Error = actions::ApprovalRefused {
+            decision,
+            action: "spawn_worker".into(),
+            source: "none".into(),
+        }
+        .into();
+        assert_eq!(actions::exit_code(&err), expected, "{decision:?}");
+    }
+}
+
+#[test]
 fn approval_new_grant_supersedes_older_ones() {
     let store = Store::open_in_memory().unwrap();
     let cfg = approval_cfg(&[]);

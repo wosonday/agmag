@@ -178,3 +178,10 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
 - GREEN: src/main.rs bỏ hoàn toàn `store.log_action(...)` trong nhánh `ApprovalCmd::Check`, thêm ghi chú read-only.
 - `cargo test --test cli_test approval_check` 8 passed; `cargo fmt --check` sạch; EOL main.rs vẫn CRLF.
 - Commit: `fix(approval): make approval check truly read-only`.
+
+### Item 7 — `ApprovalRefused` không bao giờ trả mã 0 (RED → GREEN)
+- RED: tests/actions_test.rs thêm `approval_refused_never_exits_zero` (bọc cả `Allowed` vào `ApprovalRefused`);
+  chạy → đỏ `left: 0, right: 1`.
+- GREEN: src/actions.rs `exit_code` ánh xạ `Allowed => 1` (giữ 5/6 cho hai trạng thái từ chối thật).
+- `cargo test --test actions_test approval_refused_never_exits_zero` 1 passed; `cargo fmt --check` sạch; EOL không đổi.
+- Commit: `fix(approval): never map ApprovalRefused to exit 0`.

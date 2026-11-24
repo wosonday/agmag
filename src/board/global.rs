@@ -1,7 +1,8 @@
 //! Global screen state of the full-screen `agm tui`: focus, command line, popup, selections.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -194,6 +195,110 @@ pub enum BorderId {
     OutputTop,
 }
 
+/// Settings key the overview's panel proportions are saved under.
+pub const LAYOUT_SETTING_KEY: &str = "tui_layout";
+
+/// The overview's panel proportions, as ratios so a window resize recomputes the layout instead of
+/// replaying stale row counts. Empty means "everything content-fitted".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LayoutOverride {
+    /// Fraction of the section area width given to the left panel of the top pair.
+    pub top_pair_width: Option<f32>,
+    /// `BorderId::Horizontal(i)` → fraction of the section area height given to the group
+    /// directly above that boundary.
+    pub heights: BTreeMap<usize, f32>,
+}
+
+impl LayoutOverride {
+    pub fn is_empty(&self) -> bool {
+        self.top_pair_width.is_none() && self.heights.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.top_pair_width = None;
+        self.heights.clear();
+    }
+
+    /// Removes the override of one boundary; the other boundaries stay as they are.
+    pub fn reset(&mut self, border: BorderId) {
+        match border {
+            BorderId::TopPairVertical => self.top_pair_width = None,
+            BorderId::Horizontal(i) => {
+                self.heights.remove(&i);
+            }
+            BorderId::OutputTop => {}
+        }
+    }
+
+    pub fn set_top_pair_width(&mut self, fraction: f32) {
+        if fraction.is_finite() {
+            self.top_pair_width = Some(fraction.clamp(0.0, 1.0));
+        }
+    }
+
+    pub fn set_height(&mut self, boundary: usize, fraction: f32) {
+        if fraction.is_finite() {
+            self.heights.insert(boundary, fraction.clamp(0.0, 1.0));
+        }
+    }
+
+    pub fn height(&self, boundary: usize) -> Option<f32> {
+        self.heights.get(&boundary).copied()
+    }
+}
+
+/// Compact persisted form: `w=<fraction>` plus `h<boundary>=<fraction>` entries, `;` separated.
+/// Four decimals are enough for a drag and keep the setting short.
+impl fmt::Display for LayoutOverride {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        if let Some(width) = self.top_pair_width {
+            write!(f, "w={width:.4}")?;
+            first = false;
+        }
+        for (&boundary, &fraction) in &self.heights {
+            if !first {
+                write!(f, ";")?;
+            }
+            write!(f, "h{boundary}={fraction:.4}")?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
+impl LayoutOverride {
+    /// Reads the compact form back; anything malformed (unknown key, NaN, out of range, duplicate)
+    /// is ignored as a whole so a corrupt setting can never produce a broken layout.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Some(Self::default());
+        }
+        let mut layout = Self::default();
+        for field in text.split(';') {
+            let (key, value) = field.split_once('=')?;
+            let key = key.trim();
+            let value: f32 = value.trim().parse().ok()?;
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return None;
+            }
+            if key == "w" {
+                if layout.top_pair_width.is_some() {
+                    return None;
+                }
+                layout.top_pair_width = Some(value);
+            } else {
+                let index: usize = key.strip_prefix('h')?.parse().ok()?;
+                if layout.heights.insert(index, value).is_some() {
+                    return None;
+                }
+            }
+        }
+        Some(layout)
+    }
+}
+
 /// A panel recorded by the renderer. Output is an overlay, not one of the view's `Section`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitPanel {
@@ -289,6 +394,8 @@ pub struct GlobalState {
     pub output_scroll: u16,
     pub theme: ThemeName,
     pub note: Option<(NoteKind, String)>,
+    /// Panel proportions chosen by dragging; empty means content-fitted defaults.
+    pub layout: LayoutOverride,
     /// Index of `sel_terminal` in the last snapshot, so a removed row keeps its neighbour.
     prev_terminal_idx: Option<usize>,
     /// Index of `sel_inbox` in the last snapshot, so a removed row keeps its neighbour.
@@ -312,6 +419,7 @@ impl GlobalState {
             output_scroll: 0,
             theme,
             note: None,
+            layout: LayoutOverride::default(),
             prev_terminal_idx: None,
             prev_inbox_idx: None,
             last_click: None,
@@ -530,11 +638,7 @@ impl GlobalState {
     }
 
     fn click_row(&mut self, row: RowTarget, data: &GlobalData) -> (bool, GEffect) {
-        let before = (
-            self.focus.clone(),
-            self.sel_terminal.clone(),
-            self.sel_inbox,
-        );
+        let before = (self.focus, self.sel_terminal.clone(), self.sel_inbox);
         match row {
             RowTarget::Terminal(address) => {
                 self.prev_terminal_idx = data.snap.as_ref().and_then(|snap| {
@@ -557,12 +661,7 @@ impl GlobalState {
             RowTarget::Agent(_) | RowTarget::Project(_) => return (false, GEffect::None),
         }
         (
-            before
-                != (
-                    self.focus.clone(),
-                    self.sel_terminal.clone(),
-                    self.sel_inbox,
-                ),
+            before != (self.focus, self.sel_terminal.clone(), self.sel_inbox),
             GEffect::None,
         )
     }
@@ -1704,7 +1803,7 @@ mod tests {
             input: "y".into(),
         });
         let before = (
-            st.focus.clone(),
+            st.focus,
             st.sel_terminal.clone(),
             st.sel_inbox,
             st.cmd.text.clone(),
@@ -1731,7 +1830,7 @@ mod tests {
         }
         assert_eq!(
             (
-                st.focus.clone(),
+                st.focus,
                 st.sel_terminal.clone(),
                 st.sel_inbox,
                 st.cmd.text.clone(),
@@ -1781,7 +1880,7 @@ mod tests {
     #[test]
     fn mouse_ignores_non_left_and_moved_events() {
         let (mut st, data) = overview_state();
-        let before = (st.focus.clone(), st.sel_terminal.clone(), st.sel_inbox);
+        let before = (st.focus, st.sel_terminal.clone(), st.sel_inbox);
         for kind in [
             MouseEventKind::Moved,
             MouseEventKind::Up(MouseButton::Left),
@@ -1797,10 +1896,75 @@ mod tests {
                 assert_eq!(eff, GEffect::None);
             }
         }
-        assert_eq!(
-            (st.focus.clone(), st.sel_terminal.clone(), st.sel_inbox),
-            before
-        );
+        assert_eq!((st.focus, st.sel_terminal.clone(), st.sel_inbox), before);
+    }
+
+    #[test]
+    fn layout_override_parse_roundtrip_and_garbage() {
+        let empty = LayoutOverride::default();
+        assert_eq!(empty.to_string(), "");
+        assert_eq!(LayoutOverride::parse(""), Some(empty.clone()));
+        assert_eq!(LayoutOverride::parse("   "), Some(empty));
+
+        let mut layout = LayoutOverride {
+            top_pair_width: Some(0.625),
+            ..Default::default()
+        };
+        layout.heights.insert(2, 0.25);
+        layout.heights.insert(3, 0.375);
+        let text = layout.to_string();
+        assert_eq!(text, "w=0.6250;h2=0.2500;h3=0.3750");
+        assert_eq!(LayoutOverride::parse(&text), Some(layout));
+
+        // Anything that is not `w=<fraction>` / `h<index>=<fraction>` is ignored, never half-read.
+        for garbage in [
+            "nonsense",
+            "0.5",
+            "w",
+            "w=abc",
+            "w=0.5;oops",
+            "h=0.5",
+            "hx=0.5",
+            "h2=x",
+            "h2=nan",
+            "h2=inf",
+            "h2=-0.1",
+            "h2=1.5",
+            "x=0.5",
+            "w=0.5;w=0.6",
+            "h2=0.5;h2=0.6",
+        ] {
+            assert_eq!(
+                LayoutOverride::parse(garbage),
+                None,
+                "{garbage:?} must be ignored"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_override_resets_only_the_named_boundary() {
+        let mut layout = LayoutOverride {
+            top_pair_width: Some(0.5),
+            ..Default::default()
+        };
+        layout.heights.insert(2, 0.3);
+        layout.heights.insert(3, 0.4);
+
+        layout.reset(BorderId::OutputTop);
+        assert_eq!(layout.top_pair_width, Some(0.5), "OutputTop is not stored");
+        assert_eq!(layout.heights.len(), 2);
+
+        layout.reset(BorderId::Horizontal(2));
+        assert_eq!(layout.top_pair_width, Some(0.5));
+        assert_eq!(layout.heights.keys().copied().collect::<Vec<_>>(), vec![3]);
+
+        layout.reset(BorderId::TopPairVertical);
+        assert_eq!(layout.top_pair_width, None);
+        assert_eq!(layout.heights.len(), 1);
+
+        layout.clear();
+        assert!(layout.is_empty());
     }
 
     #[test]

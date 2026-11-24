@@ -38,3 +38,24 @@ Supporting changes in this step: `HitPanel::CmdLine` (the command bar is a hit t
 skips the command line in the "every rect inside main" check (it is below main by definition) and
 its exhaustive `HitPanel` match lists `CmdLine` with `Output` as "not a section".
 
+
+## Step 2 — layout overrides (pure)
+
+New tests (written first, seen failing: `LayoutOverride`/`apply_height_overrides` missing):
+
+- `layout_override_parse_roundtrip_and_garbage`
+- `layout_override_resets_only_the_named_boundary`
+- `layout_override_height_keeps_floors_and_messages_flexible`
+- `layout_override_tiny_size_ignores_an_impossible_override`
+- `layout_override_shrinks_with_the_window`
+- `layout_override_ignores_a_stale_boundary_index`
+- `layout_override_top_pair_width_clamped_to_twenty_columns`
+
+Code: `LayoutOverride { top_pair_width: Option<f32>, heights: BTreeMap<usize, f32> }` in
+`src/board/global.rs` (one field on `GlobalState`: `layout`), compact `w=...;h2=...` text with
+`Display`/`parse` (garbage -> `None`). `section_layout` applies `pair_column_widths` and
+`apply_height_overrides` AFTER `fit_heights`: key `Horizontal(i)` sizes the group above it
+(wide: `Horizontal(2)` = top pair), Messages takes the remainder, floors `MIN_SECTION_H` /
+`MESSAGES_MIN`, >= 20 columns per top panel, stale keys ignored, impossible windows ignore the
+override. Green: `cargo test` = **758 passed, 0 failed** (lib 122); clippy clean.
+

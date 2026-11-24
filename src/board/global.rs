@@ -188,13 +188,28 @@ pub enum BorderId {
     TopPairVertical,
     /// Boundary above the section with this index in `visible_sections(&data.view)`.
     Horizontal(usize),
+    /// Top edge of the Output overlay, above the lower half of the section area.
+    OutputTop,
+}
+
+/// A panel recorded by the renderer. Output is an overlay, not one of the view's `Section`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitPanel {
+    Section(Section),
+    Output,
+}
+
+impl From<Section> for HitPanel {
+    fn from(section: Section) -> Self {
+        HitPanel::Section(section)
+    }
 }
 
 /// What the last frame drew where. Rebuilt on every draw and kept in `GlobalState` so the app
 /// loop can hit-test after drawing without re-deriving the layout.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HitMap {
-    pub panels: Vec<(Rect, Section)>,
+    pub panels: Vec<(Rect, HitPanel)>,
     pub rows: Vec<(Rect, RowTarget)>,
     pub borders: Vec<(Rect, BorderId)>,
 }
@@ -209,7 +224,7 @@ impl HitMap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hit {
-    Panel(Section),
+    Panel(HitPanel),
     Row(RowTarget),
     Border(BorderId),
 }
@@ -305,8 +320,8 @@ impl GlobalState {
         self.hit_map.borrow_mut().clear();
     }
 
-    pub(crate) fn push_panel(&self, rect: Rect, section: Section) {
-        self.hit_map.borrow_mut().panels.push((rect, section));
+    pub(crate) fn push_panel(&self, rect: Rect, panel: impl Into<HitPanel>) {
+        self.hit_map.borrow_mut().panels.push((rect, panel.into()));
     }
 
     pub(crate) fn push_row(&self, rect: Rect, target: RowTarget) {
@@ -315,6 +330,53 @@ impl GlobalState {
 
     pub(crate) fn push_border(&self, rect: Rect, id: BorderId) {
         self.hit_map.borrow_mut().borders.push((rect, id));
+    }
+
+    /// Clip away entries hidden by an overlay drawn over part of the section area. The Output
+    /// panel spans the full width, so removing the vertical band of each rect is enough: a rect
+    /// starting above the overlay keeps its visible top part, one starting inside is dropped.
+    pub(crate) fn clip_hit_map(&self, hidden: Rect) {
+        fn clip(rect: Rect, hidden: Rect) -> Option<Rect> {
+            if rect.width == 0
+                || rect.height == 0
+                || rect.bottom() <= hidden.y
+                || rect.y >= hidden.bottom()
+            {
+                return Some(rect);
+            }
+            if rect.y < hidden.y {
+                return Some(Rect {
+                    height: hidden.y - rect.y,
+                    ..rect
+                });
+            }
+            let y = hidden.bottom();
+            if y < rect.bottom() {
+                Some(Rect {
+                    y,
+                    height: rect.bottom() - y,
+                    ..rect
+                })
+            } else {
+                None
+            }
+        }
+        let mut map = self.hit_map.borrow_mut();
+        map.panels = map
+            .panels
+            .iter()
+            .filter_map(|(r, p)| clip(*r, hidden).map(|r| (r, *p)))
+            .collect();
+        map.rows = map
+            .rows
+            .iter()
+            .filter_map(|(r, t)| clip(*r, hidden).map(|r| (r, t.clone())))
+            .collect();
+        map.borders = map
+            .borders
+            .iter()
+            .filter_map(|(r, b)| clip(*r, hidden).map(|r| (r, *b)))
+            .collect();
     }
 
     pub fn on_key(&mut self, key: KeyEvent, data: &GlobalData) -> GEffect {
@@ -843,11 +905,14 @@ mod tests {
         let row = Rect::new(1, 1, 18, 1);
         let border = Rect::new(19, 0, 1, 10);
         let map = HitMap {
-            panels: vec![(panel, Section::Terminals)],
+            panels: vec![(panel, HitPanel::Section(Section::Terminals))],
             rows: vec![(row, RowTarget::Terminal("t1".into()))],
             borders: vec![(border, BorderId::TopPairVertical)],
         };
-        assert_eq!(hit(&map, 5, 5), Some(Hit::Panel(Section::Terminals)));
+        assert_eq!(
+            hit(&map, 5, 5),
+            Some(Hit::Panel(HitPanel::Section(Section::Terminals)))
+        );
         assert_eq!(
             hit(&map, 5, 1),
             Some(Hit::Row(RowTarget::Terminal("t1".into())))

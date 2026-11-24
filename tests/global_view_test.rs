@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use agmag::board::global::{
-    BorderId, Focus, GlobalData, GlobalState, Hit, HitMap, Popup, RowTarget, hit,
+    BorderId, Focus, GlobalData, GlobalState, Hit, HitMap, HitPanel, Popup, RowTarget, hit,
 };
 use agmag::board::global_view::draw_global;
 use agmag::board::theme::{ThemeName, theme};
@@ -864,10 +864,17 @@ fn hit_map_records_what_the_overview_drew() {
     let (_, messages_top, _, _) = panel_rect(&buf, "Messages");
     assert_eq!(
         hit(&map, 5, messages_top + 5),
-        Some(Hit::Panel(Section::Messages)),
+        Some(Hit::Panel(HitPanel::Section(Section::Messages))),
         "messages panel not recorded"
     );
-    let sections: Vec<Section> = map.panels.iter().map(|(_, s)| *s).collect();
+    let sections: Vec<Section> = map
+        .panels
+        .iter()
+        .filter_map(|(_, p)| match p {
+            HitPanel::Section(s) => Some(*s),
+            HitPanel::Output => None,
+        })
+        .collect();
     assert_eq!(
         sections,
         vec![
@@ -1062,6 +1069,59 @@ fn top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages() {
         messages_h >= 5,
         "Messages was squeezed to {messages_h} rows:\n{}",
         text(&buf)
+    );
+}
+
+#[test]
+fn output_overlay_hides_covered_hit_entries() {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    for i in 0..11 {
+        snap.terminals
+            .push(terminal(&format!("t{i}"), &format!("worker-{i}")));
+    }
+    d.output = Some(
+        (0..40)
+            .map(|i| format!("out-{i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    let map = state.hit_map();
+    let (_, output_top, _, output_h) = panel_rect(&buf, "Output");
+    let output = ratatui::layout::Rect::new(0, output_top, 140, output_h);
+    assert!(
+        map.panels
+            .iter()
+            .any(|(r, p)| *p == HitPanel::Output && *r == output),
+        "the Output panel itself must be in the hit map:\n{}",
+        text(&buf)
+    );
+    let covered = map
+        .panels
+        .iter()
+        .map(|(r, p)| (*r, format!("{p:?}")))
+        .chain(map.rows.iter().map(|(r, t)| (*r, format!("{t:?}"))))
+        .chain(map.borders.iter().map(|(r, b)| (*r, format!("{b:?}"))))
+        .filter(|(r, label)| {
+            !matches!(label.as_str(), "Output" | "OutputTop") && r.y < output.bottom()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        covered.iter().all(|(r, _)| r.bottom() <= output_top),
+        "hidden entries survived under Output: {covered:?}:\n{}",
+        text(&buf)
+    );
+    assert_eq!(
+        hit(&map, 5, output_top),
+        Some(Hit::Border(BorderId::OutputTop)),
+        "Output's top boundary must be draggable"
+    );
+    assert_eq!(
+        hit(&map, 5, output_top + 2),
+        Some(Hit::Panel(HitPanel::Output)),
+        "clicking the Output body must not hit a hidden panel"
     );
 }
 

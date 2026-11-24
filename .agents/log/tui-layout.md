@@ -64,3 +64,9 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - RED: `message_row_rects_follow_wrapped_height`: at width 100 a 250-cell message wraps to header + 3 text rows, but the Message(0) rect was the hard-coded 2 rows, so the Message(1) rect did not cover its drawn text.
 - CODE: `wrapped_line_rows` counts rows with ratatui's wrap rule (greedy word packing, trimmed leading whitespace, long words broken at the row width) using grapheme widths. `draw_messages` records one rect per message from the summed header/text row counts, clipped to the visible/scrolled window.
 - GREEN: new test passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+
+### Item 5 - Output overlay hit map
+
+- RED: `output_overlay_hides_covered_hit_entries` (140x40, 11 terminals, Output open): no `HitPanel::Output` existed and compile failed on the missing type/border variant.
+- CODE: `HitPanel { Section, Output }` replaces `Section` in `HitMap.panels`/`Hit::Panel` (`From<Section>` keeps call sites simple); added `BorderId::OutputTop`. Extracted `output_rect` so drawing and hit mapping agree; `draw_global` clips away entries under the overlay, then records the Output panel and its top boundary.
+- GREEN: new test passes (covered panels/rows/borders clipped, Output and its border hit-testable); `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.

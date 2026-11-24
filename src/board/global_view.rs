@@ -17,7 +17,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
 use super::global::{
-    BorderId, CmdLine, Focus, GlobalData, GlobalState, Popup, RowTarget, is_plain_shell,
+    BorderId, CmdLine, Focus, GlobalData, GlobalState, HitPanel, Popup, RowTarget, is_plain_shell,
     ordered_terminals, visible_sections,
 };
 use super::theme::Theme;
@@ -70,8 +70,20 @@ pub fn draw_global(
             BorderId::Horizontal(visible_sections(&data.view).len().saturating_sub(1)),
         );
     }
-    if let Some(output) = &data.output {
-        draw_output(frame, sections, output, state.output_scroll, ctx);
+    if let (Some(output), Some(rect)) = (data.output.as_deref(), output_rect(sections)) {
+        draw_output(frame, rect, output, state.output_scroll, ctx);
+        // The overlay was drawn last: nothing it covers may remain clickable in the hit map.
+        state.clip_hit_map(rect);
+        state.push_panel(rect, HitPanel::Output);
+        state.push_border(
+            Rect {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: 1,
+            },
+            BorderId::OutputTop,
+        );
     }
     let mut cursor = None;
     if state.popup.is_none() && matches!(state.focus, Focus::CmdLine) {
@@ -1287,31 +1299,37 @@ pub(crate) fn draw_output_overlay(
     theme: &Theme,
     ascii: bool,
 ) {
-    draw_output(
-        frame,
-        area,
-        text,
-        scroll,
-        Ctx {
-            theme,
-            ascii,
-            now_ms: 0,
-        },
-    );
+    if let Some(rect) = output_rect(area) {
+        draw_output(
+            frame,
+            rect,
+            text,
+            scroll,
+            Ctx {
+                theme,
+                ascii,
+                now_ms: 0,
+            },
+        );
+    }
 }
 
-/// `Outcome::Shown` text over the lower half of the section area, above Messages.
-fn draw_output(frame: &mut Frame, area: Rect, text: &str, scroll: u16, ctx: Ctx) {
+/// Rectangle the Output overlay occupies: the lower half of the section area.
+fn output_rect(area: Rect) -> Option<Rect> {
     if area.width < 4 || area.height < 3 {
-        return;
+        return None;
     }
     let height = (area.height / 2).max(3).min(area.height);
-    let rect = Rect {
+    Some(Rect {
         x: area.x,
         y: area.y + area.height - height,
         width: area.width,
         height,
-    };
+    })
+}
+
+/// `Outcome::Shown` text over the lower half of the section area, above Messages.
+fn draw_output(frame: &mut Frame, rect: Rect, text: &str, scroll: u16, ctx: Ctx) {
     frame.render_widget(Clear, rect);
     let block = panel(" Output ".to_string(), ctx.theme.accent, ctx);
     let inner = block.inner(rect);

@@ -283,3 +283,24 @@ fn undeclared_opencode_model_billed_by_provider_prefix() {
     );
     assert_eq!(cfg.billing_for_model("nope"), None);
 }
+
+/// Claude Code/Codex có ngưỡng riêng (mặc định 40/50); thợ OpenCode giữ `ctx_warn`/`ctx_rotate` chung.
+#[test]
+fn interactive_ctx_thresholds_default_and_parse() {
+    let p = Config::builtin().policy;
+    assert_eq!(
+        (p.interactive_ctx_warn, p.interactive_ctx_rotate),
+        (40.0, 50.0)
+    );
+    assert_eq!(p.ctx_thresholds(Some("claude-code")), (40.0, 50.0));
+    assert_eq!(p.ctx_thresholds(Some("codex")), (40.0, 50.0));
+    assert_eq!(p.ctx_thresholds(Some("opencode")), (50.0, 70.0));
+    assert_eq!(p.ctx_thresholds(None), (50.0, 70.0));
+
+    let cfg: Config = toml::from_str(
+        "[policy]\nctx_warn = 60\nctx_rotate = 80\ninteractive_ctx_warn = 35\ninteractive_ctx_rotate = 45\n",
+    )
+    .unwrap();
+    assert_eq!(cfg.policy.ctx_thresholds(Some("codex")), (35.0, 45.0));
+    assert_eq!(cfg.policy.ctx_thresholds(Some("opencode")), (60.0, 80.0));
+}

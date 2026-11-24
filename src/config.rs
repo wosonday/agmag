@@ -117,6 +117,10 @@ pub struct Policy {
     pub ctx_warn: f64,
     /// % ngữ cảnh: xoay vòng phiên.
     pub ctx_rotate: f64,
+    /// % ngữ cảnh: cảnh báo cho phiên Claude Code/Codex (thay `ctx_warn`).
+    pub interactive_ctx_warn: f64,
+    /// % ngữ cảnh: xoay vòng phiên Claude Code/Codex (thay `ctx_rotate`).
+    pub interactive_ctx_rotate: f64,
     /// Phút chờ agent bàn giao trước khi bỏ cuộc và báo người dùng.
     pub handoff_timeout_min: u64,
     /// Phút chờ ghép phiên kế nhiệm trước khi chuyển `needs_attention`.
@@ -143,6 +147,8 @@ impl Default for Policy {
             manager: None,
             ctx_warn: 50.0,
             ctx_rotate: 70.0,
+            interactive_ctx_warn: 40.0,
+            interactive_ctx_rotate: 50.0,
             handoff_timeout_min: 10,
             link_timeout_min: 5,
             stats_months: 4,
@@ -150,6 +156,19 @@ impl Default for Policy {
             quota_stale_min: 60,
             codex_quota_poll_min: 15,
             opencode_quota_poll_min: 15,
+        }
+    }
+}
+
+impl Policy {
+    /// Ngưỡng `(cảnh báo, xoay vòng)` theo app: Claude Code/Codex dùng cặp `interactive_*`,
+    /// còn lại (thợ OpenCode, shell, app chưa rõ) dùng `ctx_warn`/`ctx_rotate` chung.
+    pub fn ctx_thresholds(&self, app: Option<&str>) -> (f64, f64) {
+        match app {
+            Some("claude-code" | "codex") => {
+                (self.interactive_ctx_warn, self.interactive_ctx_rotate)
+            }
+            _ => (self.ctx_warn, self.ctx_rotate),
         }
     }
 }

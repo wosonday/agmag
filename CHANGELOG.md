@@ -9,6 +9,10 @@
 - `agm tui` giờ là app toàn màn hình (ratatui): màn tổng với Quota (thanh % còn lại theo màu), Terminals và Inbox (bảng chọn dòng), Messages (ghim dưới), Usage/Budgets/System (giữ chữ màu cũ trong panel), thanh lệnh `agm>` có lịch sử (`↑↓`), panel Output cho `show`/`cd`/`cleanup`; `kill`/`interrupt`/`cleanup` xác nhận bằng popup gõ `y` rồi `⏎`. `cd <dự án>` hoặc `⏎` trên một terminal mở bảng dự án ngay trong app, `q` quay về màn tổng, `ctrl+c` thoát. Phím trong panel: `tab`, `↑↓`, `⏎`, `r`/`d` (inbox, điền sẵn lệnh), `s` (terminal), `t` theme, `PgUp`/`PgDn` cuộn Output. Giao diện dòng lệnh cũ: `agm tui --plain`. Hai giao diện chạy lệnh qua cùng một bộ xử lý nên giữ nguyên ý nghĩa và câu báo.
 - Bảng dự án: mọi CEO luôn ở hàng đầu, mỗi CEO một khối cột chứa thợ của mình (thợ mất cha vào khối `no CEO`; khối xếp chồng khi hẹp, báo `↓ N more` khi không đủ chỗ); thẻ 4 dòng căn giữa (tên, model, doing, ‹task›) với màu theo vai trò; cột trái chỉ còn Status (mỗi trạng thái một dòng); trong `agm tui` bảng có thanh lệnh `agm>` (`:` để gõ). Màn tổng: Quota vừa nội dung, Terminals rộng hơn với tiêu đề gọn.
 
+### Thay đổi
+
+- Ngưỡng ngữ cảnh riêng cho Claude Code và Codex: `[policy].interactive_ctx_warn` (mặc định 40) và `[policy].interactive_ctx_rotate` (mặc định 50). Cảnh báo ngữ cảnh, xoay vòng phiên đã `agm manage`, cảnh báo phiên chưa quản lý và việc hủy vòng tự động khi ngữ cảnh giảm đều dùng cặp này cho `claude-code`/`codex`; thợ OpenCode và app khác vẫn dùng `ctx_warn`/`ctx_rotate` (50/70).
+
 ### Sửa lỗi
 
 - `agm tui` không còn chặn người dùng trong pane shell của herdr khi cờ reported hoặc app agent trong agm.db còn sót lại từ một agent đã thoát.

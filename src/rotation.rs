@@ -242,7 +242,8 @@ pub fn tick(store: &Store, cfg: &Config, hc: &dyn Hc, git: &dyn Git, now: i64) -
         let Some(pct) = session_context_pct(store, cfg, sid)? else {
             continue;
         };
-        if pct < cfg.policy.ctx_rotate {
+        let (_, rotate) = cfg.policy.ctx_thresholds(t.app.as_deref());
+        if pct < rotate {
             continue;
         }
         if rotatable(&t) {
@@ -528,7 +529,7 @@ fn advance_interactive(
             if r.ctx_pct.is_some()
                 && let Some(sid) = t.session
                 && let Some(pct) = session_context_pct(store, cfg, sid)?
-                && pct < cfg.policy.ctx_warn
+                && pct < cfg.policy.ctx_thresholds(t.app.as_deref()).0
             {
                 return set_state(
                     store,

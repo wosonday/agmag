@@ -1186,3 +1186,116 @@ fn rotation_successor_without_brief_child() -> Result<()> {
     assert!(!rot.text.contains("agm spawn"), "{}", rot.text);
     Ok(())
 }
+
+/// Terminal `app` đã bật quản lý, liên kết với phiên dùng `pct`% ngữ cảnh.
+fn managed_at(app: &str, source: Source, pct: u64) -> Result<(Store, i64, tempfile::TempDir)> {
+    let tmp = tempfile::tempdir()?;
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let store = Store::open_in_memory()?;
+    let exe = if app == "codex" { "codex" } else { "claude" };
+    let spec = agmag::launch::parse_launch_spec(app, &[exe.into()], &cwd)?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some(app.into()),
+        cwd: Some(cwd),
+        state: "live".into(),
+        ..Default::default()
+    })?;
+    store.set_terminal_launch("t1", true, Some(&spec.to_json()?))?;
+    store.set_terminal_status("t1", Some("working"), None, None, 5, 0)?;
+    let sid = store.session_id_for_path(source, &format!("{app}://ctx"))?;
+    store.set_context(
+        sid,
+        &ContextSnapshot {
+            ts_ms: 1,
+            used_tokens: pct * 1_000,
+            window_tokens: Some(100_000),
+        },
+    )?;
+    store.link_terminal("t1", sid, "hook")?;
+    Ok((store, sid, tmp))
+}
+
+fn rotation_count(store: &Store) -> Result<i64> {
+    Ok(store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM rotations", [], |r| r.get(0))?)
+}
+
+#[test]
+fn managed_claude_and_codex_rotate_at_interactive_threshold() -> Result<()> {
+    for (app, source) in [("claude-code", Source::Claude), ("codex", Source::Codex)] {
+        // 45% < 50%: chưa xoay vòng.
+        let (store, _sid, _tmp) = managed_at(app, source.clone(), 45)?;
+        rotation::tick(
+            &store,
+            &Config::builtin(),
+            &FakeHc::default(),
+            &FakeGit::default(),
+            1_000,
+        )?;
+        assert_eq!(rotation_count(&store)?, 0, "{app} 45%");
+
+        // 55% ≥ 50% (dưới ngưỡng chung 70%): bắt đầu xoay vòng.
+        let (store, _sid, _tmp) = managed_at(app, source, 55)?;
+        rotation::tick(
+            &store,
+            &Config::builtin(),
+            &FakeHc::default(),
+            &FakeGit::default(),
+            1_000,
+        )?;
+        assert_eq!(state(&store), "pending", "{app} 55%");
+    }
+    Ok(())
+}
+
+#[test]
+fn opencode_worker_keeps_shared_ctx_rotate() -> Result<()> {
+    let store = setup("opencode", "working")?;
+    let sid = store.session_id_for_path(Source::OpenCode, "opencode://s")?;
+    store.set_context(
+        sid,
+        &ContextSnapshot {
+            ts_ms: 2,
+            used_tokens: 55_000,
+            window_tokens: Some(100_000),
+        },
+    )?;
+    rotation::tick(
+        &store,
+        &Config::builtin(),
+        &FakeHc::default(),
+        &FakeGit::default(),
+        1_000,
+    )?;
+    assert_eq!(rotation_count(&store)?, 0);
+    Ok(())
+}
+
+/// Vòng tự động của Claude/Codex chỉ hủy khi ngữ cảnh xuống dưới `interactive_ctx_warn` (40%), không phải 50%.
+#[test]
+fn interactive_pending_cancels_only_below_interactive_warn() -> Result<()> {
+    let (store, sid, _tmp) = managed_at("codex", Source::Codex, 55)?;
+    let git = FakeGit::default();
+    rotation::tick(&store, &Config::builtin(), &FakeHc::default(), &git, 1_000)?;
+    assert_eq!(state(&store), "pending");
+
+    let at = |pct: u64, ts: i64| {
+        store.set_context(
+            sid,
+            &ContextSnapshot {
+                ts_ms: ts,
+                used_tokens: pct * 1_000,
+                window_tokens: Some(100_000),
+            },
+        )
+    };
+    at(45, 2)?;
+    rotation::tick(&store, &Config::builtin(), &FakeHc::default(), &git, 2_000)?;
+    assert_eq!(state(&store), "pending", "45% ≥ 40%: giữ vòng");
+    at(30, 3)?;
+    rotation::tick(&store, &Config::builtin(), &FakeHc::default(), &git, 3_000)?;
+    assert_eq!(state(&store), "cancelled", "30% < 40%: hủy");
+    Ok(())
+}

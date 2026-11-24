@@ -214,12 +214,10 @@ fn context_tick(store: &Store, cfg: &Config, now: i64) -> Result<()> {
         let Some(pct) = session_context_pct(store, cfg, sid)? else {
             continue;
         };
-        if pct >= cfg.policy.ctx_warn {
+        let (warn, _) = cfg.policy.ctx_thresholds(t.app.as_deref());
+        if pct >= warn {
             let name = t.name.as_deref().unwrap_or(&t.address);
-            let text = format!(
-                "{name} đã dùng từ {:.0}% ngữ cảnh trở lên",
-                cfg.policy.ctx_warn
-            );
+            let text = format!("{name} đã dùng từ {warn:.0}% ngữ cảnh trở lên");
             store.open_inbox(Some(&t.address), "context", Some("warn"), &text, now)?;
         }
     }

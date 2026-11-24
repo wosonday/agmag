@@ -10,7 +10,7 @@ Percentages mean **context already used**, not quota consumed or context remaini
 |---|---|---|
 | Claude CEO / Architect | Request rotation at 50%; use the 50–55% band only to reach a safe handoff point | Normally 40%, with a 35–45% planning band; lower if the projected next step would exhaust the handoff reserve |
 | Codex High / high-reasoning manager, developer or reviewer | Request rotation at 50%; do not start another large phase at or above 55% | Normally 40%, with a 35–45% planning band; lower when justified by the next step |
-| Other OpenCode workers | Existing shared `ctx_rotate` setting, currently 70% in the example | Existing worker policy unless the brief explicitly assigns an earlier threshold |
+| Other OpenCode workers | Shared `ctx_rotate` setting, default 70% | Existing worker policy unless the brief explicitly assigns an earlier threshold |
 
 Codex High describes the reasoning/work profile, not a hard-coded model slug. A task brief or session startup identifies this profile. Do not infer context usage from the model's name, reasoning token count or subscription quota.
 
@@ -28,7 +28,7 @@ When context telemetry is unavailable, report that limitation and hand off at a 
 
 ## 3. Use the Existing AGM Handoff Path
 
-AGM 0.4.0 has a **shared** `[policy].ctx_rotate` threshold. `agm manage` has no per-role threshold option. Therefore, changing the global value to 50–55% would also change ordinary workers. This harness leaves that shared fallback alone and implements the CEO/Codex High rule through the session's own proactive rotation request.
+AGM has separate thresholds for Claude Code and Codex sessions: `[policy].interactive_ctx_warn` (default 40%) and `[policy].interactive_ctx_rotate` (default 50%). The daemon rotates a managed Claude/Codex session once it reaches `interactive_ctx_rotate` and is idle, so 50% is enforced even if the session forgets to ask. OpenCode workers keep the shared `ctx_warn`/`ctx_rotate` (50/70). An earlier target such as 40% for context-heavy work is still the session's own proactive request; `agm manage` has no per-session threshold option.
 
 For interactive Claude/Codex sessions, the user first enables management once for the session, preserving the correct launch command when necessary:
 
@@ -67,14 +67,16 @@ For managed Claude/Codex rotation, write the daemon-requested `.agents/handoff/<
 
 ## 5. Configuration Boundary
 
-The shared fallback can remain:
+The defaults are:
 
 ```toml
 [policy]
-ctx_warn = 50
+ctx_warn = 50                # OpenCode workers and other apps
 ctx_rotate = 70
+interactive_ctx_warn = 40    # Claude Code and Codex sessions
+interactive_ctx_rotate = 50
 ```
 
-This snippet is the ordinary worker/global fallback, **not** the CEO/Codex High target. Do not add guessed keys such as `ceo_ctx_rotate` or unsupported `agm manage --ctx-rotate` flags. A future daemon-enforced per-role threshold requires an AGM implementation change and tests; the current policy uses the verified `agm rotate` path.
+`interactive_ctx_rotate` is the daemon backstop for every managed Claude/Codex session, not only the CEO/Codex High profile. Do not add guessed keys such as `ceo_ctx_rotate` or unsupported `agm manage --ctx-rotate` flags; a per-role threshold beyond the app split still needs an AGM implementation change and tests.
 
 Validation for this update covers document consistency, links and the existing harness test suite. It does not claim a live rotation was performed or modify the machine-wide configuration.

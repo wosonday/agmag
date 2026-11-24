@@ -318,3 +318,24 @@ fn dismissed_budget_alert_does_not_fire_again() -> Result<()> {
     assert!(store.inbox(true)?.is_empty());
     Ok(())
 }
+
+/// 45% ngữ cảnh: Claude Code cảnh báo (ngưỡng riêng 40%), thợ OpenCode thì chưa (ngưỡng chung 50%).
+#[test]
+fn ctx_warn_uses_interactive_threshold_for_claude_and_codex() -> Result<()> {
+    for (app, expect) in [("claude-code", 1), ("codex", 1), ("opencode", 0)] {
+        let store = Store::open_in_memory()?;
+        let hc = FakeHc::default();
+        let sid = worker(&store, "t1", app, "a", 1);
+        store.set_context(
+            sid,
+            &ContextSnapshot {
+                ts_ms: 1,
+                used_tokens: 45_000,
+                window_tokens: Some(100_000),
+            },
+        )?;
+        policy::tick(&store, &Config::builtin(), &hc, 2)?;
+        assert_eq!(store.inbox(true)?.len(), expect, "{app}");
+    }
+    Ok(())
+}

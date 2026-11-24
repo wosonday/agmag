@@ -219,6 +219,55 @@ pub fn run_app(
                             }
                         }
                     }
+                    Event::Mouse(mouse) => {
+                        let next = if let Screen::Board(board) = &mut screen {
+                            handle_board_mouse(
+                                mouse,
+                                board,
+                                store,
+                                hc,
+                                &mut state,
+                                &mut board_cmd_focus,
+                                super::clock_ms(),
+                            )
+                        } else {
+                            // T3 will handle overview mouse; ignore for now.
+                            Next::Redraw
+                        };
+                        match next {
+                            Next::Quit => return Ok(()),
+                            Next::Redraw => {
+                                draw(
+                                    &mut terminal,
+                                    &mut screen,
+                                    &state,
+                                    &data,
+                                    board_cmd_focus,
+                                    ascii,
+                                )?;
+                            }
+                            Next::Restart => break,
+                            Next::Global(board_theme) => {
+                                screen = Screen::Global;
+                                state.theme = board_theme;
+                                state.focus = Focus::CmdLine;
+                                board_cmd_focus = false;
+                                data.output = None;
+                                state.output_scroll = 0;
+                                break;
+                            }
+                            Next::Board(key) => {
+                                data.output = None;
+                                state.output_scroll = 0;
+                                board_cmd_focus = false;
+                                screen = Screen::Board(Box::new(BoardScreen::new(
+                                    Some(key),
+                                    state.theme,
+                                )));
+                                break;
+                            }
+                        }
+                    }
                     Event::Resize(_, _) => draw(
                         &mut terminal,
                         &mut screen,
@@ -570,6 +619,26 @@ fn run_board_dispatch(
         state.output_scroll = 0;
         Next::Restart
     } else if refresh {
+        Next::Restart
+    } else {
+        Next::Redraw
+    }
+}
+
+fn handle_board_mouse(
+    mouse: event::MouseEvent,
+    board: &mut Box<BoardScreen>,
+    store: &Store,
+    hc: &dyn Hc,
+    state: &mut GlobalState,
+    board_cmd_focus: &mut bool,
+    now_ms: i64,
+) -> Next {
+    if state.popup.is_some() || *board_cmd_focus {
+        return Next::Redraw;
+    }
+    board.on_mouse(mouse, store, hc, now_ms);
+    if board.needs_refresh() {
         Next::Restart
     } else {
         Next::Redraw

@@ -437,6 +437,38 @@ impl BoardScreen {
         }
         BoardKeyResult::Stay
     }
+
+    pub(crate) fn on_mouse(
+        &mut self,
+        mouse: event::MouseEvent,
+        store: &Store,
+        hc: &dyn Hc,
+        now_ms: i64,
+    ) {
+        self.needs_refresh = false;
+        let prev_agent = self.state.sel_agent.clone();
+        let effect = self.state.on_mouse(mouse, &self.hit_map, &self.data, now_ms);
+        if let Effect::SwitchProject(key) = &effect {
+            self.state.project = Some(key.clone());
+        }
+        match effect {
+            Effect::None => {
+                if self.state.sel_agent != prev_agent
+                    && let Err(e) = reload_conversation(store, &self.state, &mut self.data)
+                {
+                    self.state.note = Some(Note {
+                        ok: false,
+                        text: format!("error: {e:#}"),
+                    });
+                }
+            }
+            Effect::Quit => {}
+            other => {
+                apply_effect(store, hc, other, &mut self.state, now_ms);
+                self.needs_refresh = true;
+            }
+        }
+    }
 }
 
 /// One refresh + input round trip. Separated from `run` so the guard and panic hook wrap it.
@@ -476,6 +508,13 @@ fn run_loop(
                         draw_board(&mut terminal, screen, ascii)?;
                     }
                 },
+                Event::Mouse(mouse) => {
+                    screen.on_mouse(mouse, store, hc, clock_ms());
+                    if screen.needs_refresh() {
+                        break;
+                    }
+                    draw_board(&mut terminal, screen, ascii)?;
+                }
                 Event::Resize(_, _) => draw_board(&mut terminal, screen, ascii)?,
                 _ => {}
             }

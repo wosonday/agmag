@@ -19,3 +19,9 @@
 - Added last_click for 400ms double-click; picker rows prioritized in hit testing.
 - Tests: mouse focus/select, scroll, double-click project/picker/inbox reply prefill, ignored popup/non-left.
 - Status: green
+
+## Step 4 - Wire mouse events
+- Wired Event::Mouse in standalone board loop (src/board/mod.rs) and app board screen (src/board/app.rs); overview ignores mouse for now.
+- Added BoardScreen::on_mouse and handle_board_mouse; mouse ignored when global popup/cmd focus active.
+- Anti-goal test: mouse_cannot_reach_destructive_or_send_actions proves no mouse sequence produces kill/interrupt/cleanup/done/send/reply-send effects.
+- Status: green

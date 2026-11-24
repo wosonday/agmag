@@ -1446,4 +1446,52 @@ mod tests {
         let e = s.on_mouse(mouse(MouseEventKind::Moved, 2, 2), &map, &d, 3);
         assert_eq!(e, Effect::None);
     }
+
+    #[test]
+    fn mouse_cannot_reach_destructive_or_send_actions() {
+        let (mut s, d) = state_with_data();
+        let map = BoardHitMap {
+            panels: vec![
+                (Rect::new(0, 0, 20, 10), Panel::Orchestration),
+                (Rect::new(20, 0, 20, 10), Panel::Detail),
+                (Rect::new(0, 10, 40, 5), Panel::Inbox),
+                (Rect::new(0, 15, 40, 5), Panel::Projects),
+            ],
+            project_rows: vec![(Rect::new(1, 16, 10, 1), 0)],
+            agent_cards: vec![(Rect::new(1, 1, 8, 3), "t1".into())],
+            inbox_rows: vec![(Rect::new(1, 11, 38, 1), 10)],
+            picker_rows: vec![(Rect::new(1, 17, 10, 1), 1)],
+        };
+        let kinds = [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Right),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Right),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollUp,
+        ];
+        let coords = [(1u16, 1u16), (25, 2), (2, 11), (2, 16), (2, 17), (99, 99)];
+        let mut t = 0i64;
+        for kind in kinds {
+            for (c, r) in coords {
+                for _ in 0..3 {
+                    t += 10;
+                    let e = s.on_mouse(mouse(kind, c, r), &map, &d, t);
+                    assert!(
+                        matches!(e, Effect::None | Effect::SwitchProject(_)),
+                        "mouse produced unsafe effect: {e:?}"
+                    );
+                    assert!(
+                        !matches!(s.mode, Mode::ConfirmDone { .. }),
+                        "mouse entered confirm mode"
+                    );
+                    // Reply mode is allowed only as prefill (no send effect produced).
+                }
+            }
+        }
+    }
 }

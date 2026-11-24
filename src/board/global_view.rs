@@ -182,16 +182,15 @@ fn section_layout(main: Rect, data: &GlobalData) -> LayoutHeights {
     let mut stacked: Vec<Section> = Vec::with_capacity(chosen.len());
 
     if wide {
-        let cap = u32::from(main.height.saturating_sub(MESSAGES_MIN))
+        // The cap is a share of what is left for the fixed sections after Messages; it must
+        // never be inflated to fit two panels. The floor is one panel's minimum, not two.
+        let cap = (u32::from(main.height.saturating_sub(MESSAGES_MIN))
             .saturating_mul(PAIR_CAP_PERCENT)
-            / 100;
-        let cap = (cap as u16)
-            .max(2 * MIN_SECTION_H)
-            .min(main.height.max(2 * MIN_SECTION_H));
+            / 100) as u16;
         let pair = section_desired_rows(chosen[0], data, main.width)
             .max(section_desired_rows(chosen[1], data, main.width))
             .min(cap)
-            .max(2 * MIN_SECTION_H);
+            .max(MIN_SECTION_H);
         desired.push(pair);
         stacked.extend_from_slice(&chosen[2..]);
     } else {

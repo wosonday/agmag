@@ -35,3 +35,14 @@ Task: `.agents/tasks/tui-layout.md` — T1 content-fitted overview, compact Term
 - Added a `[Unreleased]` section above `## [0.5.0]` in `CHANGELOG.md` with one Vietnamese bullet under `### Thay đổi` covering the content-fitted overview and compact Terminals. CRLF preserved (`git ls-files --eol CHANGELOG.md` → `i/crlf w/crlf`).
 - Final gates (all clean, recorded): `cargo fmt --check` → ok; `cargo clippy --all-targets -- -D warnings` → Finished, zero warnings; `cargo test` → all 42 test binaries report `ok`, 0 failed.
 - No mouse handling, no resize, no edits to `src/board/mod.rs`, `state.rs` or `view.rs`; app.rs call sites unchanged. No push/merge/branch switch.
+
+## Fix round 1
+
+Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → CODE → GREEN → log → commit).
+
+### Item 1 — top-pair floor/cap
+
+- RED: `top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages` in `tests/global_view_test.rs`: at 140×40 with 1 quota line + 1 terminal, Quota had 3 blank inner rows; at 140×10 (content height 8) the pair was 4 rows and Messages only 4.
+- CODE: `section_layout` computes `cap = 60% of (main.height - MESSAGES_MIN)` without inflating it to `2 * MIN_SECTION_H`; `pair = max(desired, MIN_SECTION_H)` after applying the cap, so the floor is one panel's minimum (3), not two.
+- GREEN: new test passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+- EOL: `git ls-files --eol` unchanged (`i/lf w/lf` for all touched files).

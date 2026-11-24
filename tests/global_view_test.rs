@@ -928,3 +928,40 @@ fn narrow_overview_stacks_content_fitted_panels() {
         );
     }
 }
+
+#[test]
+fn top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages() {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    snap.quota.push(quota("claude", 300, 80.0));
+    snap.terminals.push(terminal("t1", "worker-1"));
+
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    for title in ["Quota", "Terminals", "Inbox"] {
+        let blanks = blank_inner_rows(&buf, title);
+        assert!(
+            blanks <= 1,
+            "{title} has {blanks} blank inner rows:\n{}",
+            text(&buf)
+        );
+    }
+
+    // Only 8 rows for the content area: 60% of (8 - 4) is 2, so the pair must not be
+    // inflated to 6 rows — Messages keeps the space nobody else needs.
+    d.view = vec![Section::Quota, Section::Terminals];
+    let buf = render((140, 10), &state, &d, false);
+    let (_, _, _, pair_h) = panel_rect(&buf, "Quota");
+    let (_, _, _, messages_h) = panel_rect(&buf, "Messages");
+    assert_eq!(
+        pair_h,
+        3,
+        "top pair floor must be MIN_SECTION_H:\n{}",
+        text(&buf)
+    );
+    assert!(
+        messages_h >= 5,
+        "Messages was squeezed to {messages_h} rows:\n{}",
+        text(&buf)
+    );
+}

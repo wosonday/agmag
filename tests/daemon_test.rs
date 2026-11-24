@@ -1,6 +1,6 @@
 use agmag::daemon::apply_event;
 use agmag::hc::{app_from_argv, effective_cwd, terminal_row_from};
-use agmag::store::Store;
+use agmag::store::{Store, TerminalRow};
 use serde_json::json;
 
 fn ev(kind: &str, terminal: &str, data: serde_json::Value) -> serde_json::Value {
@@ -326,4 +326,145 @@ fn herdr_where_is_kept_from_labels_or_hc_ls() {
         "address": "t2", "where": "x / y", "labels": {"where": "a / b"}
     }));
     assert_eq!(both.labels.get("where").map(String::as_str), Some("a / b"));
+}
+
+/// Hàng `created_ms=1000` do agm ghi; ảnh chụp herdr báo giờ thật 1 500 (lệch 500 ms).
+fn resync_store(agm_owned: bool) -> anyhow::Result<Store> {
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("claude-code".into()),
+        cwd: Some(r"D:\w".into()),
+        template: agm_owned.then(|| "worker-mid".into()),
+        state: "live".into(),
+        created_ms: 1_000,
+        ..Default::default()
+    })?;
+    Ok(store)
+}
+
+fn resync_snapshot(state: &str, app: &str, cwd: &str, created_ms: i64) -> serde_json::Value {
+    json!({"channel": null, "seq": 2, "terminals": [{
+        "address": "t1", "argv": ["claude"], "cwd": cwd, "created_ms": created_ms,
+        "state": state, "status": {"app": app, "state": "idle"}
+    }]})
+}
+
+fn db_created_ms(store: &Store) -> i64 {
+    store.terminal("t1").unwrap().unwrap().created_ms
+}
+
+#[test]
+fn daemon_resyncs_created_ms_for_agm_owned_terminal() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(
+        &store,
+        &resync_snapshot("live", "claude-code", r"D:\w", 1_500),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_500);
+    let detail: String = store.conn().query_row(
+        "SELECT detail FROM actions WHERE kind = 'resync_created_ms' AND target = 't1'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(detail, "1000 → 1500");
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_allows_missing_db_cwd() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    store
+        .conn()
+        .execute("UPDATE terminals SET cwd = NULL", [])?;
+    apply_event(
+        &store,
+        &resync_snapshot("live", "claude-code", r"D:\w", 1_500),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_500);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_rows_agm_does_not_own() -> anyhow::Result<()> {
+    let store = resync_store(false)?;
+    apply_event(
+        &store,
+        &resync_snapshot("live", "claude-code", r"D:\w", 1_500),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_different_app() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(&store, &resync_snapshot("live", "codex", r"D:\w", 1_500), 7)?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_when_herdr_reports_no_app() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(
+        &store,
+        &json!({"channel": null, "seq": 2, "terminals": [{
+            "address": "t1", "cwd": r"D:\w", "created_ms": 1_500, "state": "live"
+        }]}),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_different_cwd() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(
+        &store,
+        &resync_snapshot("live", "claude-code", r"D:\other", 1_500),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_negative_delta() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(
+        &store,
+        &resync_snapshot("live", "claude-code", r"D:\w", 500),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_delta_over_a_minute() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(
+        &store,
+        &resync_snapshot("live", "claude-code", r"D:\w", 1_000 + 60_001),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
+}
+
+#[test]
+fn daemon_resync_skips_terminal_herdr_no_longer_reports_live() -> anyhow::Result<()> {
+    let store = resync_store(true)?;
+    apply_event(
+        &store,
+        &resync_snapshot("finished", "claude-code", r"D:\w", 1_500),
+        7,
+    )?;
+    assert_eq!(db_created_ms(&store), 1_000);
+    Ok(())
 }

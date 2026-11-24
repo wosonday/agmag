@@ -141,6 +141,46 @@ fn rotation_kills_and_respawns_after_commit() -> Result<()> {
 }
 
 #[test]
+fn spawning_recovery_prefers_herdr_created_ms() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    store.upsert_terminal(&TerminalRow {
+        address: "t1".into(),
+        app: Some("claude-code".into()),
+        cwd: Some(r"D:\w".into()),
+        state: "live".into(),
+        managed: true,
+        ..Default::default()
+    })?;
+    // Hàng kế nhiệm đến từ store với `created_ms` cũ (giờ tick agm), không phải giờ herdr.
+    store.upsert_terminal(&TerminalRow {
+        address: "t99".into(),
+        app: Some("claude-code".into()),
+        cwd: Some(r"D:\w".into()),
+        state: "live".into(),
+        created_ms: 5_000,
+        labels: [("agm.parent_rotation".to_string(), "1".to_string())].into(),
+        ..Default::default()
+    })?;
+    store.conn().execute(
+        "INSERT INTO rotations (old_terminal, app, cwd, state, updated_ms)
+         VALUES ('t1', 'claude-code', ?1, 'spawning', 1000)",
+        [r"D:\w"],
+    )?;
+    let hc = FakeHc {
+        get_responses: [(
+            "t99".into(),
+            serde_json::json!({"address":"t99", "state":"live", "created_ms":12_345,
+                               "status":{"app":"claude-code","state":"idle"}}),
+        )]
+        .into(),
+        ..Default::default()
+    };
+    rotation::tick(&store, &Config::builtin(), &hc, &FakeGit::default(), 2_000)?;
+    assert_eq!(store.terminal("t99")?.unwrap().created_ms, 12_345);
+    Ok(())
+}
+
+#[test]
 fn rotation_fails_to_inbox_without_commit() -> Result<()> {
     let store = setup("opencode", "idle")?;
     let hc = FakeHc::default();

@@ -277,6 +277,15 @@ impl Store {
         Ok(())
     }
 
+    /// Chỉnh `created_ms` của hàng đã có (giờ herdr thật, không phải giờ tick agm).
+    pub fn set_terminal_created_ms(&self, addr: &str, created_ms: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE terminals SET created_ms = ?2 WHERE address = ?1",
+            params![addr, created_ms],
+        )?;
+        Ok(())
+    }
+
     pub fn set_terminal_launch(
         &self,
         addr: &str,

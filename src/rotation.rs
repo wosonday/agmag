@@ -753,9 +753,7 @@ fn advance_interactive(
                     row.cwd.get_or_insert_with(|| spec.cwd.clone());
                     row.task = row.task.or_else(|| r.task.clone());
                     row.role = row.role.or_else(|| t.role.clone());
-                    if row.created_ms == 0 {
-                        row.created_ms = now;
-                    }
+                    actions::stamp_created_ms(hc, &mut row, now);
                     store.upsert_terminal(&row)?;
                     store.set_terminal_launch(&row.address, true, Some(&spec_saved))?;
                     store.conn().execute(
@@ -807,10 +805,12 @@ fn advance_interactive(
             }
             if let [only] = found.as_slice() {
                 let mut row = only.clone();
-                if row.created_ms == 0 {
-                    row.created_ms = now;
-                }
+                let db_created_ms = row.created_ms;
+                actions::refresh_created_ms(hc, &mut row, now);
                 store.upsert_terminal(&row)?;
+                if row.created_ms != db_created_ms {
+                    store.set_terminal_created_ms(&row.address, row.created_ms)?;
+                }
                 if let Some(old_spec) = old_opt.as_ref().and_then(|o| o.launch_spec.as_deref()) {
                     store.set_terminal_launch(&row.address, true, Some(old_spec))?;
                 }

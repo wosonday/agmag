@@ -46,3 +46,9 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - CODE: `section_layout` computes `cap = 60% of (main.height - MESSAGES_MIN)` without inflating it to `2 * MIN_SECTION_H`; `pair = max(desired, MIN_SECTION_H)` after applying the cap, so the floor is one panel's minimum (3), not two.
 - GREEN: new test passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
 - EOL: `git ls-files --eol` unchanged (`i/lf w/lf` for all touched files).
+
+### Item 2 — clamp every rect to `main`
+
+- RED: `every_rect_stays_inside_main_at_tiny_heights` in `tests/global_view_test.rs` over the requested matrix (100×1…8, 140×3…10): a `Panel(Terminals)` rect and `BorderId::Horizontal` rect reached `y = 3` while `main.bottom() = 2` at 100×4.
+- CODE: `split_messages` clamps `layout.messages` to `main.height` before deriving `sections_h`; `draw_global` only records the Messages panel/border when its height is non-zero; the top-pair divider strip is clamped to `pair.right()`.
+- GREEN: matrix test passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.

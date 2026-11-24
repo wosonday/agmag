@@ -57,16 +57,18 @@ pub fn draw_global(
     let (sections, messages, layout) = split_messages(main, data);
     draw_sections(frame, sections, &layout, state, data, ctx);
     draw_messages(frame, messages, state, data, ctx);
-    state.push_panel(messages, Section::Messages);
-    state.push_border(
-        Rect {
-            x: messages.x,
-            y: messages.y,
-            width: messages.width,
-            height: 1,
-        },
-        BorderId::Horizontal(visible_sections(&data.view).len().saturating_sub(1)),
-    );
+    if messages.height > 0 {
+        state.push_panel(messages, Section::Messages);
+        state.push_border(
+            Rect {
+                x: messages.x,
+                y: messages.y,
+                width: messages.width,
+                height: 1,
+            },
+            BorderId::Horizontal(visible_sections(&data.view).len().saturating_sub(1)),
+        );
+    }
     if let Some(output) = &data.output {
         draw_output(frame, sections, output, state.output_scroll, ctx);
     }
@@ -212,7 +214,10 @@ fn section_layout(main: Rect, data: &GlobalData) -> LayoutHeights {
 
 /// Sections get everything except the height Messages needs, which is fitted with the rest.
 fn split_messages(main: Rect, data: &GlobalData) -> (Rect, Rect, LayoutHeights) {
-    let layout = section_layout(main, data);
+    let mut layout = section_layout(main, data);
+    // `fit_heights` keeps its one-panel floor even for a window shorter than the floor. The
+    // floor may win over the requested total, but no rect may spill into the command bar/footer.
+    layout.messages = layout.messages.min(main.height);
     let sections_h = main.height.saturating_sub(layout.messages);
     let sections = Rect {
         x: main.x,
@@ -363,12 +368,18 @@ fn draw_sections(
         for (col, sec) in cols.iter().zip(chosen.iter().take(2)) {
             state.push_panel(*col, *sec);
         }
-        // Both panels' border columns are draggable, not just the gap between them.
+        // Both panels' border columns are draggable, not just the gap between them. Clamp the
+        // two-cell strip so it never reaches past the right edge of the content area.
+        let divider_x = cols[0]
+            .right()
+            .saturating_sub(1)
+            .min(pair.right().saturating_sub(1));
+        let divider_w = 2.min(pair.right().saturating_sub(divider_x));
         state.push_border(
             Rect {
-                x: cols[0].right().saturating_sub(1),
+                x: divider_x,
                 y: pair.y,
-                width: 2.min(pair.width),
+                width: divider_w,
                 height: pair.height,
             },
             BorderId::TopPairVertical,

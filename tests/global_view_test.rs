@@ -929,6 +929,61 @@ fn narrow_overview_stacks_content_fitted_panels() {
     }
 }
 
+fn rect_inside(outer: ratatui::layout::Rect, inner: ratatui::layout::Rect) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.x.saturating_add(inner.width) <= outer.x.saturating_add(outer.width)
+        && inner.y.saturating_add(inner.height) <= outer.y.saturating_add(outer.height)
+}
+
+fn assert_everything_inside_main(size: (u16, u16), d: &GlobalData) {
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render(size, &state, d, false);
+    let main = ratatui::layout::Rect::new(0, 0, size.0, size.1.saturating_sub(2));
+    let map = state.hit_map();
+    let all = map
+        .panels
+        .iter()
+        .map(|(r, _)| *r)
+        .chain(map.rows.iter().map(|(r, _)| *r))
+        .chain(map.borders.iter().map(|(r, _)| *r));
+    for rect in all {
+        assert!(
+            rect_inside(main, rect),
+            "rect {rect:?} leaves main {main:?} at {size:?}:\n{}",
+            text(&buf)
+        );
+    }
+}
+
+#[test]
+fn every_rect_stays_inside_main_at_tiny_heights() {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    snap.quota.push(quota("claude", 300, 80.0));
+    snap.terminals.push(terminal("t1", "worker-1"));
+    snap.inbox.push(InboxRow {
+        id: 1,
+        ts_ms: NOW,
+        ..InboxRow::default()
+    });
+    snap.messages.push(MessageRow {
+        id: 1,
+        ts_ms: NOW,
+        from: "t1".into(),
+        to: "t2".into(),
+        kind: "BÁO CÁO".into(),
+        text: "a message".into(),
+        ..MessageRow::default()
+    });
+    for height in 1..=8 {
+        assert_everything_inside_main((100, height), &d);
+    }
+    for height in 3..=10 {
+        assert_everything_inside_main((140, height), &d);
+    }
+}
+
 #[test]
 fn top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages() {
     let mut d = data(&Section::DEFAULT);

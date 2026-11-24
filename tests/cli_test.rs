@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -955,4 +955,293 @@ fn agm_mcp_answers_initialize_over_stdio() {
     for l in lines {
         serde_json::from_str::<Value>(l).unwrap();
     }
+}
+
+#[test]
+fn approval_add_and_revoke_stay_tty_only_and_revoke_says_thu_hoi() {
+    let tmp = sandbox(None);
+    let out = agm(
+        tmp.path(),
+        &["approval", "revoke", "lane-a", "task-a", "spawn_worker"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("TTY"), "{err}");
+    assert!(err.contains("thu hồi"), "{err}");
+    assert!(!err.contains("được tạo"), "{err}");
+    let out = agm(
+        tmp.path(),
+        &["approval", "add", "lane-a", "task-a", "spawn_worker"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("TTY"));
+}
+
+#[test]
+fn approval_check_hard_prohibited_exits_6_with_json() {
+    let tmp = sandbox(None);
+    let out = agm(tmp.path(), &["approval", "check", "push", "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "decision": "hard_prohibited",
+            "action": "push",
+            "lane": null,
+            "task": null,
+            "source": "hard",
+        })
+    );
+}
+
+#[test]
+fn approval_check_requires_human_exits_5_with_json() {
+    let tmp = sandbox(None);
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "check",
+            "spawn_worker",
+            "--lane",
+            "lane-a",
+            "--task",
+            "task-a",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({
+            "decision": "requires_human",
+            "action": "spawn_worker",
+            "lane": "lane-a",
+            "task": "task-a",
+            "source": "none",
+        })
+    );
+}
+
+#[test]
+fn approval_check_global_whitelist_exits_0() {
+    let tmp = sandbox(None);
+    fs::write(
+        tmp.path().join("home/providers.toml"),
+        "[policy]\ndelegated_actions = [\"continue_review\"]\n",
+    )
+    .unwrap();
+    let out = agm(
+        tmp.path(),
+        &["approval", "check", "  continue_review  ", "--json"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "allowed");
+    assert_eq!(v["action"], "continue_review");
+    assert_eq!(v["source"], "global");
+}
+
+#[test]
+fn approval_check_active_grant_exits_0_and_writes_nothing() {
+    let tmp = sandbox(None);
+    assert!(agm(tmp.path(), &["policy", "status"]).status.success());
+    let actions_before = approval_action_count(tmp.path());
+    let id = {
+        let store =
+            agmag::store::Store::open(&tmp.path().join("home/agm.db")).expect("open agm.db");
+        store
+            .add_approval_grant(&agmag::store::ApprovalGrant {
+                lane: Some("lane-a".into()),
+                task: Some("task-a".into()),
+                action: "spawn_worker".into(),
+                approved_by: "user".into(),
+                approved_ms: 1,
+                expires_ms: None,
+                reason: "test".into(),
+                ..Default::default()
+            })
+            .unwrap()
+    };
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "check",
+            "spawn_worker",
+            "--lane",
+            "lane-a",
+            "--task",
+            "task-a",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "allowed");
+    assert_eq!(v["source"], format!("grant:{id}"));
+    let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+    assert_eq!(store.approval_grants(false, 0).unwrap().len(), 1);
+    assert_eq!(approval_action_count(tmp.path()), actions_before);
+}
+
+fn approval_action_count(tmp: &Path) -> i64 {
+    let store = agmag::store::Store::open(&tmp.join("home/agm.db")).unwrap();
+    store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM actions", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn approval_check_refusals_write_no_action_log() {
+    let tmp = sandbox(None);
+    let before = approval_action_count(tmp.path());
+    let out = agm(tmp.path(), &["approval", "check", "PUSH", "--json"]);
+    assert_eq!(out.status.code(), Some(6));
+    let out = agm(tmp.path(), &["approval", "check", "spawn_worker", "--json"]);
+    assert_eq!(out.status.code(), Some(5));
+    assert_eq!(approval_action_count(tmp.path()), before);
+}
+
+#[test]
+fn approval_check_empty_action_fails() {
+    let tmp = sandbox(None);
+    let out = agm(tmp.path(), &["approval", "check", "  ", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("action"));
+}
+
+#[test]
+fn approval_emit_failure_exits_1_not_swallowed() {
+    let tmp = sandbox(None);
+    fs::write(
+        tmp.path().join("home/providers.toml"),
+        "[policy]\ndelegated_actions = [\"continue_review\"]\n",
+    )
+    .unwrap();
+    // stdout là handle chỉ-đọc: ghi JSON phải trả Err thay vì panic, và lỗi đó không được nuốt.
+    let readonly = tmp.path().join("home/stdout-readonly.txt");
+    fs::write(&readonly, b"x").unwrap();
+    let handle = fs::File::open(&readonly).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_agm"))
+        .args(["approval", "check", "continue_review", "--json"])
+        .env("AGM_HOME", tmp.path().join("home"))
+        .env("AGM_CODEX_DIR", tmp.path().join("codex"))
+        .env("AGM_CLAUDE_DIR", tmp.path().join("claude"))
+        .env("AGM_OPENCODE_DB", tmp.path().join("opencode.db"))
+        .env("AGM_AGY_DIR", tmp.path().join("agy"))
+        .stdout(Stdio::from(handle))
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
+}
+
+#[test]
+fn approval_add_from_non_tty_is_refused_before_input_checks() {
+    let tmp = sandbox(None);
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "add",
+            "lane-a",
+            "task-a",
+            "spawn_worker",
+            "--expires-ms",
+            "60000",
+            "--json",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    // Không phải người (stdin/stdout không là TTY) → lỗi người gọi, chưa tới kiểm `--expires-ms`
+    // (luật epoch ms được test ở actions_test::validate_expires_ms).
+    assert!(err.contains("TTY"), "{err}");
+    assert!(!err.contains("epoch"), "{err}");
+}
+
+#[test]
+fn approval_check_mixed_case_hard_prohibited_exits_6() {
+    let tmp = sandbox(None);
+    let out = agm(tmp.path(), &["approval", "check", " PuSh\n", "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(6),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "hard_prohibited");
+    assert_eq!(v["action"], "push");
+    assert_eq!(v["source"], "hard");
+}
+
+#[test]
+fn approval_check_normalizes_action_lane_and_task() {
+    let tmp = sandbox(None);
+    assert!(agm(tmp.path(), &["policy", "status"]).status.success());
+    {
+        let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
+        store
+            .add_approval_grant(&agmag::store::ApprovalGrant {
+                lane: Some("lane-a".into()),
+                task: Some("task-a".into()),
+                action: "spawn_worker".into(),
+                approved_by: "user".into(),
+                approved_ms: 1,
+                expires_ms: None,
+                reason: "test".into(),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let out = agm(
+        tmp.path(),
+        &[
+            "approval",
+            "check",
+            " SPAWN_WORKER ",
+            "--lane",
+            " lane-a ",
+            "--task",
+            " task-a ",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["decision"], "allowed");
+    assert_eq!(v["action"], "spawn_worker");
+    assert_eq!(v["lane"], "lane-a");
+    assert_eq!(v["task"], "task-a");
 }

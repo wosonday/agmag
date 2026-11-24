@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, IsTerminal, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, IsTerminal, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -228,6 +228,11 @@ enum Cmd {
         #[arg(value_parser = ["on", "off", "status"])]
         state: String,
     },
+    /// Manage delegated user approvals
+    Approval {
+        #[command(subcommand)]
+        cmd: ApprovalCmd,
+    },
     /// Manually link a terminal to a session
     Link {
         /// Terminal address
@@ -331,6 +336,43 @@ enum BudgetCmd {
     Rm {
         /// Budget scope to remove
         scope: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApprovalCmd {
+    /// Grant an action for one lane/task. This command requires a user TTY.
+    Add {
+        lane: String,
+        task: String,
+        action: String,
+        /// Absolute expiry deadline in epoch milliseconds (not a TTL); must be in the future
+        #[arg(long)]
+        expires_ms: Option<i64>,
+        #[arg(long, default_value = "user approved")]
+        reason: String,
+    },
+    /// List active or all grants
+    Ls {
+        #[arg(long)]
+        all: bool,
+    },
+    /// Revoke a lane/task/action grant
+    Revoke {
+        lane: String,
+        task: String,
+        action: String,
+    },
+    /// Check whether an action is allowed (no TTY needed): exit 0 allowed, 5 requires human, 6 hard-prohibited
+    Check {
+        /// Action name (for example `spawn_worker`)
+        action: String,
+        /// Lane of the task grant
+        #[arg(long)]
+        lane: Option<String>,
+        /// Task of the task grant
+        #[arg(long)]
+        task: Option<String>,
     },
 }
 
@@ -684,6 +726,128 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Approval {
+            cmd:
+                ApprovalCmd::Add {
+                    lane,
+                    task,
+                    action,
+                    expires_ms,
+                    reason,
+                },
+        } => {
+            // Kiểm người gọi trước mọi kiểm đầu vào: agent chỉ nhận đúng một lỗi "không phải người".
+            let hc = agmag::hc::HcCli::default();
+            let term = ops::hc_terminal();
+            agmag::actions::require_human(
+                &store,
+                &hc,
+                term.as_deref(),
+                std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+                "approval add chỉ người dùng ở terminal tương tác (TTY) mới được tạo",
+            )?;
+            agmag::actions::validate_expires_ms(expires_ms, now)?;
+            let grant = agmag::actions::validate_new_grant(&lane, &task, &action)?;
+            let (lane, task, action) = (grant.lane, grant.task, grant.action);
+            let id = store.add_approval_grant(&agmag::store::ApprovalGrant {
+                lane: Some(lane.clone()),
+                task: Some(task.clone()),
+                action: action.clone(),
+                approved_by: "user".into(),
+                approved_ms: now,
+                expires_ms,
+                revoked_ms: None,
+                reason,
+                ..Default::default()
+            })?;
+            store.log_action(
+                "user",
+                "approval_add",
+                &format!("{lane}/{task}:{action}"),
+                "approved",
+                true,
+                now,
+            )?;
+            emit(json, &serde_json::json!({"id": id}), || {
+                println!("Approval #{id} added.")
+            })?;
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd: ApprovalCmd::Ls { all },
+        } => {
+            let grants = store.approval_grants(!all, now)?;
+            emit(json, &serde_json::json!({"grants": grants}), || {
+                for grant in grants {
+                    println!("{}", agmag::actions::grant_human_line(&grant, now));
+                }
+            })?;
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd: ApprovalCmd::Revoke { lane, task, action },
+        } => {
+            let hc = agmag::hc::HcCli::default();
+            let term = ops::hc_terminal();
+            agmag::actions::require_human(
+                &store,
+                &hc,
+                term.as_deref(),
+                std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+                "approval revoke chỉ người dùng ở terminal tương tác (TTY) mới được thu hồi",
+            )?;
+            let lane = agmag::actions::normalize_key(&lane);
+            let task = agmag::actions::normalize_key(&task);
+            let action = agmag::actions::normalize_action(&action);
+            agmag::actions::revoke_grant(&store, &lane, &task, &action, now)?;
+            store.log_action(
+                "user",
+                "approval_revoke",
+                &format!("{lane}/{task}:{action}"),
+                "revoked",
+                true,
+                now,
+            )?;
+            emit(json, &serde_json::json!({"revoked": true}), || {
+                println!("Approval revoked.")
+            })?;
+            Ok(())
+        }
+        Cmd::Approval {
+            cmd: ApprovalCmd::Check { action, lane, task },
+        } => {
+            let decision = agmag::actions::decide(
+                &store,
+                &cfg()?,
+                &action,
+                lane.as_deref(),
+                task.as_deref(),
+                now,
+            )?;
+            let action = agmag::actions::normalize_action(&action);
+            let lane = lane.as_deref().map(agmag::actions::normalize_key);
+            let task = task.as_deref().map(agmag::actions::normalize_key);
+            emit(
+                json,
+                &decision.to_json(&action, lane.as_deref(), task.as_deref()),
+                || {
+                    println!(
+                        "{}",
+                        decision.human_line(&action, lane.as_deref(), task.as_deref())
+                    )
+                },
+            )?;
+            // `check` là lệnh chỉ đọc: không ghi bảng actions (kể cả khi bị từ chối).
+            if decision.decision != agmag::actions::ApprovalDecision::Allowed {
+                return Err(agmag::actions::ApprovalRefused {
+                    decision: decision.decision,
+                    action: action.to_string(),
+                    source: decision.source,
+                }
+                .into());
+            }
+            Ok(())
+        }
         Cmd::Policy { state } => match state.as_str() {
             "status" => {
                 let on = agmag::policy::enabled(&store)?;
@@ -934,7 +1098,12 @@ fn print_terminals(rows: &[agmag::store::TerminalRow]) {
 
 fn emit<T: Serialize + ?Sized>(json: bool, value: &T, human: impl FnOnce()) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string_pretty(value)?);
+        // Dùng writeln! có `?` để lỗi ghi stdout (vd pipe đóng) trả về cho caller thay vì panic.
+        writeln!(
+            std::io::stdout().lock(),
+            "{}",
+            serde_json::to_string_pretty(value)?
+        )?;
     } else {
         human();
     }

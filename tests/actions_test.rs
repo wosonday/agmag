@@ -1,10 +1,284 @@
 mod common;
 
-use agmag::actions::{self, Caller, SpawnReq};
+use agmag::actions::{self, ApprovalDecision, Caller, SpawnReq};
 use agmag::config::Config;
-use agmag::store::{Store, TerminalRow};
+use agmag::store::{ApprovalGrant, Store, TerminalRow};
 use anyhow::Result;
 use common::FakeHc;
+
+fn approval_cfg(actions: &[&str]) -> Config {
+    let mut cfg = Config::builtin();
+    cfg.policy.delegated_actions = actions.iter().map(|a| (*a).to_string()).collect();
+    cfg
+}
+
+fn approval_grant(
+    store: &Store,
+    lane: &str,
+    task: &str,
+    action: &str,
+    expires_ms: Option<i64>,
+) -> i64 {
+    store
+        .add_approval_grant(&ApprovalGrant {
+            lane: Some(lane.into()),
+            task: Some(task.into()),
+            action: action.into(),
+            approved_by: "user".into(),
+            approved_ms: 100,
+            expires_ms,
+            reason: "test".into(),
+            ..Default::default()
+        })
+        .unwrap()
+}
+
+fn approval_decision(
+    store: &Store,
+    cfg: &Config,
+    action: &str,
+    lane: Option<&str>,
+    task: Option<&str>,
+    now: i64,
+) -> (ApprovalDecision, String) {
+    let decision = actions::decide(store, cfg, action, lane, task, now).unwrap();
+    (decision.decision, decision.source)
+}
+
+#[test]
+fn approval_rule_allows_global_whitelist_without_grant() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&["continue_review"]);
+    assert_eq!(
+        approval_decision(&store, &cfg, "  continue_review  ", None, None, 500),
+        (ApprovalDecision::Allowed, "global".into())
+    );
+}
+
+#[test]
+fn approval_rule_hard_prohibited_beats_whitelist_and_grant() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&["push"]);
+    approval_grant(&store, "lane-a", "task-a", "push", None);
+    assert_eq!(
+        approval_decision(&store, &cfg, "push", Some("lane-a"), Some("task-a"), 500),
+        (ApprovalDecision::HardProhibited, "hard".into())
+    );
+}
+
+#[test]
+fn approval_rule_active_grant_allows_with_grant_source() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let id = approval_grant(&store, "lane-a", "task-a", "spawn_worker", Some(1000));
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{id}"))
+    );
+}
+
+#[test]
+fn approval_rule_expired_grant_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", Some(1000));
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            1001
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_rule_revoked_grant_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", None);
+    store
+        .revoke_approval_grant("lane-a", "task-a", "spawn_worker", 200)
+        .unwrap();
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_rule_grant_for_other_lane_or_task_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", None);
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-b"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-b"),
+            500
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_rule_needs_both_lane_and_task_to_use_a_grant() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    approval_grant(&store, "lane-a", "task-a", "spawn_worker", None);
+    for (lane, task) in [(None, None), (Some("lane-a"), None), (None, Some("task-a"))] {
+        assert_eq!(
+            approval_decision(&store, &cfg, "spawn_worker", lane, task, 500),
+            (ApprovalDecision::RequiresHuman, "none".into())
+        );
+    }
+}
+
+#[test]
+fn approval_rule_unknown_action_requires_human() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&["continue_review"]);
+    assert_eq!(
+        approval_decision(&store, &cfg, "spawn_worker", None, None, 500),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_rule_empty_action_is_error() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let err = actions::decide(&store, &cfg, "   ", None, None, 500).unwrap_err();
+    assert!(format!("{err:#}").contains("action"), "{err:#}");
+}
+
+#[test]
+fn approval_grant_input_rejects_empty_fields_and_hard_prohibited() {
+    for (lane, task, action, needle) in [
+        ("", "task-a", "spawn_worker", "lane"),
+        ("  ", "task-a", "spawn_worker", "lane"),
+        ("lane-a", "", "spawn_worker", "task"),
+        ("lane-a", " \t", "spawn_worker", "task"),
+        ("lane-a", "task-a", "", "action"),
+        ("lane-a", "task-a", "  ", "action"),
+        ("lane-a", "task-a", "push", "push"),
+        ("lane-a", "task-a", "  merge  ", "merge"),
+    ] {
+        let err = actions::validate_new_grant(lane, task, action).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(needle),
+            "{lane:?}/{task:?}/{action:?}: {err:#}"
+        );
+    }
+    assert_eq!(
+        actions::validate_new_grant("lane-a", "task-a", "  spawn_worker  ")
+            .unwrap()
+            .action,
+        "spawn_worker"
+    );
+}
+
+#[test]
+fn approval_normalization_canonicalizes_action_and_keys() {
+    assert_eq!(actions::normalize_action("  PuSh\n"), "push");
+    assert_eq!(actions::normalize_key("  lane-a \t"), "lane-a");
+}
+
+#[test]
+fn approval_hard_prohibited_ignores_case_and_surrounding_space() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    for raw in ["PUSH", "Push", " push ", "push\n", "  MERGE  "] {
+        assert!(actions::is_hard_prohibited(raw), "{raw:?}");
+        assert_eq!(
+            approval_decision(&store, &cfg, raw, None, None, 500),
+            (ApprovalDecision::HardProhibited, "hard".into()),
+            "{raw:?}"
+        );
+    }
+}
+
+#[test]
+fn approval_delegated_actions_match_case_insensitively() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[" Continue_Review ", "PUSH_OK"]);
+    for (raw, action) in [
+        ("continue_review", "continue_review"),
+        ("  CONTINUE_REVIEW  ", "continue_review"),
+        (" push_ok ", "push_ok"),
+    ] {
+        assert_eq!(
+            approval_decision(&store, &cfg, raw, None, None, 500),
+            (ApprovalDecision::Allowed, "global".into()),
+            "{action:?}"
+        );
+    }
+}
+
+#[test]
+fn approval_grant_input_normalizes_fields_and_rejects_hard_prohibited_case() {
+    let input = actions::validate_new_grant(" lane-a ", " task-a ", "  Spawn_Worker  ").unwrap();
+    assert_eq!(input.lane, "lane-a");
+    assert_eq!(input.task, "task-a");
+    assert_eq!(input.action, "spawn_worker");
+    for action in ["PUSH", "Push", " push ", "push\n"] {
+        let err = actions::validate_new_grant("lane-a", "task-a", action).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("hard-prohibited"),
+            "{action:?}: {err:#}"
+        );
+    }
+}
+
+#[test]
+fn approval_decide_normalizes_lane_task_and_action_for_grant_lookup() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let input = actions::validate_new_grant(" lane-a ", " task-a ", " Spawn_Worker ").unwrap();
+    let id = approval_grant(&store, &input.lane, &input.task, &input.action, None);
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            " SPAWN_WORKER ",
+            Some(" lane-a "),
+            Some(" task-a "),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{id}"))
+    );
+}
 
 fn term(store: &Store, addr: &str, app: &str, role: Option<&str>) {
     store
@@ -557,6 +831,233 @@ fn non_shell_foreground_keeps_current_rules() -> Result<()> {
         actions::detect_caller(&store, &hc, Some("t2n"), true, true),
         Caller::Agent(_)
     ));
+    Ok(())
+}
+
+#[test]
+fn approval_grant_human_line_is_readable() {
+    let grant = ApprovalGrant {
+        id: 7,
+        lane: Some("lane-a".into()),
+        task: Some("task-a".into()),
+        action: "spawn_worker".into(),
+        approved_by: "user".into(),
+        approved_ms: 10,
+        expires_ms: None,
+        revoked_ms: None,
+        reason: "user approved".into(),
+    };
+    let line = actions::grant_human_line(&grant, 100);
+    for part in [
+        "#7",
+        "lane-a",
+        "task-a",
+        "spawn_worker",
+        "no expiry",
+        "active",
+        "user approved",
+    ] {
+        assert!(line.contains(part), "{part:?} not in {line:?}");
+    }
+    assert!(!line.contains("ApprovalGrant {"), "{line}");
+    let expired = ApprovalGrant {
+        expires_ms: Some(1234),
+        revoked_ms: Some(999),
+        ..grant
+    };
+    let line = actions::grant_human_line(&expired, 100);
+    assert!(line.contains("expires=1234"), "{line}");
+    assert!(line.contains("revoked"), "{line}");
+    // Quá hạn nhưng chưa thu hồi: `expired`, không phải `active`.
+    let lapsed = ApprovalGrant {
+        expires_ms: Some(1234),
+        revoked_ms: None,
+        ..expired.clone()
+    };
+    let line = actions::grant_human_line(&lapsed, 1234);
+    assert!(
+        line.contains("expired") && !line.contains("active"),
+        "{line}"
+    );
+    assert!(actions::grant_human_line(&lapsed, 1233).contains("active"));
+}
+
+#[test]
+fn approval_refused_never_exits_zero() {
+    for (decision, expected) in [
+        (ApprovalDecision::Allowed, 1),
+        (ApprovalDecision::RequiresHuman, 5),
+        (ApprovalDecision::HardProhibited, 6),
+    ] {
+        let err: anyhow::Error = actions::ApprovalRefused {
+            decision,
+            action: "spawn_worker".into(),
+            source: "none".into(),
+        }
+        .into();
+        assert_eq!(actions::exit_code(&err), expected, "{decision:?}");
+    }
+}
+
+#[test]
+fn approval_new_grant_supersedes_older_ones() {
+    let store = Store::open_in_memory().unwrap();
+    let cfg = approval_cfg(&[]);
+    let old = store
+        .add_approval_grant(&ApprovalGrant {
+            lane: Some("lane-a".into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 100,
+            expires_ms: None,
+            reason: "old no-expiry grant".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{old}"))
+    );
+    let new = store
+        .add_approval_grant(&ApprovalGrant {
+            lane: Some("lane-a".into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 200,
+            expires_ms: Some(1000),
+            reason: "new time-boxed grant".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::Allowed, format!("grant:{new}"))
+    );
+    // Khi grant mới hết hạn, grant cũ (không hạn) đã bị thu hồi nên không sống lại.
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            1001
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+}
+
+#[test]
+fn approval_expires_ms_must_be_absolute_future_deadline() {
+    assert!(actions::validate_expires_ms(None, 1000).is_ok());
+    assert!(actions::validate_expires_ms(Some(1001), 1000).is_ok());
+    for expires in [Some(1000), Some(999), Some(0), Some(-1)] {
+        let err = actions::validate_expires_ms(expires, 1000).unwrap_err();
+        assert!(format!("{err:#}").contains("epoch"), "{err:#}");
+    }
+}
+
+#[test]
+fn approval_revoke_grant_reports_zero_rows_and_normalizes() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    let cfg = approval_cfg(&[]);
+    let input = actions::validate_new_grant(" lane-a ", " task-a ", " Spawn_Worker ").unwrap();
+    approval_grant(&store, &input.lane, &input.task, &input.action, None);
+    // Lane/task/action của lệnh revoke được chuẩn hóa trước khi khớp với grant đã lưu.
+    actions::revoke_grant(&store, " lane-a ", " task-a ", " SPAWN_WORKER ", 200)?;
+    assert_eq!(
+        approval_decision(
+            &store,
+            &cfg,
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            500
+        ),
+        (ApprovalDecision::RequiresHuman, "none".into())
+    );
+    let err = actions::revoke_grant(&store, "lane-a", "task-a", "spawn_worker", 300).unwrap_err();
+    assert!(format!("{err:#}").contains("không có grant"), "{err:#}");
+    Ok(())
+}
+
+#[test]
+fn approval_add_revoke_require_human_and_refuse_agent_in_hc_pty() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    // Agent chạy trong PTY của hc: có TTY nhưng terminal là app agent → vẫn là agent.
+    let agent_hc = FakeHc {
+        apps: vec![("t9".into(), "opencode".into())],
+        ..Default::default()
+    };
+    assert!(matches!(
+        actions::detect_caller(&store, &agent_hc, Some("t9"), true, false),
+        Caller::Agent(_)
+    ));
+    assert!(
+        actions::require_human(
+            &store,
+            &agent_hc,
+            Some("t9"),
+            true,
+            "approval add bị từ chối"
+        )
+        .is_err(),
+        "agent trong PTY của hc không được add/revoke grant"
+    );
+    // Terminal shell của người (pwsh, không tự báo 7501) + TTY → người dùng.
+    let user_hc = hc_get(
+        "t1b",
+        serde_json::json!({"address": "t1b", "state": "live", "foreground": {"name": "pwsh"}, "status": null}),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &user_hc, Some("t1b"), true, false),
+        Caller::User { .. }
+    ));
+    assert!(
+        actions::require_human(
+            &store,
+            &user_hc,
+            Some("t1b"),
+            true,
+            "approval add bị từ chối"
+        )
+        .is_ok()
+    );
+    // Không có TTY, hoặc hc get lỗi khi có HC_TERMINAL_ID → fail closed, từ chối.
+    assert!(
+        actions::require_human(&store, &user_hc, None, false, "approval revoke bị từ chối")
+            .is_err()
+    );
+    let failing = FakeHc {
+        fail_get: true,
+        ..Default::default()
+    };
+    assert!(
+        actions::require_human(
+            &store,
+            &failing,
+            Some("t9"),
+            true,
+            "approval revoke bị từ chối"
+        )
+        .is_err()
+    );
     Ok(())
 }
 

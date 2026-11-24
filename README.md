@@ -250,8 +250,9 @@ claude mcp add -s user agm -- agm mcp
 | `agm_spawn` | Spawn an agent (same checks as `agm spawn`) |
 | `agm_branch_get` | Read an entry of `BRANCHES.md` (`branches_file` must be an absolute path) |
 | `agm_branch_update` | Update an entry of an existing `BRANCHES.md` (absolute `branches_file`; same rules as `agm branch set`) |
+| `agm_approval_check` | Check whether an action may be auto-approved for a lane/task (read-only; same rule and JSON as `agm approval check`) |
 
-The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknown tool arguments are rejected. Enable the `agm` MCP server only in manager/review profiles (BOT-CEO, Copilot, reviewers), not in ordinary worker profiles: `agm_spawn` can start terminals the same way `agm spawn` can. `agm mcp` has no kill/interrupt/manage/cleanup tools (nor reply/done); those stay with the user.
+The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknown tool arguments are rejected. Enable the `agm` MCP server only in manager/review profiles (BOT-CEO, Copilot, reviewers), not in ordinary worker profiles: `agm_spawn` can start terminals the same way `agm spawn` can. `agm mcp` has no kill/interrupt/manage/cleanup tools (nor reply/done); those stay with the user. It also has no tool to add or revoke approval grants: only a TTY user can do that.
 
 ### BRANCHES.md
 
@@ -274,13 +275,14 @@ The sender is the caller's `HC_TERMINAL_ID`, or `agent` — never `user`. Unknow
 | `agm send <target> --type <TYPE> [--task ID] <text>` | Send a recorded message; target `user` → inbox |
 | `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <args…>` | Spawn an agent (`hc run --bg --outlive-parent`), keeping each argument after `--` intact; if `<template>` is an hc template, those arguments are joined into one task string. On Windows, when `hc run <template>` fails with `cannot start "sh"`, agm falls back to running the template's `command:` directly and sends the template body plus the task to the terminal; if that brief cannot be delivered (agent not ready within 20 s, terminal exited), the brief goes to the inbox (`brief_failed`), the address is still printed and agm exits with code **3** — the terminal is running, so do not clean up its worktree or spawn again. Checks `max_workers` and budgets |
 | `agm branch get <ENTRY> \| set <ENTRY> <KEY=VALUE>...` `[--file PATH] [--worktree PATH]` | Read / update an entry of `BRANCHES.md` under a lock, atomically |
-| `agm mcp` | MCP server over stdio exposing 7 tools (see [MCP server](#mcp-server)) |
+| `agm mcp` | MCP server over stdio exposing 8 tools (see [MCP server](#mcp-server)) |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Kill / interrupt — Codex, Claude, unknown apps: **you only**, always requires typing `y` (`--yes` doesn't apply) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Enable/disable rotation management for a hand-opened Claude Code or Codex session |
 | `agm rotate <t> [--yes]` | Rotate now: OpenCode worker (hand-off + kill + respawn) or a managed Claude/Codex session (hand-off + new session, old one is **not** killed) |
 | `agm cleanup [targets…] [--all] [--yes]` | Manually clean up old handed-off sessions (one typed `y/N` confirmation; `--yes` is accepted for compatibility but does not skip it) |
 | `agm budget set <scope> --soft X --hard Y [--action notify\|interrupt\|kill]` · `ls` · `rm <scope>` | Budgets: `task:<ID>` (tokens) or `provider:<name>:<minutes>` (% quota) |
 | `agm policy on\|off\|status` | Enable/disable all automatic actions (emergency stop) |
+| `agm approval add <lane> <task> <action> [--expires-ms MS] [--reason TEXT]` · `ls [--all]` · `revoke <lane> <task> <action>` · `check <action> [--lane L] [--task T]` | Delegated approvals. `add`/`revoke` require a human at an interactive terminal (identified by caller detection, so an agent inside an hc PTY is refused); add refuses empty fields and hard-prohibited actions. Actions are matched/stored case-insensitively (trimmed + lowercased); lane/task are trimmed. `--expires-ms` is an absolute epoch-ms deadline and must be in the future. A new grant supersedes older active grants for the same lane/task/action. `check` is read-only (writes no log row) and prints `{"decision","action","lane","task","source"}` (or one line on a TTY). Exit codes: **0** allowed, **5** requires human, **6** hard-prohibited. A global `[policy].delegated_actions` entry or an active lane/task grant allows an action; merge/push/deploy, billing/quota changes, killing Claude/Codex, harness changes and grant self-extension always require a human |
 | `agm link <t> <session>` | Manually pair terminal ↔ session when agm isn't sure |
 | `agm ask [--model gemini-4-argon-high] [--timeout 300] <question>` | One-shot agy question (read-only, runs in a temp dir outside the repo), tokens recorded |
 | `agm hook install` · `agm hook statusline` | Install / run the Claude Code statusline hook |

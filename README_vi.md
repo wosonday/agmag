@@ -245,8 +245,9 @@ claude mcp add -s user agm -- agm mcp
 | `agm_spawn` | Sinh agent (kiểm tra như `agm spawn`) |
 | `agm_branch_get` | Đọc một mục trong `BRANCHES.md` (`branches_file` phải là đường dẫn tuyệt đối) |
 | `agm_branch_update` | Cập nhật một mục trong `BRANCHES.md` đã tồn tại (`branches_file` tuyệt đối; cùng quy tắc với `agm branch set`) |
+| `agm_approval_check` | Kiểm một hành động có được tự duyệt cho lane/task không (chỉ đọc; cùng luật và JSON với `agm approval check`) |
 
-Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không bao giờ là `user`. Đối số lạ của tool bị từ chối. Chỉ bật MCP server `agm` trong profile quản lý/review (BOT-CEO, Copilot, reviewer), không bật trong profile thợ thường: `agm_spawn` có thể mở terminal giống `agm spawn`. `agm mcp` không có tool kill/interrupt/manage/cleanup (cũng không có reply/done); những việc đó chỉ người dùng làm.
+Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không bao giờ là `user`. Đối số lạ của tool bị từ chối. Chỉ bật MCP server `agm` trong profile quản lý/review (BOT-CEO, Copilot, reviewer), không bật trong profile thợ thường: `agm_spawn` có thể mở terminal giống `agm spawn`. `agm mcp` không có tool kill/interrupt/manage/cleanup (cũng không có reply/done); những việc đó chỉ người dùng làm. Cũng không có tool thêm/thu hồi grant approval: chỉ người dùng ở TTY mới làm được.
 
 ### BRANCHES.md
 
@@ -269,13 +270,14 @@ Người gửi là `HC_TERMINAL_ID` của bên gọi, hoặc `agent` — không 
 | `agm send <đích> --type <LOẠI> [--task ID] <tin>` | Gửi tin có ghi lại; đích `user` → hộp thư |
 | `agm spawn <template> --task <ID> [--role worker] [--name …] [--cwd …] -- <đối số…>` | Sinh agent (`hc run --bg --outlive-parent`), giữ nguyên từng đối số sau `--`; nếu `<template>` là template của hc, các đối số được gộp thành một chuỗi nhiệm vụ. Trên Windows, khi `hc run <template>` lỗi `cannot start "sh"`, agm dự phòng chạy thẳng `command:` của template và gửi thân template cùng nhiệm vụ vào terminal; nếu không gửi được brief đó (agent chưa sẵn sàng sau 20 giây, terminal đã thoát), brief vào hộp thư (`brief_failed`), địa chỉ vẫn được in và agm thoát mã **3** — terminal vẫn chạy, nên không dọn worktree và không spawn lại. Kiểm `max_workers` và ngân sách |
 | `agm branch get <ENTRY> \| set <ENTRY> <KEY=VALUE>...` `[--file PATH] [--worktree PATH]` | Đọc / cập nhật một mục của `BRANCHES.md` dưới khóa, ghi nguyên tử |
-| `agm mcp` | MCP server qua stdio với 7 tool (xem [MCP server](#mcp-server)) |
+| `agm mcp` | MCP server qua stdio với 8 tool (xem [MCP server](#mcp-server)) |
 | `agm kill <t> [--yes]` · `agm interrupt <t> [--yes]` | Dừng / ngắt — Codex, Claude, app chưa rõ: **chỉ bạn**, luôn phải gõ `y` (`--yes` không áp dụng) |
 | `agm manage <t> [--off] [--cmd … \| -- <argv>…]` | Bật/tắt quản lý xoay vòng cho phiên Claude Code hoặc Codex mở tay |
 | `agm rotate <t> [--yes]` | Xoay vòng ngay: OpenCode worker (bàn giao + dừng + sinh mới) hoặc Claude/Codex đã `manage` (bàn giao + mở mới, **không** dừng phiên cũ) |
 | `agm cleanup [targets…] [--all] [--yes]` | Dọn thủ công các phiên cũ đã bàn giao (1 lần gõ xác nhận `y/N`; `--yes` vẫn được nhận để tương thích nhưng không bỏ qua bước này) |
 | `agm budget set <phạm vi> --soft X --hard Y [--action notify\|interrupt\|kill]` · `ls` · `rm <phạm vi>` | Ngân sách: `task:<ID>` (token) hoặc `provider:<tên>:<phút>` (% hạn mức) |
 | `agm policy on\|off\|status` | Bật/tắt mọi hành động tự động (nút dừng khẩn) |
+| `agm approval add <lane> <task> <action> [--expires-ms MS] [--reason TEXT]` · `ls [--all]` · `revoke <lane> <task> <action>` · `check <action> [--lane L] [--task T]` | Ủy quyền duyệt. `add`/`revoke` chỉ dành cho người dùng ở terminal tương tác (xác định bằng caller detection, nên agent trong PTY của hc bị từ chối); add từ chối trường rỗng và hành động hard-prohibited. Action được đối chiếu/lưu không phân biệt hoa/thường (bỏ khoảng trắng rồi chuyển thường), lane/task chỉ bỏ khoảng trắng. `--expires-ms` là mốc thời gian tuyệt đối (epoch ms) và phải ở tương lai. Grant mới thay thế các grant cũ còn hiệu lực cùng lane/task/action. `check` chỉ đọc (không ghi hàng log) và in `{"decision","action","lane","task","source"}` (hoặc một dòng khi ở TTY). Mã thoát: **0** allowed, **5** requires_human, **6** hard_prohibited. Whitelist toàn cục `[policy].delegated_actions` hoặc grant lane/task còn hiệu lực mới cho phép; merge/push/deploy, đổi billing/quota, kill Claude/Codex, đổi harness và tự mở rộng grant luôn cần người |
 | `agm link <t> <session>` | Ghép tay terminal ↔ phiên khi agm không chắc |
 | `agm ask [--model gemini-4-argon-high] [--timeout 300] <câu hỏi>` | Hỏi agy một lần (chỉ đọc, chạy trong thư mục tạm ngoài repo), ghi lại token |
 | `agm hook install` · `agm hook statusline` | Gắn / chạy hook statusline của Claude Code |

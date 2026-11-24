@@ -8,6 +8,33 @@ use serde::Serialize;
 
 use super::Store;
 
+fn approval_grant_from(row: &Row) -> rusqlite::Result<ApprovalGrant> {
+    Ok(ApprovalGrant {
+        id: row.get(0)?,
+        lane: row.get(1)?,
+        task: row.get(2)?,
+        action: row.get(3)?,
+        approved_by: row.get(4)?,
+        approved_ms: row.get(5)?,
+        expires_ms: row.get(6)?,
+        revoked_ms: row.get(7)?,
+        reason: row.get(8)?,
+    })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ApprovalGrant {
+    pub id: i64,
+    pub lane: Option<String>,
+    pub task: Option<String>,
+    pub action: String,
+    pub approved_by: String,
+    pub approved_ms: i64,
+    pub expires_ms: Option<i64>,
+    pub revoked_ms: Option<i64>,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TerminalRow {
     pub address: String,
@@ -528,6 +555,91 @@ impl Store {
             params![now, actor, kind, target, detail, ok as i64],
         )?;
         Ok(())
+    }
+
+    /// Thêm grant mới trong một transaction: thu hồi mọi grant cũ còn hiệu lực cùng lane/task/action
+    /// trước khi INSERT, để grant không hạn cũ không sống lại khi grant mới hết hạn.
+    pub fn add_approval_grant(&self, grant: &ApprovalGrant) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE approval_grants SET revoked_ms = ?4
+             WHERE lane = ?1 AND task = ?2 AND action = ?3 AND revoked_ms IS NULL",
+            params![grant.lane, grant.task, grant.action, grant.approved_ms],
+        )?;
+        tx.execute(
+            "INSERT INTO approval_grants
+             (lane, task, action, approved_by, approved_ms, expires_ms, revoked_ms, reason)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+            params![
+                grant.lane,
+                grant.task,
+                grant.action,
+                grant.approved_by,
+                grant.approved_ms,
+                grant.expires_ms,
+                grant.reason,
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
+    }
+
+    pub fn approval_grant(
+        &self,
+        lane: &str,
+        task: &str,
+        action: &str,
+        now: i64,
+    ) -> Result<Option<ApprovalGrant>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, lane, task, action, approved_by, approved_ms, expires_ms, revoked_ms, reason
+                 FROM approval_grants
+                 WHERE action = ?3 AND lane = ?1 AND task = ?2
+                   AND revoked_ms IS NULL
+                   AND (expires_ms IS NULL OR expires_ms > ?4)
+                 ORDER BY approved_ms DESC, id DESC LIMIT 1",
+                params![lane, task, action, now],
+                approval_grant_from,
+            )
+            .optional()?)
+    }
+
+    pub fn approval_grants(&self, active_only: bool, now: i64) -> Result<Vec<ApprovalGrant>> {
+        let filter = if active_only {
+            " WHERE revoked_ms IS NULL AND (expires_ms IS NULL OR expires_ms > ?1)"
+        } else {
+            ""
+        };
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, lane, task, action, approved_by, approved_ms, expires_ms, revoked_ms, reason
+             FROM approval_grants{filter}
+             ORDER BY approved_ms DESC, id DESC"
+        ))?;
+        let params: [&dyn rusqlite::ToSql; 1] = [&now];
+        let rows = if active_only {
+            stmt.query_map(params, approval_grant_from)?
+        } else {
+            stmt.query_map([], approval_grant_from)?
+        };
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Thu hồi mọi grant còn hiệu lực khớp đúng lane/task/action; trả số dòng đã cập nhật.
+    pub fn revoke_approval_grant(
+        &self,
+        lane: &str,
+        task: &str,
+        action: &str,
+        now: i64,
+    ) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE approval_grants SET revoked_ms = ?4
+             WHERE lane = ?1 AND task = ?2 AND action = ?3 AND revoked_ms IS NULL",
+            params![lane, task, action, now],
+        )?)
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>> {

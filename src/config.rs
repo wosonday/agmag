@@ -105,10 +105,27 @@ pub struct Config {
     pub opencode_models: Option<crate::opencode_models::ModelCatalog>,
 }
 
+/// Hành động luôn cần người duyệt, dù `[policy].delegated_actions` hay grant còn hiệu lực có ghi.
+pub const HARD_PROHIBITED_ACTIONS: [&str; 10] = [
+    "merge",
+    "push",
+    "deploy",
+    "enable_extra_usage",
+    "raise_quota",
+    "change_billing",
+    "kill_claude",
+    "kill_codex",
+    "change_harness",
+    "grant_extension",
+];
+
 /// Ngưỡng và hạn mức cho policy (ngân sách, cảnh báo ngữ cảnh, xoay vòng thợ).
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
+    /// User-approved actions that agents may execute without a human prompt.
+    #[serde(default)]
+    pub delegated_actions: Vec<String>,
     /// Số thợ (nhãn agm.role=worker) sống cùng lúc tối đa.
     pub max_workers: u32,
     /// Tên terminal quản lý nhận cảnh báo; None = chỉ hộp thư người dùng.
@@ -144,6 +161,7 @@ impl Default for Policy {
     fn default() -> Self {
         Policy {
             max_workers: 3,
+            delegated_actions: Vec::new(),
             manager: None,
             ctx_warn: 50.0,
             ctx_rotate: 70.0,
@@ -175,6 +193,17 @@ impl Policy {
     /// Each threshold must be finite and in (0, 100], and warn ≤ rotate in each pair. Otherwise the daemon
     /// would start a rotation at `rotate` and cancel it below `warn` on every tick, or never act at all.
     pub fn validate(&self) -> Result<()> {
+        for entry in &self.delegated_actions {
+            let normalized = crate::actions::normalize_action(entry);
+            if normalized.is_empty() {
+                anyhow::bail!("delegated_actions entries must not be empty (got {entry:?})");
+            }
+            if HARD_PROHIBITED_ACTIONS.contains(&normalized.as_str()) {
+                anyhow::bail!(
+                    "delegated_actions: '{normalized}' is hard-prohibited and can never be delegated"
+                );
+            }
+        }
         for (warn_key, warn, rotate_key, rotate) in [
             ("ctx_warn", self.ctx_warn, "ctx_rotate", self.ctx_rotate),
             (

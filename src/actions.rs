@@ -4,12 +4,210 @@
 
 use anyhow::{Result, bail};
 
-use crate::config::Config;
+use crate::config::{Config, HARD_PROHIBITED_ACTIONS};
 use crate::hc::{Hc, RunSpec, terminal_row_from};
 use crate::launch::LaunchSpec;
-use crate::store::{MessageRow, Store, TerminalRow};
+use crate::store::{ApprovalGrant, MessageRow, Store, TerminalRow};
 
 pub const KINDS: [&str; 7] = ["GIAO", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "CHƯA ĐẠT"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Allowed,
+    RequiresHuman,
+    HardProhibited,
+}
+
+impl ApprovalDecision {
+    /// Tên trong JSON/CLI và MCP (`allowed`, `requires_human`, `hard_prohibited`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApprovalDecision::Allowed => "allowed",
+            ApprovalDecision::RequiresHuman => "requires_human",
+            ApprovalDecision::HardProhibited => "hard_prohibited",
+        }
+    }
+}
+
+/// Dạng chuẩn của tên hành động: bỏ khoảng trắng hai đầu rồi chuyển thường (ASCII).
+/// Mọi nơi so sánh/lưu action đều dùng hàm này để tránh `PUSH` lọt qua danh sách cấm.
+pub fn normalize_action(s: &str) -> String {
+    s.trim().to_ascii_lowercase()
+}
+
+/// Dạng chuẩn của lane/task: chỉ bỏ khoảng trắng hai đầu, giữ nguyên chữ hoa/thường.
+pub fn normalize_key(s: &str) -> String {
+    s.trim().to_string()
+}
+
+/// Hành động luôn cần người dù whitelist toàn cục hay grant còn hiệu lực có ghi.
+pub fn is_hard_prohibited(action: &str) -> bool {
+    let action = normalize_action(action);
+    HARD_PROHIBITED_ACTIONS.contains(&action.as_str())
+}
+
+/// Kết quả một lần kiểm quyền: quyết định + nguồn (`hard`, `global`, `grant:<id>`, `none`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    pub decision: ApprovalDecision,
+    pub source: String,
+}
+
+impl Decision {
+    /// JSON chung cho `agm approval check` và MCP `agm_approval_check` (action đã trim ở phía gọi).
+    pub fn to_json(
+        &self,
+        action: &str,
+        lane: Option<&str>,
+        task: Option<&str>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "decision": self.decision.as_str(),
+            "action": action,
+            "lane": lane,
+            "task": task,
+            "source": self.source,
+        })
+    }
+
+    /// Một dòng cho người dùng ở TTY.
+    pub fn human_line(&self, action: &str, lane: Option<&str>, task: Option<&str>) -> String {
+        let mut line = format!(
+            "{}: {action} (source: {})",
+            self.decision.as_str(),
+            self.source
+        );
+        if let Some(lane) = lane {
+            line.push_str(&format!(" lane={lane}"));
+        }
+        if let Some(task) = task {
+            line.push_str(&format!(" task={task}"));
+        }
+        line
+    }
+}
+
+/// Luật BOT-CEO §2.1: hard-prohibited luôn thắng; rồi whitelist toàn cục; rồi grant lane+task còn hiệu lực;
+/// còn lại cần người. Mọi đầu vào (kể cả từng `delegated_actions`) đều đưa về dạng chuẩn trước khi so khớp.
+pub fn decide(
+    store: &Store,
+    cfg: &Config,
+    action: &str,
+    lane: Option<&str>,
+    task: Option<&str>,
+    now: i64,
+) -> Result<Decision> {
+    let action = normalize_action(action);
+    if action.is_empty() {
+        bail!("action không được rỗng");
+    }
+    let lane = lane.map(normalize_key);
+    let task = task.map(normalize_key);
+    let decision = |decision, source: &str| Decision {
+        decision,
+        source: source.to_string(),
+    };
+    if is_hard_prohibited(&action) {
+        return Ok(decision(ApprovalDecision::HardProhibited, "hard"));
+    }
+    if cfg
+        .policy
+        .delegated_actions
+        .iter()
+        .any(|a| normalize_action(a) == action)
+    {
+        return Ok(decision(ApprovalDecision::Allowed, "global"));
+    }
+    if let (Some(lane), Some(task)) = (lane.as_deref(), task.as_deref())
+        && let Some(grant) = store.approval_grant(lane, task, &action, now)?
+    {
+        return Ok(decision(
+            ApprovalDecision::Allowed,
+            &format!("grant:{}", grant.id),
+        ));
+    }
+    Ok(decision(ApprovalDecision::RequiresHuman, "none"))
+}
+
+/// Lane/task/action của một grant đã được kiểm và đưa về dạng chuẩn để lưu vào CSDL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedGrant {
+    pub lane: String,
+    pub task: String,
+    pub action: String,
+}
+
+/// Kiểm đầu vào `agm approval add`: lane/task/action không rỗng và action không hard-prohibited.
+/// Trả cả ba trường đã chuẩn hóa để lưu. Chỉ kiểm tra, không ghi gì.
+pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<ValidatedGrant> {
+    let lane = normalize_key(lane);
+    let task = normalize_key(task);
+    let action = normalize_action(action);
+    if lane.is_empty() {
+        bail!("lane không được rỗng");
+    }
+    if task.is_empty() {
+        bail!("task không được rỗng");
+    }
+    if action.is_empty() {
+        bail!("action không được rỗng");
+    }
+    if is_hard_prohibited(&action) {
+        bail!("hành động '{action}' là hard-prohibited: luôn cần người duyệt, không thể tạo grant");
+    }
+    Ok(ValidatedGrant { lane, task, action })
+}
+
+/// Một dòng dễ đọc cho `agm approval ls` khi chạy trên TTY (không dùng `--json`).
+pub fn grant_human_line(g: &ApprovalGrant, now: i64) -> String {
+    let scope = match (&g.lane, &g.task) {
+        (Some(lane), Some(task)) => format!("{lane}/{task}"),
+        (Some(lane), None) => lane.clone(),
+        (None, Some(task)) => task.clone(),
+        (None, None) => "*/*".into(),
+    };
+    let expiry = match g.expires_ms {
+        Some(ms) => format!("expires={ms}"),
+        None => "no expiry".into(),
+    };
+    let state = if g.revoked_ms.is_some() {
+        "revoked"
+    } else if g.expires_ms.is_some_and(|ms| ms <= now) {
+        "expired"
+    } else {
+        "active"
+    };
+    format!(
+        "#{} {scope}: {} | {expiry} | {state} | {}",
+        g.id, g.action, g.reason
+    )
+}
+
+/// `--expires-ms` là mốc tuyệt đối (epoch ms), không phải TTL; phải lớn hơn `now`.
+pub fn validate_expires_ms(expires_ms: Option<i64>, now: i64) -> Result<()> {
+    if let Some(expires) = expires_ms
+        && expires <= now
+    {
+        bail!(
+            "--expires-ms phải là mốc thời gian tuyệt đối (epoch ms) ở tương lai, nhận {expires} (now = {now})"
+        );
+    }
+    Ok(())
+}
+
+/// Thu hồi grant (đã chuẩn hóa đầu vào); báo lỗi nếu không có dòng nào khớp để CLI không báo thành công giả.
+pub fn revoke_grant(store: &Store, lane: &str, task: &str, action: &str, now: i64) -> Result<()> {
+    let revoked = store.revoke_approval_grant(
+        &normalize_key(lane),
+        &normalize_key(task),
+        &normalize_action(action),
+        now,
+    )?;
+    if revoked == 0 {
+        bail!("không có grant còn hiệu lực cho {lane}/{task}:{action} để thu hồi");
+    }
+    Ok(())
+}
 
 /// English message types shown in `agm tui`, paired with the stored code (SQLite, forwarded text, `agm send --type`).
 pub const KINDS_EN: [(&str, &str); 7] = [
@@ -130,6 +328,24 @@ pub fn detect_caller(
         },
     };
     classify_caller(hc_terminal, is_agent, tty, confirmed)
+}
+
+/// Từ chối nếu người gọi không phải người dùng ở terminal tương tác (cùng luật `detect_caller` với `agm board`).
+/// `tty` = stdin và stdout đều là terminal; `denied_message` là lời báo lỗi riêng của từng lệnh.
+pub fn require_human(
+    store: &Store,
+    hc: &dyn Hc,
+    hc_terminal: Option<&str>,
+    tty: bool,
+    denied_message: &str,
+) -> Result<()> {
+    if !matches!(
+        detect_caller(store, hc, hc_terminal, tty, false),
+        Caller::User { .. }
+    ) {
+        bail!("{denied_message}");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -770,13 +986,52 @@ impl std::fmt::Display for BriefUndelivered {
 
 impl std::error::Error for BriefUndelivered {}
 
-/// Mã thoát cho lỗi CLI: `EXIT_BRIEF_UNDELIVERED` nếu là `BriefUndelivered` (kể cả đã bọc context), còn lại 1.
+/// Mã thoát khi quyết định là `requires_human` / `hard_prohibited` (agent đọc mã, không đọc câu chữ).
+pub const EXIT_APPROVAL_REQUIRES_HUMAN: u8 = 5;
+pub const EXIT_APPROVAL_HARD_PROHIBITED: u8 = 6;
+
+/// `agm approval check` đã in JSON nhưng hành động không được tự duyệt; `exit_code` ánh xạ 5/6.
+#[derive(Debug)]
+pub struct ApprovalRefused {
+    pub decision: ApprovalDecision,
+    pub action: String,
+    pub source: String,
+}
+
+impl std::fmt::Display for ApprovalRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.decision {
+            ApprovalDecision::HardProhibited => write!(
+                f,
+                "hành động {} bị cấm (hard-prohibited), luôn cần người",
+                self.action
+            ),
+            _ => write!(
+                f,
+                "cần người duyệt hành động {} (nguồn: {})",
+                self.action, self.source
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ApprovalRefused {}
+
+/// Mã thoát cho lỗi CLI: `EXIT_BRIEF_UNDELIVERED` nếu là `BriefUndelivered` (kể cả đã bọc context),
+/// 5/6 cho `ApprovalRefused`, còn lại 1.
 pub fn exit_code(err: &anyhow::Error) -> u8 {
     if err.downcast_ref::<BriefUndelivered>().is_some() {
-        EXIT_BRIEF_UNDELIVERED
-    } else {
-        1
+        return EXIT_BRIEF_UNDELIVERED;
     }
+    if let Some(refused) = err.downcast_ref::<ApprovalRefused>() {
+        return match refused.decision {
+            // Err chứa `Allowed` là trường hợp bọc nhầm: không bao giờ được thoát 0 như lệnh thành công.
+            ApprovalDecision::Allowed => 1,
+            ApprovalDecision::RequiresHuman => EXIT_APPROVAL_REQUIRES_HUMAN,
+            ApprovalDecision::HardProhibited => EXIT_APPROVAL_HARD_PROHIBITED,
+        };
+    }
+    1
 }
 
 fn send_spawn_brief(

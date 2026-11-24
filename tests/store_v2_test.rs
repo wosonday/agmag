@@ -18,7 +18,7 @@ fn opening_migrated_db_does_not_wait_for_write_lock() -> anyhow::Result<()> {
     let v: i64 = store
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
     let has_effort: bool = store.conn().query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')",
         [],
@@ -29,6 +29,86 @@ fn opening_migrated_db_does_not_wait_for_write_lock() -> anyhow::Result<()> {
     Ok(())
 }
 use agmag::store::{BudgetRow, MessageRow, Store, TerminalRow};
+
+#[test]
+fn delegated_grant_roundtrip_revoke_and_expiry() -> anyhow::Result<()> {
+    use agmag::store::ApprovalGrant;
+
+    let store = Store::open_in_memory()?;
+    let grant = ApprovalGrant {
+        id: 0,
+        lane: Some("lane-a".into()),
+        task: Some("task-a".into()),
+        action: "continue_review".into(),
+        approved_by: "user".into(),
+        approved_ms: 100,
+        expires_ms: Some(1000),
+        revoked_ms: None,
+        reason: "approved for task".into(),
+    };
+    store.add_approval_grant(&grant)?;
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "continue_review", 500)?
+            .is_some()
+    );
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "continue_review", 1001)?
+            .is_none()
+    );
+    let active = store.approval_grants(true, 500)?;
+    assert_eq!(active.len(), 1);
+    store.revoke_approval_grant("lane-a", "task-a", "continue_review", 600)?;
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "continue_review", 500)?
+            .is_none()
+    );
+    assert!(store.approval_grants(true, 500)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn revoke_approval_grant_reports_matched_row_count() -> anyhow::Result<()> {
+    use agmag::store::ApprovalGrant;
+
+    let store = Store::open_in_memory()?;
+    for lane in ["lane-a", "lane-b"] {
+        store.add_approval_grant(&ApprovalGrant {
+            lane: Some(lane.into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 100,
+            reason: "test".into(),
+            ..Default::default()
+        })?;
+    }
+    assert_eq!(
+        store.revoke_approval_grant("lane-a", "task-a", "spawn_worker", 200)?,
+        1
+    );
+    assert_eq!(
+        store.revoke_approval_grant("lane-a", "task-a", "spawn_worker", 300)?,
+        0
+    );
+    assert_eq!(
+        store.revoke_approval_grant("lane-z", "task-a", "spawn_worker", 300)?,
+        0
+    );
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "spawn_worker", 500)?
+            .is_none()
+    );
+    assert!(
+        store
+            .approval_grant("lane-b", "task-a", "spawn_worker", 500)?
+            .is_some()
+    );
+    Ok(())
+}
 
 fn term(addr: &str) -> TerminalRow {
     TerminalRow {
@@ -55,7 +135,7 @@ fn migrates_v1_to_v2() -> anyhow::Result<()> {
     let v: i64 = store
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
     let has_effort: bool = store.conn().query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')",
         [],
@@ -83,7 +163,7 @@ fn migrates_v2_to_v3_idempotently() -> anyhow::Result<()> {
     let v: i64 = store
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
     let has_effort: bool = store.conn().query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')",
         [],
@@ -104,6 +184,72 @@ fn migrates_v2_to_v3_idempotently() -> anyhow::Result<()> {
         |r| r.get(0),
     )?;
     assert_eq!((t_cols, r_cols), (3, 5));
+    Ok(())
+}
+
+#[test]
+fn migrates_v4_to_v5_and_keeps_v4_data() -> anyhow::Result<()> {
+    use agmag::store::ApprovalGrant;
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("agm.db");
+    {
+        let c = rusqlite::Connection::open(&path)?;
+        c.execute_batch(include_str!("../src/store/schema.sql"))?;
+        c.execute_batch(include_str!("../src/store/schema_v2.sql"))?;
+        c.execute_batch(include_str!("../src/store/schema_v3.sql"))?;
+        // v4 = v3 + cột `effort` trên sessions (xem Store::initialize).
+        c.execute_batch(
+            "ALTER TABLE sessions ADD COLUMN effort TEXT;
+             PRAGMA user_version = 4;
+             INSERT INTO sessions(source, path, effort) VALUES ('codex', 'v4-kept.jsonl', 'high');",
+        )?;
+        let has_grants: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approval_grants')",
+            [],
+            |r| r.get(0),
+        )?;
+        assert!(!has_grants, "schema v4 không được có approval_grants");
+    }
+    let store = Store::open(&path)?;
+    let v: i64 = store
+        .conn()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    assert_eq!(v, 5);
+    let has_table: bool = store.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approval_grants')",
+        [],
+        |r| r.get(0),
+    )?;
+    let has_index: bool = store.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'approval_grants_lookup')",
+        [],
+        |r| r.get(0),
+    )?;
+    assert!(has_table && has_index, "v5 phải có bảng và index approval");
+    let (kept_path, effort): (String, String) =
+        store
+            .conn()
+            .query_row("SELECT path, effort FROM sessions", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+    assert_eq!(kept_path, "v4-kept.jsonl");
+    assert_eq!(effort, "high");
+    let id = store.add_approval_grant(&ApprovalGrant {
+        lane: Some("lane-a".into()),
+        task: Some("task-a".into()),
+        action: "spawn_worker".into(),
+        approved_by: "user".into(),
+        approved_ms: 10,
+        reason: "after migration".into(),
+        ..Default::default()
+    })?;
+    assert_eq!(
+        store
+            .approval_grant("lane-a", "task-a", "spawn_worker", 100)?
+            .map(|g| g.id),
+        Some(id)
+    );
     Ok(())
 }
 

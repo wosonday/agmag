@@ -2,7 +2,7 @@ mod common;
 
 use agmag::git::Git;
 use agmag::mcp::{McpCtx, handle_message, serve};
-use agmag::store::{Store, TerminalRow};
+use agmag::store::{ApprovalGrant, Store, TerminalRow};
 use anyhow::Result;
 use common::FakeHc;
 use serde_json::{Value, json};
@@ -249,7 +249,13 @@ fn tools_list_has_schema_for_each_tool() {
         let r =
             handle_message(ctx, &json!({"jsonrpc":"2.0","id":4,"method":"tools/list"})).unwrap();
         let tools = r["result"]["tools"].as_array().unwrap();
-        for n in ["agm_ps", "agm_inbox", "agm_quota", "agm_branch_get"] {
+        for n in [
+            "agm_ps",
+            "agm_inbox",
+            "agm_quota",
+            "agm_branch_get",
+            "agm_approval_check",
+        ] {
             let t = tools
                 .iter()
                 .find(|t| t["name"] == n)
@@ -259,6 +265,117 @@ fn tools_list_has_schema_for_each_tool() {
             assert_eq!(t["inputSchema"]["additionalProperties"], false);
         }
     });
+}
+
+#[test]
+fn approval_check_tool_returns_decision_json_and_reads_global_and_grants() {
+    let store = Store::open_in_memory().unwrap();
+    let hc = FakeHc::default();
+    let git = FakeGit;
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("providers.toml");
+    std::fs::write(
+        &cfg_path,
+        "[policy]\ndelegated_actions = [\"continue_review\"]\n",
+    )
+    .unwrap();
+    let ctx = McpCtx {
+        store: &store,
+        hc: &hc,
+        git: &git,
+        cfg_path,
+        caller_terminal: None,
+        clock: || 0,
+    };
+
+    let r = call(
+        &ctx,
+        "agm_approval_check",
+        json!({"action": "  continue_review  "}),
+    );
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(
+        r["result"]["structuredContent"],
+        json!({
+            "decision": "allowed",
+            "action": "continue_review",
+            "lane": null,
+            "task": null,
+            "source": "global",
+        })
+    );
+
+    let r = call(
+        &ctx,
+        "agm_approval_check",
+        json!({"action": "push", "lane": "lane-a", "task": "task-a"}),
+    );
+    assert_eq!(
+        r["result"]["structuredContent"],
+        json!({
+            "decision": "hard_prohibited",
+            "action": "push",
+            "lane": "lane-a",
+            "task": "task-a",
+            "source": "hard",
+        })
+    );
+
+    let r = call(
+        &ctx,
+        "agm_approval_check",
+        json!({"action": "spawn_worker", "lane": "lane-a", "task": "task-a"}),
+    );
+    assert_eq!(
+        r["result"]["structuredContent"],
+        json!({
+            "decision": "requires_human",
+            "action": "spawn_worker",
+            "lane": "lane-a",
+            "task": "task-a",
+            "source": "none",
+        })
+    );
+
+    let id = store
+        .add_approval_grant(&ApprovalGrant {
+            lane: Some("lane-a".into()),
+            task: Some("task-a".into()),
+            action: "spawn_worker".into(),
+            approved_by: "user".into(),
+            approved_ms: 0,
+            expires_ms: None,
+            reason: "test".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let r = call(
+        &ctx,
+        "agm_approval_check",
+        json!({"action": "spawn_worker", "lane": "lane-a", "task": "task-a"}),
+    );
+    assert_eq!(
+        r["result"]["structuredContent"],
+        json!({
+            "decision": "allowed",
+            "action": "spawn_worker",
+            "lane": "lane-a",
+            "task": "task-a",
+            "source": format!("grant:{id}"),
+        })
+    );
+    assert_eq!(store.approval_grants(false, 0).unwrap().len(), 1);
+
+    let r = call(
+        &ctx,
+        "agm_approval_check",
+        json!({"action": "spawn_worker", "extra": true}),
+    );
+    assert!(err_text(&r).contains("extra"));
+    let r = call(&ctx, "agm_approval_check", json!({}));
+    assert!(err_text(&r).contains("action"));
+    let r = call(&ctx, "agm_approval_check", json!({"action": "  "}));
+    assert!(err_text(&r).contains("action"));
 }
 
 #[test]
@@ -325,7 +442,8 @@ fn tool_list_is_exactly_the_phase1_set() {
                 "agm_quota",
                 "agm_spawn",
                 "agm_branch_get",
-                "agm_branch_update"
+                "agm_branch_update",
+                "agm_approval_check"
             ]
         );
     });
@@ -489,6 +607,7 @@ fn no_tool_call_ever_kills() {
             "agm_branch_update",
             json!({"branches_file": file, "entry": "feat/x", "fields": {"status": "wip"}}),
         ),
+        ("agm_approval_check", json!({"action": "spawn_worker"})),
     ];
     for (n, a) in calls {
         call(&ctx, n, a);

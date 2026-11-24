@@ -159,7 +159,7 @@ pub fn validate_new_grant(lane: &str, task: &str, action: &str) -> Result<Valida
 }
 
 /// Một dòng dễ đọc cho `agm approval ls` khi chạy trên TTY (không dùng `--json`).
-pub fn grant_human_line(g: &ApprovalGrant) -> String {
+pub fn grant_human_line(g: &ApprovalGrant, now: i64) -> String {
     let scope = match (&g.lane, &g.task) {
         (Some(lane), Some(task)) => format!("{lane}/{task}"),
         (Some(lane), None) => lane.clone(),
@@ -172,6 +172,8 @@ pub fn grant_human_line(g: &ApprovalGrant) -> String {
     };
     let state = if g.revoked_ms.is_some() {
         "revoked"
+    } else if g.expires_ms.is_some_and(|ms| ms <= now) {
+        "expired"
     } else {
         "active"
     };

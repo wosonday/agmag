@@ -736,7 +736,7 @@ fn run(cli: Cli) -> Result<()> {
                     reason,
                 },
         } => {
-            agmag::actions::validate_expires_ms(expires_ms, now)?;
+            // Kiểm người gọi trước mọi kiểm đầu vào: agent chỉ nhận đúng một lỗi "không phải người".
             let hc = agmag::hc::HcCli::default();
             let term = ops::hc_terminal();
             agmag::actions::require_human(
@@ -746,6 +746,7 @@ fn run(cli: Cli) -> Result<()> {
                 std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
                 "approval add chỉ người dùng ở terminal tương tác (TTY) mới được tạo",
             )?;
+            agmag::actions::validate_expires_ms(expires_ms, now)?;
             let grant = agmag::actions::validate_new_grant(&lane, &task, &action)?;
             let (lane, task, action) = (grant.lane, grant.task, grant.action);
             let id = store.add_approval_grant(&agmag::store::ApprovalGrant {
@@ -778,7 +779,7 @@ fn run(cli: Cli) -> Result<()> {
             let grants = store.approval_grants(!all, now)?;
             emit(json, &serde_json::json!({"grants": grants}), || {
                 for grant in grants {
-                    println!("{}", agmag::actions::grant_human_line(&grant));
+                    println!("{}", agmag::actions::grant_human_line(&grant, now));
                 }
             })?;
             Ok(())

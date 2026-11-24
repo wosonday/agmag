@@ -847,7 +847,7 @@ fn approval_grant_human_line_is_readable() {
         revoked_ms: None,
         reason: "user approved".into(),
     };
-    let line = actions::grant_human_line(&grant);
+    let line = actions::grant_human_line(&grant, 100);
     for part in [
         "#7",
         "lane-a",
@@ -865,9 +865,21 @@ fn approval_grant_human_line_is_readable() {
         revoked_ms: Some(999),
         ..grant
     };
-    let line = actions::grant_human_line(&expired);
+    let line = actions::grant_human_line(&expired, 100);
     assert!(line.contains("expires=1234"), "{line}");
     assert!(line.contains("revoked"), "{line}");
+    // Quá hạn nhưng chưa thu hồi: `expired`, không phải `active`.
+    let lapsed = ApprovalGrant {
+        expires_ms: Some(1234),
+        revoked_ms: None,
+        ..expired.clone()
+    };
+    let line = actions::grant_human_line(&lapsed, 1234);
+    assert!(
+        line.contains("expired") && !line.contains("active"),
+        "{line}"
+    );
+    assert!(actions::grant_human_line(&lapsed, 1233).contains("active"));
 }
 
 #[test]

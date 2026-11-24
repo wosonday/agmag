@@ -1162,7 +1162,7 @@ fn approval_emit_failure_exits_1_not_swallowed() {
 }
 
 #[test]
-fn approval_add_rejects_past_absolute_expiry() {
+fn approval_add_from_non_tty_is_refused_before_input_checks() {
     let tmp = sandbox(None);
     let out = agm(
         tmp.path(),
@@ -1179,7 +1179,10 @@ fn approval_add_rejects_past_absolute_expiry() {
     );
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("epoch"), "{err}");
+    // Không phải người (stdin/stdout không là TTY) → lỗi người gọi, chưa tới kiểm `--expires-ms`
+    // (luật epoch ms được test ở actions_test::validate_expires_ms).
+    assert!(err.contains("TTY"), "{err}");
+    assert!(!err.contains("epoch"), "{err}");
 }
 
 #[test]

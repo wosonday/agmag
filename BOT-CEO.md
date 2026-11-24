@@ -44,7 +44,7 @@ CEO chỉ được auto-approve hành động đã nằm trong whitelist toàn c
 
 - Cấu hình toàn cục dùng `[policy].delegated_actions` trong `providers.toml`.
 - Tên action được chuẩn hóa (bỏ khoảng trắng, chuyển thường) khi so khớp và lưu; lane/task chỉ bỏ khoảng trắng. Vì vậy `PUSH`, `Push` hay ` push ` đều bị coi là hard-prohibited.
-- Grant theo task dùng `agm approval add <lane> <task> <action> ...` và chỉ người dùng ở terminal tương tác được tạo/thu hồi (`agm approval add|ls|revoke`); caller detection từ chối cả agent chạy trong PTY của `hc`. Grant mới thay thế grant cũ còn hiệu lực cùng lane/task/action; `--expires-ms` là mốc epoch ms tuyệt đối, phải ở tương lai.
+- Grant theo task dùng `agm approval add <lane> <task> <action> ...` và chỉ người dùng ở terminal tương tác được tạo/thu hồi (`agm approval add|revoke`; `agm approval ls` ai cũng đọc được); caller detection từ chối cả agent chạy trong PTY của `hc`. Grant mới thay thế grant cũ còn hiệu lực cùng lane/task/action; `--expires-ms` là mốc epoch ms tuyệt đối, phải ở tương lai.
 - Grant task không được vượt lane/task/action đã ủy quyền và chỉ được áp dụng trong thời hạn còn hiệu lực.
 - Trước khi tự làm, CEO kiểm bằng `agm approval check <action> [--lane <L>] [--task <T>]` (agent gọi được, không cần TTY); tool MCP tương đương là `agm_approval_check` với `action` (bắt buộc), `lane`, `task`. Kết quả JSON: `{"decision":"allowed|requires_human|hard_prohibited","action":…,"lane":…,"task":…,"source":"hard|global|grant:<id>|none"}`.
 - Mã thoát `agm approval check`: `0` = allowed (được tự làm), `5` = requires_human (gửi `HỎI/CHẶN` rồi chờ), `6` = hard_prohibited (không làm). Mã khác 0 thì không tự duyệt.

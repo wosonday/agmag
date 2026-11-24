@@ -131,7 +131,7 @@ pub fn run_app(
             }
             draw(
                 &mut terminal,
-                &screen,
+                &mut screen,
                 &state,
                 &data,
                 board_cmd_focus,
@@ -187,7 +187,7 @@ pub fn run_app(
                             Next::Redraw => {
                                 draw(
                                     &mut terminal,
-                                    &screen,
+                                    &mut screen,
                                     &state,
                                     &data,
                                     board_cmd_focus,
@@ -221,7 +221,7 @@ pub fn run_app(
                     }
                     Event::Resize(_, _) => draw(
                         &mut terminal,
-                        &screen,
+                        &mut screen,
                         &state,
                         &data,
                         board_cmd_focus,
@@ -442,7 +442,7 @@ fn is_ctrl_c(key: &KeyEvent) -> bool {
 
 fn draw(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    screen: &Screen,
+    screen: &mut Screen,
     state: &GlobalState,
     data: &GlobalData,
     board_cmd_focus: bool,
@@ -454,7 +454,7 @@ fn draw(
 
 fn draw_frame(
     frame: &mut ratatui::Frame,
-    screen: &Screen,
+    screen: &mut Screen,
     state: &GlobalState,
     data: &GlobalData,
     board_cmd_focus: bool,
@@ -498,7 +498,7 @@ fn draw_frame(
                 width: area.width,
                 height: footer_h,
             };
-            super::view::draw_in(
+            board.hit_map = super::view::draw_in(
                 frame,
                 board_area,
                 &board.state,
@@ -868,13 +868,13 @@ mod tests {
 
     #[test]
     fn board_in_app_shows_command_bar() {
-        let screen = Screen::Board(fake_board_screen());
+        let mut screen = Screen::Board(fake_board_screen());
         let state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
         let data = GlobalData::default();
         let backend = ratatui::backend::TestBackend::new(100, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|f| draw_frame(f, &screen, &state, &data, false, false))
+            .draw(|f| draw_frame(f, &mut screen, &state, &data, false, false))
             .unwrap();
         let buf = terminal.backend().buffer();
         let cmd_row: String = (0..buf.area.width).map(|x| buf[(x, 22)].symbol()).collect();

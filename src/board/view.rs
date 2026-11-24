@@ -11,7 +11,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::BoardData;
 use super::flows::{self, Edge};
 use super::layout::{self, BlockKind};
-use super::state::{BoardState, Mode};
+use super::state::{BoardState, Mode, Panel};
 use super::theme::Theme;
 use crate::actions::{KINDS_EN, kind_to_english};
 use crate::dashboard::{format_status, sanitize_one_line};
@@ -38,8 +38,61 @@ pub fn layout_mode(width: u16, height: u16) -> LayoutMode {
     }
 }
 
-pub fn draw(frame: &mut Frame, state: &BoardState, data: &BoardData, theme: &Theme, ascii: bool) {
-    draw_in(frame, frame.area(), state, data, theme, ascii);
+/// Rects recorded during the last board draw, used for mouse hit testing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BoardHitMap {
+    pub panels: Vec<(Rect, Panel)>,
+    pub project_rows: Vec<(Rect, usize)>,
+    pub agent_cards: Vec<(Rect, String)>,
+    pub inbox_rows: Vec<(Rect, i64)>,
+    pub picker_rows: Vec<(Rect, usize)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HitTarget {
+    Panel(Panel),
+    ProjectRow(usize),
+    AgentCard(String),
+    InboxRow(i64),
+    PickerRow(usize),
+}
+
+/// Pure hit test: most specific target wins (rows/cards before panels).
+pub fn hit(map: &BoardHitMap, x: u16, y: u16) -> Option<HitTarget> {
+    for (rect, idx) in &map.project_rows {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::ProjectRow(*idx));
+        }
+    }
+    for (rect, addr) in &map.agent_cards {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::AgentCard(addr.clone()));
+        }
+    }
+    for (rect, id) in &map.inbox_rows {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::InboxRow(*id));
+        }
+    }
+    for (rect, idx) in &map.picker_rows {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::PickerRow(*idx));
+        }
+    }
+    for (rect, panel) in &map.panels {
+        if contains(*rect, x, y) {
+            return Some(HitTarget::Panel(*panel));
+        }
+    }
+    None
+}
+
+fn contains(rect: Rect, x: u16, y: u16) -> bool {
+    x >= rect.x && x < rect.x.saturating_add(rect.width) && y >= rect.y && y < rect.y.saturating_add(rect.height)
+}
+
+pub fn draw(frame: &mut Frame, state: &BoardState, data: &BoardData, theme: &Theme, ascii: bool) -> BoardHitMap {
+    draw_in(frame, frame.area(), state, data, theme, ascii)
 }
 
 pub fn draw_in(
@@ -49,17 +102,19 @@ pub fn draw_in(
     data: &BoardData,
     theme: &Theme,
     ascii: bool,
-) {
+) -> BoardHitMap {
+    let mut hit = BoardHitMap::default();
     let area = area.intersection(frame.area());
     if area.width == 0 || area.height == 0 {
-        return;
+        return hit;
     }
     let ctx = Ctx { theme, ascii };
     match layout_mode(area.width, area.height) {
-        LayoutMode::Wide => draw_wide(frame, area, state, data, ctx),
-        LayoutMode::Medium => draw_medium(frame, area, state, data, ctx),
-        LayoutMode::Narrow => draw_narrow(frame, area, state, data, ctx),
+        LayoutMode::Wide => draw_wide(frame, area, state, data, ctx, &mut hit),
+        LayoutMode::Medium => draw_medium(frame, area, state, data, ctx, &mut hit),
+        LayoutMode::Narrow => draw_narrow(frame, area, state, data, ctx, &mut hit),
     }
+    hit
 }
 
 /// Theme + ASCII flag, passed down instead of two separate arguments.
@@ -140,7 +195,14 @@ fn split_inbox(main: Rect) -> (Rect, Rect) {
     (content, inbox)
 }
 
-fn draw_wide(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_wide(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
     let (main, footer) = split_frame(area);
     let (content, inbox) = split_inbox(main);
     let left_w = status_panel_width(data, ctx).min(content.width);
@@ -153,40 +215,54 @@ fn draw_wide(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData
         ])
         .split(content);
     draw_status(frame, cols[0], data, ctx);
-    draw_orchestration(frame, cols[1], state, data, ctx);
+    draw_orchestration(frame, cols[1], state, data, ctx, hit);
     let right = Layout::vertical([Constraint::Percentage(55), Constraint::Min(0)]).split(cols[2]);
-    draw_detail(frame, right[0], state, data, ctx);
-    draw_messages(frame, right[1], state, data, ctx);
-    draw_inbox(frame, inbox, state, data, ctx);
+    draw_detail(frame, right[0], state, data, ctx, hit);
+    draw_messages(frame, right[1], state, data, ctx, hit);
+    draw_inbox(frame, inbox, state, data, ctx, hit);
     draw_footer(frame, footer, state, ctx);
-    draw_popup(frame, area, state, data, ctx);
+    draw_popup(frame, area, state, data, ctx, hit);
 }
 
-fn draw_medium(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_medium(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
     let (main, footer) = split_frame(area);
     let (content, inbox) = split_inbox(main);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Length(RIGHT_W)])
         .split(content);
-    draw_orchestration(frame, cols[0], state, data, ctx);
+    draw_orchestration(frame, cols[0], state, data, ctx, hit);
     let right = Layout::vertical([Constraint::Percentage(55), Constraint::Min(0)]).split(cols[1]);
-    draw_detail(frame, right[0], state, data, ctx);
-    draw_messages(frame, right[1], state, data, ctx);
-    draw_inbox(frame, inbox, state, data, ctx);
+    draw_detail(frame, right[0], state, data, ctx, hit);
+    draw_messages(frame, right[1], state, data, ctx, hit);
+    draw_inbox(frame, inbox, state, data, ctx, hit);
     draw_footer(frame, footer, state, ctx);
-    draw_popup(frame, area, state, data, ctx);
+    draw_popup(frame, area, state, data, ctx, hit);
 }
 
-fn draw_narrow(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_narrow(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
     let (main, footer) = split_frame(area);
     let (rest, inbox) = split_inbox(main);
     let rows = Layout::vertical([Constraint::Min(0), Constraint::Percentage(40)]).split(rest);
-    draw_narrow_orchestration(frame, rows[0], state, data, ctx);
-    draw_detail(frame, rows[1], state, data, ctx);
-    draw_inbox(frame, inbox, state, data, ctx);
+    draw_narrow_orchestration(frame, rows[0], state, data, ctx, hit);
+    draw_detail(frame, rows[1], state, data, ctx, hit);
+    draw_inbox(frame, inbox, state, data, ctx, hit);
     draw_footer(frame, footer, state, ctx);
-    draw_popup(frame, area, state, data, ctx);
+    draw_popup(frame, area, state, data, ctx, hit);
 }
 
 /// Keeps `selected` inside `height` visible rows, scrolling just enough to show it.
@@ -300,7 +376,9 @@ fn draw_narrow_orchestration(
     state: &BoardState,
     data: &BoardData,
     ctx: Ctx,
+    hit: &mut BoardHitMap,
 ) {
+    hit.panels.push((area, Panel::Orchestration));
     let name = data
         .view
         .as_ref()
@@ -350,9 +428,13 @@ fn draw_narrow_orchestration(
     }
 
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut line_agents: Vec<Option<String>> = Vec::new();
     let mut selected_line = None;
     let push_agent =
-        |index: usize, lines: &mut Vec<Line<'static>>, selected_line: &mut Option<usize>| {
+        |index: usize,
+         lines: &mut Vec<Line<'static>>,
+         line_agents: &mut Vec<Option<String>>,
+         selected_line: &mut Option<usize>| {
             let agent = &view.agents[index];
             let is_selected = selected == Some(index);
             if is_selected {
@@ -418,11 +500,12 @@ fn draw_narrow_orchestration(
                 spans.push(Span::styled(format!(" {ident}"), base));
             }
             lines.push(Line::from(spans));
+            line_agents.push(Some(agent.address.clone()));
         };
 
     for (index, &orphan) in is_orphan.iter().enumerate() {
         if !orphan {
-            push_agent(index, &mut lines, &mut selected_line);
+            push_agent(index, &mut lines, &mut line_agents, &mut selected_line);
         }
     }
     if is_orphan.iter().any(|&o| o) {
@@ -434,13 +517,31 @@ fn draw_narrow_orchestration(
             },
             ctx,
         ));
+        line_agents.push(None);
         for (index, &orphan) in is_orphan.iter().enumerate() {
             if orphan {
-                push_agent(index, &mut lines, &mut selected_line);
+                push_agent(index, &mut lines, &mut line_agents, &mut selected_line);
             }
         }
     }
     let offset = scroll_offset(selected_line.unwrap_or(0), inner.height, lines.len());
+    for (i, addr) in line_agents.iter().enumerate().skip(offset as usize) {
+        let row = i.saturating_sub(offset as usize) as u16;
+        if row >= inner.height {
+            break;
+        }
+        if let Some(addr) = addr {
+            hit.agent_cards.push((
+                Rect {
+                    x: inner.x,
+                    y: inner.y + row,
+                    width: inner.width,
+                    height: 1,
+                },
+                addr.clone(),
+            ));
+        }
+    }
     frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
 
@@ -559,7 +660,9 @@ fn draw_orchestration(
     state: &BoardState,
     data: &BoardData,
     ctx: Ctx,
+    hit: &mut BoardHitMap,
 ) {
+    hit.panels.push((area, Panel::Orchestration));
     let name = data
         .view
         .as_ref()
@@ -604,7 +707,7 @@ fn draw_orchestration(
                     width: width.min(inner.right().saturating_sub(x)),
                     height: inner.height,
                 };
-                draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn);
+                draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn, hit);
                 x = x.saturating_add(width).saturating_add(CARD_GAP);
             }
         }
@@ -623,7 +726,7 @@ fn draw_orchestration(
                     width: inner.width,
                     height: inner.bottom().saturating_sub(y),
                 };
-                y = draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn);
+                y = draw_block(frame, rect, block, &parents, state, data, ctx, &mut drawn, hit);
             }
         }
     }
@@ -657,6 +760,7 @@ fn draw_block(
     data: &BoardData,
     ctx: Ctx,
     drawn: &mut usize,
+    hit: &mut BoardHitMap,
 ) -> u16 {
     let Some(view) = &data.view else {
         return area.y;
@@ -702,6 +806,7 @@ fn draw_block(
                 state,
                 ctx,
                 data.now_ms,
+                hit,
             );
         }
     }
@@ -770,7 +875,9 @@ fn draw_card(
     state: &BoardState,
     ctx: Ctx,
     now_ms: i64,
+    hit: &mut BoardHitMap,
 ) {
+    hit.agent_cards.push((area, agent.address.clone()));
     let selected = state.sel_agent.as_deref() == Some(agent.address.as_str());
     let exited = agent.state == "exited";
     let border = if selected {
@@ -1046,7 +1153,15 @@ fn draw_connectors(
     }
 }
 
-fn draw_detail(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_detail(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
+    hit.panels.push((area, Panel::Detail));
     let agent = state.selected_agent(data);
     let title = match agent {
         Some(agent) => {
@@ -1281,7 +1396,15 @@ fn agent_label(agents: &[AgentView], address: &str) -> String {
         .unwrap_or_else(|| address.to_string())
 }
 
-fn draw_messages(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_messages(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
+    hit.panels.push((area, Panel::Detail));
     let title = match state.selected_agent(data) {
         Some(agent) => format!(" Messages · {} ", sanitize_one_line(&agent.label)),
         None => " Messages ".to_string(),
@@ -1346,7 +1469,15 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &BoardState, data: &Board
     );
 }
 
-fn draw_inbox(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_inbox(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
+    hit.panels.push((area, Panel::Inbox));
     let items = data
         .view
         .as_ref()
@@ -1398,6 +1529,21 @@ fn draw_inbox(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
         .position(|item| Some(item.id) == state.sel_inbox)
         .unwrap_or(0);
     let offset = scroll_offset(selected, inner.height, items.len());
+    for (i, item) in items.iter().enumerate().skip(offset as usize) {
+        let row = i.saturating_sub(offset as usize) as u16;
+        if row >= inner.height {
+            break;
+        }
+        hit.inbox_rows.push((
+            Rect {
+                x: inner.x,
+                y: inner.y + row,
+                width: inner.width,
+                height: 1,
+            },
+            item.id,
+        ));
+    }
     frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 }
 
@@ -1439,7 +1585,14 @@ fn popup_area(area: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
-fn draw_popup(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardData, ctx: Ctx) {
+fn draw_popup(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    ctx: Ctx,
+    hit: &mut BoardHitMap,
+) {
     let (title, lines, width, height) = match &state.mode {
         Mode::Normal => return,
         Mode::Reply { id, input } => (
@@ -1584,6 +1737,24 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &BoardState, data: &BoardDat
         Mode::PickProject { idx } => scroll_offset(*idx, inner.height, data.projects.len()),
         _ => 0,
     };
+    if let Mode::PickProject { .. } = &state.mode {
+        hit.panels.push((rect, Panel::Projects));
+        for (i, _project) in data.projects.iter().enumerate().skip(scroll as usize) {
+            let row = i.saturating_sub(scroll as usize) as u16;
+            if row >= inner.height {
+                break;
+            }
+            hit.picker_rows.push((
+                Rect {
+                    x: inner.x,
+                    y: inner.y + row,
+                    width: inner.width,
+                    height: 1,
+                },
+                i,
+            ));
+        }
+    }
     let paragraph = Paragraph::new(lines).scroll((scroll, 0));
     let paragraph = if matches!(state.mode, Mode::PickProject { .. }) {
         paragraph
@@ -1642,5 +1813,39 @@ fn status_color(kind: StatusKind, theme: &Theme) -> Color {
         StatusKind::Done => theme.ok,
         StatusKind::Error => theme.error,
         StatusKind::Unknown => theme.muted,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: u16, y: u16, width: u16, height: u16) -> Rect {
+        Rect { x, y, width, height }
+    }
+
+    #[test]
+    fn hit_prefers_specific_targets_over_panels() {
+        let map = BoardHitMap {
+            panels: vec![(rect(0, 0, 20, 10), Panel::Orchestration)],
+            agent_cards: vec![(rect(2, 2, 5, 3), "t1".into())],
+            inbox_rows: vec![(rect(0, 8, 20, 1), 42)],
+            ..BoardHitMap::default()
+        };
+        assert_eq!(hit(&map, 3, 3), Some(HitTarget::AgentCard("t1".into())));
+        assert_eq!(hit(&map, 1, 8), Some(HitTarget::InboxRow(42)));
+        assert_eq!(hit(&map, 1, 1), Some(HitTarget::Panel(Panel::Orchestration)));
+        assert_eq!(hit(&map, 99, 99), None);
+    }
+
+    #[test]
+    fn hit_finds_project_and_picker_rows() {
+        let map = BoardHitMap {
+            project_rows: vec![(rect(0, 1, 10, 1), 0), (rect(0, 2, 10, 1), 1)],
+            picker_rows: vec![(rect(5, 5, 10, 1), 3)],
+            ..BoardHitMap::default()
+        };
+        assert_eq!(hit(&map, 2, 2), Some(HitTarget::ProjectRow(1)));
+        assert_eq!(hit(&map, 6, 5), Some(HitTarget::PickerRow(3)));
     }
 }

@@ -356,6 +356,8 @@ pub(crate) struct BoardScreen {
     refresh_note: Option<String>,
     /// The last key ran an action, so the caller refreshes before drawing again.
     needs_refresh: bool,
+    /// Rects recorded during the last draw, used for mouse hit testing.
+    pub(crate) hit_map: view::BoardHitMap,
 }
 
 /// What a key on the board screen did: stay on it, or leave it (`q` / `esc` / `ctrl+c`).
@@ -373,6 +375,7 @@ impl BoardScreen {
             cache: RootCache::new(),
             refresh_note: None,
             needs_refresh: false,
+            hit_map: view::BoardHitMap::default(),
         }
     }
 
@@ -396,8 +399,8 @@ impl BoardScreen {
         self.needs_refresh
     }
 
-    pub(crate) fn draw(&self, frame: &mut Frame, palette: &theme::Theme, ascii: bool) {
-        view::draw(frame, &self.state, &self.data, palette, ascii);
+    pub(crate) fn draw(&mut self, frame: &mut Frame, palette: &theme::Theme, ascii: bool) {
+        self.hit_map = view::draw(frame, &self.state, &self.data, palette, ascii);
     }
 
     pub(crate) fn on_key(
@@ -482,7 +485,7 @@ fn run_loop(
 
 fn draw_board(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    screen: &BoardScreen,
+    screen: &mut BoardScreen,
     ascii: bool,
 ) -> Result<()> {
     let palette = theme::theme(screen.theme());

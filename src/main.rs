@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, IsTerminal, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, IsTerminal, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -767,20 +767,20 @@ fn run(cli: Cli) -> Result<()> {
                 true,
                 now,
             )?;
-            let _ = emit(json, &serde_json::json!({"id": id}), || {
+            emit(json, &serde_json::json!({"id": id}), || {
                 println!("Approval #{id} added.")
-            });
+            })?;
             Ok(())
         }
         Cmd::Approval {
             cmd: ApprovalCmd::Ls { all },
         } => {
             let grants = store.approval_grants(!all, now)?;
-            let _ = emit(json, &serde_json::json!({"grants": grants}), || {
+            emit(json, &serde_json::json!({"grants": grants}), || {
                 for grant in grants {
                     println!("{:?}", grant);
                 }
-            });
+            })?;
             Ok(())
         }
         Cmd::Approval {
@@ -807,9 +807,9 @@ fn run(cli: Cli) -> Result<()> {
                 true,
                 now,
             )?;
-            let _ = emit(json, &serde_json::json!({"revoked": true}), || {
+            emit(json, &serde_json::json!({"revoked": true}), || {
                 println!("Approval revoked.")
-            });
+            })?;
             Ok(())
         }
         Cmd::Approval {
@@ -826,7 +826,7 @@ fn run(cli: Cli) -> Result<()> {
             let action = agmag::actions::normalize_action(&action);
             let lane = lane.as_deref().map(agmag::actions::normalize_key);
             let task = task.as_deref().map(agmag::actions::normalize_key);
-            let _ = emit(
+            emit(
                 json,
                 &decision.to_json(&action, lane.as_deref(), task.as_deref()),
                 || {
@@ -835,7 +835,7 @@ fn run(cli: Cli) -> Result<()> {
                         decision.human_line(&action, lane.as_deref(), task.as_deref())
                     )
                 },
-            );
+            )?;
             // `check` là lệnh chỉ đọc: không ghi bảng actions (kể cả khi bị từ chối).
             if decision.decision != agmag::actions::ApprovalDecision::Allowed {
                 return Err(agmag::actions::ApprovalRefused {
@@ -1097,7 +1097,12 @@ fn print_terminals(rows: &[agmag::store::TerminalRow]) {
 
 fn emit<T: Serialize + ?Sized>(json: bool, value: &T, human: impl FnOnce()) -> Result<()> {
     if json {
-        println!("{}", serde_json::to_string_pretty(value)?);
+        // Dùng writeln! có `?` để lỗi ghi stdout (vd pipe đóng) trả về cho caller thay vì panic.
+        writeln!(
+            std::io::stdout().lock(),
+            "{}",
+            serde_json::to_string_pretty(value)?
+        )?;
     } else {
         human();
     }

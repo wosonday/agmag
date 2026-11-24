@@ -185,3 +185,13 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
 - GREEN: src/actions.rs `exit_code` ánh xạ `Allowed => 1` (giữ 5/6 cho hai trạng thái từ chối thật).
 - `cargo test --test actions_test approval_refused_never_exits_zero` 1 passed; `cargo fmt --check` sạch; EOL không đổi.
 - Commit: `fix(approval): never map ApprovalRefused to exit 0`.
+
+### Item 8 — lan truyền lỗi `emit` trong các nhánh Approval (RED → GREEN)
+- RED: tests/cli_test.rs thêm `approval_emit_failure_exits_1_not_swallowed` (stdout là handle chỉ-đọc; `check`
+  allowed phải thoát 1). Chạy → đỏ `Some(101)` (panic trong `println!`) thay vì `Some(1)`.
+- GREEN: src/main.rs `emit` dùng `writeln!(stdout().lock(), …)?` để lỗi ghi trả `Err`; bốn nhánh
+  Add/Ls/Revoke/Check đổi `let _ = emit(...)` thành `emit(...)?`.
+- `cargo test --test cli_test approval` 11 passed; `cargo fmt --check` sạch.
+- EOL: `cargo fmt` đã đổi main.rs sang LF, đã chuyển ngược về CRLF ngay trước commit; `git ls-files --eol`
+  hiện `i/crlf w/crlf`, diff chỉ còn các dòng sửa thật.
+- Commit: `fix(approval): propagate emit failures in approval commands`.

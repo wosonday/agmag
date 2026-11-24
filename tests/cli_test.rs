@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -1132,6 +1132,33 @@ fn approval_check_empty_action_fails() {
     let out = agm(tmp.path(), &["approval", "check", "  ", "--json"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("action"));
+}
+
+#[test]
+fn approval_emit_failure_exits_1_not_swallowed() {
+    let tmp = sandbox(None);
+    fs::write(
+        tmp.path().join("home/providers.toml"),
+        "[policy]\ndelegated_actions = [\"continue_review\"]\n",
+    )
+    .unwrap();
+    // stdout là handle chỉ-đọc: ghi JSON phải trả Err thay vì panic, và lỗi đó không được nuốt.
+    let readonly = tmp.path().join("home/stdout-readonly.txt");
+    fs::write(&readonly, b"x").unwrap();
+    let handle = fs::File::open(&readonly).unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_agm"))
+        .args(["approval", "check", "continue_review", "--json"])
+        .env("AGM_HOME", tmp.path().join("home"))
+        .env("AGM_CODEX_DIR", tmp.path().join("codex"))
+        .env("AGM_CLAUDE_DIR", tmp.path().join("claude"))
+        .env("AGM_OPENCODE_DB", tmp.path().join("opencode.db"))
+        .env("AGM_AGY_DIR", tmp.path().join("agy"))
+        .stdout(Stdio::from(handle))
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
 }
 
 #[test]

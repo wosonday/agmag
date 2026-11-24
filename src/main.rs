@@ -735,9 +735,15 @@ fn run(cli: Cli) -> Result<()> {
                     reason,
                 },
         } => {
-            if !std::io::stdin().is_terminal() {
-                anyhow::bail!("approval add chỉ người dùng TTY mới được tạo");
-            }
+            let hc = agmag::hc::HcCli::default();
+            let term = ops::hc_terminal();
+            agmag::actions::require_human(
+                &store,
+                &hc,
+                term.as_deref(),
+                std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+                "approval add chỉ người dùng ở terminal tương tác (TTY) mới được tạo",
+            )?;
             let grant = agmag::actions::validate_new_grant(&lane, &task, &action)?;
             let (lane, task, action) = (grant.lane, grant.task, grant.action);
             let id = store.upsert_approval_grant(&agmag::store::ApprovalGrant {
@@ -778,9 +784,15 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Approval {
             cmd: ApprovalCmd::Revoke { lane, task, action },
         } => {
-            if !std::io::stdin().is_terminal() {
-                anyhow::bail!("approval revoke chỉ người dùng ở terminal (TTY) mới được thu hồi");
-            }
+            let hc = agmag::hc::HcCli::default();
+            let term = ops::hc_terminal();
+            agmag::actions::require_human(
+                &store,
+                &hc,
+                term.as_deref(),
+                std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+                "approval revoke chỉ người dùng ở terminal tương tác (TTY) mới được thu hồi",
+            )?;
             let lane = agmag::actions::normalize_key(&lane);
             let task = agmag::actions::normalize_key(&task);
             let action = agmag::actions::normalize_action(&action);

@@ -279,6 +279,24 @@ pub fn detect_caller(
     classify_caller(hc_terminal, is_agent, tty, confirmed)
 }
 
+/// Từ chối nếu người gọi không phải người dùng ở terminal tương tác (cùng luật `detect_caller` với `agm board`).
+/// `tty` = stdin và stdout đều là terminal; `denied_message` là lời báo lỗi riêng của từng lệnh.
+pub fn require_human(
+    store: &Store,
+    hc: &dyn Hc,
+    hc_terminal: Option<&str>,
+    tty: bool,
+    denied_message: &str,
+) -> Result<()> {
+    if !matches!(
+        detect_caller(store, hc, hc_terminal, tty, false),
+        Caller::User { .. }
+    ) {
+        bail!("{denied_message}");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoneSelectorParse {
     pub ids: Vec<i64>,

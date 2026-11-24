@@ -124,3 +124,16 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
   `cargo test --test cli_test approval_check` 7 passed; `cargo test --test mcp_test approval` 1 passed;
   `cargo fmt --check` sạch. Item 4 của review (trim không đồng nhất) được phủ trọn bởi item này.
 - Commit: `fix(approval): canonicalize actions, lanes and tasks everywhere`.
+
+### Item 2 — add/revoke chỉ dành cho người (RED → GREEN)
+- RED: tests/actions_test.rs thêm `approval_add_revoke_require_human_and_refuse_agent_in_hc_pty` (agent trong PTY hc
+  có TTY vẫn bị từ chối; shell người + TTY được phép; không TTY hoặc hc get lỗi → fail closed). Chạy test → đỏ
+  `E0425 cannot find function require_human in module actions`.
+- GREEN: src/actions.rs thêm `require_human(store, hc, hc_terminal, tty, denied_message)` dùng chung
+  `detect_caller`/`Caller::User`; src/board/mod.rs `require_human` gọi lại helper này (một cơ chế, lời báo lỗi riêng);
+  src/main.rs nhánh Add/Revoke thay guard `stdin().is_terminal()` bằng helper + `HcCli` + `ops::hc_terminal()`,
+  thông báo vẫn chứa `TTY`/`thu hồi` để test CLI cũ đúng.
+- `cargo test --test actions_test approval_add_revoke_require_human` 1 passed;
+  `cargo test --test cli_test approval_add_and_revoke` 1 passed; `cargo test --test board_runtime_test` 6 passed;
+  `cargo fmt --check` sạch. EOL: main.rs CRLF, các tệp khác LF.
+- Commit: `fix(approval): require human caller for add and revoke`.

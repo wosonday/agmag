@@ -31,7 +31,7 @@ use ratatui::crossterm::terminal::{
 };
 
 use self::state::Effect;
-use crate::actions::{Caller, DoneFilters, detect_caller};
+use crate::actions::DoneFilters;
 use crate::config::Config;
 use crate::dashboard;
 use crate::hc::Hc;
@@ -77,13 +77,13 @@ fn clock_ms() -> i64 {
 pub fn require_human(store: &Store, hc: &dyn Hc) -> Result<()> {
     let tty = io::stdin().is_terminal() && io::stdout().is_terminal();
     let term = hc_terminal();
-    let who = detect_caller(store, hc, term.as_deref(), tty, false);
-    if !matches!(who, Caller::User { .. }) {
-        bail!(
-            "agm board is only available to a human at an interactive terminal (TTY); agents should use standard agm commands"
-        );
-    }
-    Ok(())
+    crate::actions::require_human(
+        store,
+        hc,
+        term.as_deref(),
+        tty,
+        "agm board is only available to a human at an interactive terminal (TTY); agents should use standard agm commands",
+    )
 }
 
 /// `match_project` over the current project list; ambiguous / unknown → error.

@@ -835,6 +835,70 @@ fn non_shell_foreground_keeps_current_rules() -> Result<()> {
 }
 
 #[test]
+fn approval_add_revoke_require_human_and_refuse_agent_in_hc_pty() -> Result<()> {
+    let store = Store::open_in_memory()?;
+    // Agent chạy trong PTY của hc: có TTY nhưng terminal là app agent → vẫn là agent.
+    let agent_hc = FakeHc {
+        apps: vec![("t9".into(), "opencode".into())],
+        ..Default::default()
+    };
+    assert!(matches!(
+        actions::detect_caller(&store, &agent_hc, Some("t9"), true, false),
+        Caller::Agent(_)
+    ));
+    assert!(
+        actions::require_human(
+            &store,
+            &agent_hc,
+            Some("t9"),
+            true,
+            "approval add bị từ chối"
+        )
+        .is_err(),
+        "agent trong PTY của hc không được add/revoke grant"
+    );
+    // Terminal shell của người (pwsh, không tự báo 7501) + TTY → người dùng.
+    let user_hc = hc_get(
+        "t1b",
+        serde_json::json!({"address": "t1b", "state": "live", "foreground": {"name": "pwsh"}, "status": null}),
+    );
+    assert!(matches!(
+        actions::detect_caller(&store, &user_hc, Some("t1b"), true, false),
+        Caller::User { .. }
+    ));
+    assert!(
+        actions::require_human(
+            &store,
+            &user_hc,
+            Some("t1b"),
+            true,
+            "approval add bị từ chối"
+        )
+        .is_ok()
+    );
+    // Không có TTY, hoặc hc get lỗi khi có HC_TERMINAL_ID → fail closed, từ chối.
+    assert!(
+        actions::require_human(&store, &user_hc, None, false, "approval revoke bị từ chối")
+            .is_err()
+    );
+    let failing = FakeHc {
+        fail_get: true,
+        ..Default::default()
+    };
+    assert!(
+        actions::require_human(
+            &store,
+            &failing,
+            Some("t9"),
+            true,
+            "approval revoke bị từ chối"
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn hc_get_error_stays_agent_even_with_shell_looking_pane() -> Result<()> {
     let store = Store::open_in_memory()?;
     let failing = FakeHc {

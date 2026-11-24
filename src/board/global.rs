@@ -752,6 +752,9 @@ impl GlobalState {
         let Some(drag) = self.drag.as_mut() else {
             return (false, GEffect::None);
         };
+        // A drag is not a click: the next Down must start a fresh press instead of pairing with
+        // the Down that armed this drag (which would reset the boundary just resized).
+        self.last_click = None;
         let fraction = match drag.border {
             BorderId::TopPairVertical => {
                 let left = column
@@ -1812,6 +1815,14 @@ mod tests {
         mouse(MouseEventKind::Down(MouseButton::Left), column, row)
     }
 
+    fn drag(column: u16, row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Drag(MouseButton::Left), column, row)
+    }
+
+    fn up(column: u16, row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Up(MouseButton::Left), column, row)
+    }
+
     /// A manual overview map: Terminals | Inbox on top, Messages, then the command line.
     fn overview_map(st: &GlobalState) {
         st.push_panel(Rect::new(0, 0, 40, 10), Section::Terminals);
@@ -2238,6 +2249,31 @@ mod tests {
             2_200,
         );
         assert_eq!(st.layout.top_pair_width, Some(0.8));
+    }
+
+    #[test]
+    fn mouse_drag_is_not_the_first_click_of_a_double_click() {
+        let data = data_with(vec![Section::Quota, Section::Inbox], vec![], vec![]);
+        let mut st = GlobalState::new(ThemeName::CatppuccinMocha);
+        drag_map(&st);
+
+        // Down → Drag → Up resizes and persists h2.
+        st.on_mouse(down(5, 10), &data, 1_000);
+        let (changed, _) = st.on_mouse(drag(5, 15), &data, 1_100);
+        assert!(changed);
+        st.on_mouse(up(5, 15), &data, 1_200);
+        assert_eq!(st.layout.height(2), Some(0.6));
+
+        // The next Down on the same border is 350 ms after the first one, but the drag in
+        // between means it is a new press, not the second half of a double-click.
+        let (changed, eff) = st.on_mouse(down(5, 10), &data, 1_350);
+        assert!(!changed, "the press after a drag reset the boundary");
+        assert_eq!(eff, GEffect::None);
+        assert_eq!(
+            st.layout.height(2),
+            Some(0.6),
+            "a drag leaked into last_click and reset the boundary"
+        );
     }
 
     #[test]

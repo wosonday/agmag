@@ -137,3 +137,13 @@ The footer `HELP`/`HELP_ASCII` line is untouched (no diff there). Docs: one over
 - EOL before the final commit: `src/board/*` + READMEs + tests LF; `CHANGELOG.md` CRLF
   (`i/crlf w/crlf`); no `w/mixed`.
 
+## Fix round 1
+
+Brief: `.agents/tasks/tui-mouse-overview-fix1.md`; review: `.agents/reviews/tui-mouse-overview-1.md`.
+One commit per numbered item; every code fix has a test written first and seen failing (the two
+test-only items say so explicitly).
+
+1. Drag clears `last_click` — new test `mouse_drag_is_not_the_first_click_of_a_double_click`
+   (red: the Down after Down → Drag → Up reset `Horizontal(2)`; green after clearing `last_click`
+   in `on_drag` whenever a drag is active). Added `drag`/`up` mouse helpers in the global tests.
+

@@ -22,8 +22,12 @@ use crate::dashboard::{Section, Snapshot, TermView, render_section_body, sanitiz
 use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
-/// Six message rows plus the panel's top and bottom borders, so wide screens show six messages.
-const MESSAGES_H: u16 = 8;
+/// Messages is the flexible section: it absorbs the space no other section needs.
+const MESSAGES_MIN: u16 = 4;
+/// A panel is its border plus at least one usable row.
+const MIN_SECTION_H: u16 = 3;
+/// The top pair may never take more than this share of the sections area.
+const PAIR_CAP_PERCENT: u32 = 60;
 const PROMPT: &str = "agm> ";
 const HELP: &str =
     " tab panels · ↑↓ select · ⏎ open · r reply · d done · s send · t theme · ? help · q quit";
@@ -46,8 +50,8 @@ pub fn draw_global(
         now_ms: data.now_ms,
     };
     let (main, cmd, footer) = split_bottom(area);
-    let (sections, messages) = split_messages(main);
-    draw_sections(frame, sections, state, data, ctx);
+    let (sections, messages, layout) = split_messages(main, data);
+    draw_sections(frame, sections, &layout, state, data, ctx);
     draw_messages(frame, messages, state, data, ctx);
     if let Some(output) = &data.output {
         draw_output(frame, sections, output, state.output_scroll, ctx);
@@ -103,22 +107,113 @@ fn split_bottom(area: Rect) -> (Rect, Rect, Rect) {
     (main, cmd, footer)
 }
 
-/// Sections get everything except the pinned Messages rows at the bottom.
-fn split_messages(main: Rect) -> (Rect, Rect) {
-    let messages_h = MESSAGES_H.min(main.height);
+/// Fitted heights for the section groups of one frame. The top pair is one group (two panels
+/// side by side share a height); the remaining groups are full-width sections; Messages is pinned
+/// last and is the flexible group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LayoutHeights {
+    pair: Option<u16>,
+    stacked: Vec<u16>,
+    messages: u16,
+}
+
+/// Rows a section needs for its content, borders included.
+fn section_desired_rows(sec: Section, data: &GlobalData, width: u16) -> u16 {
+    if sec == Section::Messages {
+        return MESSAGES_MIN;
+    }
+    let content_rows = match sec {
+        Section::Quota => data
+            .snap
+            .as_ref()
+            .map(|snap| snap.quota.len().max(1))
+            .unwrap_or(1),
+        Section::Terminals => data
+            .snap
+            .as_ref()
+            .map(|snap| snap.terminals.len().max(1) + 1) // header + rows (or one `-`)
+            .unwrap_or(1),
+        Section::Inbox => data
+            .snap
+            .as_ref()
+            .map(|snap| {
+                if snap.inbox.is_empty() {
+                    1
+                } else {
+                    snap.inbox.len() + 1 // header + rows
+                }
+            })
+            .unwrap_or(1),
+        Section::Usage | Section::Budgets | Section::System => data
+            .snap
+            .as_ref()
+            .map(|snap| {
+                let inner = width.saturating_sub(2).max(1) as usize;
+                render_section_body(snap, sec, inner).lines().count().max(1)
+            })
+            .unwrap_or(1),
+        Section::Messages => unreachable!(),
+    };
+    (content_rows as u16)
+        .saturating_add(2)
+        .clamp(MIN_SECTION_H, u16::MAX - 2)
+}
+
+/// Fit every section group into `main` at once: Messages gets what nobody needs.
+fn section_layout(main: Rect, data: &GlobalData) -> LayoutHeights {
+    let mut chosen = visible_sections(&data.view);
+    chosen.pop(); // Messages is drawn separately; it stays the last group below.
+    let wide = main.width >= 120 && chosen.len() >= 2;
+    let mut desired: Vec<u16> = Vec::with_capacity(chosen.len());
+    let mut stacked: Vec<Section> = Vec::with_capacity(chosen.len());
+
+    if wide {
+        let cap = u32::from(main.height.saturating_sub(MESSAGES_MIN))
+            .saturating_mul(PAIR_CAP_PERCENT)
+            / 100;
+        let cap = (cap as u16)
+            .max(2 * MIN_SECTION_H)
+            .min(main.height.max(2 * MIN_SECTION_H));
+        let pair = section_desired_rows(chosen[0], data, main.width)
+            .max(section_desired_rows(chosen[1], data, main.width))
+            .min(cap)
+            .max(2 * MIN_SECTION_H);
+        desired.push(pair);
+        stacked.extend_from_slice(&chosen[2..]);
+    } else {
+        stacked.extend_from_slice(&chosen);
+    }
+    for sec in &stacked {
+        desired.push(section_desired_rows(*sec, data, main.width));
+    }
+    desired.push(MESSAGES_MIN.min(main.height.max(1)));
+
+    let heights = fit_heights(&desired, desired.len() - 1, main.height, MIN_SECTION_H);
+    let offset = usize::from(wide);
+    LayoutHeights {
+        pair: wide.then(|| heights[0]),
+        stacked: heights[offset..heights.len() - 1].to_vec(),
+        messages: *heights.last().unwrap_or(&0),
+    }
+}
+
+/// Sections get everything except the height Messages needs, which is fitted with the rest.
+fn split_messages(main: Rect, data: &GlobalData) -> (Rect, Rect, LayoutHeights) {
+    let layout = section_layout(main, data);
+    let sections_h = main.height.saturating_sub(layout.messages);
     let sections = Rect {
         x: main.x,
         y: main.y,
         width: main.width,
-        height: main.height - messages_h,
+        height: sections_h,
     };
     let messages = Rect {
         x: main.x,
-        y: main.y + sections.height,
+        y: main.y + sections_h,
         width: main.width,
-        height: messages_h,
+        height: layout.messages,
     };
-    (sections, messages)
+    (sections, messages, layout)
 }
 
 fn ascii_borders() -> symbols::border::Set<'static> {
@@ -213,33 +308,27 @@ fn section_title(sec: Section) -> &'static str {
     }
 }
 
-fn draw_sections(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
+fn draw_sections(
+    frame: &mut Frame,
+    area: Rect,
+    layout: &LayoutHeights,
+    state: &GlobalState,
+    data: &GlobalData,
+    ctx: Ctx,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let mut chosen = visible_sections(&data.view);
     // `Messages` is pinned and drawn separately below the section area.
     chosen.pop();
-    if chosen.len() == 1 {
-        draw_section(frame, area, chosen[0], state, data, ctx);
-        return;
-    }
-    if area.width >= 120 {
+    if let Some(pair_h) = layout.pair {
         // ≥ 120 columns: first two sections side by side, the rest stacked under them.
-        let pair_h = if chosen.len() >= 3 {
-            let max_h = area.height.saturating_sub(1).max(1);
-            (area.height.saturating_mul(3) / 5)
-                .max(1)
-                .min(max_h)
-                .min(area.height)
-        } else {
-            area.height
-        };
         let pair = Rect {
             x: area.x,
             y: area.y,
             width: area.width,
-            height: pair_h,
+            height: pair_h.min(area.height),
         };
         let constraints = if chosen[0] == Section::Quota {
             [
@@ -263,22 +352,24 @@ fn draw_sections(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
         if chosen.len() > 2 {
             let rest = Rect {
                 x: area.x,
-                y: area.y + pair_h,
+                y: area.y + pair.height,
                 width: area.width,
-                height: area.height.saturating_sub(pair_h),
+                height: area.height.saturating_sub(pair.height),
             };
-            draw_stacked(frame, rest, &chosen[2..], state, data, ctx);
+            draw_stacked(frame, rest, &chosen[2..], &layout.stacked, state, data, ctx);
         }
     } else {
-        draw_stacked(frame, area, &chosen, state, data, ctx);
+        draw_stacked(frame, area, &chosen, &layout.stacked, state, data, ctx);
     }
 }
 
-/// One section per chunk of the available height (small panels get one row each).
+/// One section per fitted height. The heights were computed for the whole frame, so rounding is
+/// absorbed by the last panel instead of leaving gaps between sections.
 fn draw_stacked(
     frame: &mut Frame,
     area: Rect,
     sections: &[Section],
+    heights: &[u16],
     state: &GlobalState,
     data: &GlobalData,
     ctx: Ctx,
@@ -286,20 +377,42 @@ fn draw_stacked(
     if sections.is_empty() || area.height == 0 {
         return;
     }
-    let count = sections.len() as u16;
-    let base = area.height / count;
-    let extra = area.height % count;
+    let mut heights = heights.to_vec();
+    if heights.len() != sections.len() {
+        heights = vec![0; sections.len()];
+    }
+    let sum: u16 = heights.iter().copied().fold(0, u16::saturating_add);
+    if sum < area.height {
+        if let Some(last) = heights.last_mut() {
+            *last = last.saturating_add(area.height - sum);
+        }
+    } else if sum > area.height {
+        let mut excess = sum - area.height;
+        for height in heights.iter_mut().rev() {
+            let take = height.saturating_sub(1).min(excess);
+            *height -= take;
+            excess -= take;
+            if excess == 0 {
+                break;
+            }
+        }
+    }
     let mut y = area.y;
-    for (i, sec) in sections.iter().enumerate() {
-        let height = base + u16::from((i as u16) < extra);
-        let rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height,
-        };
-        draw_section(frame, rect, *sec, state, data, ctx);
-        y = y.saturating_add(height);
+    for (sec, height) in sections.iter().zip(&heights) {
+        draw_section(
+            frame,
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: *height,
+            },
+            *sec,
+            state,
+            data,
+            ctx,
+        );
+        y = y.saturating_add(*height);
     }
 }
 

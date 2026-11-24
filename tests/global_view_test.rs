@@ -79,6 +79,59 @@ fn fg_of(buf: &Buffer, needle: &str) -> Color {
     buf[(x, y)].fg
 }
 
+/// Left edge, top edge, width and height of the panel whose title contains `title`.
+fn panel_rect(buf: &Buffer, title: &str) -> (u16, u16, u16, u16) {
+    let (tx, top) = find(buf, title);
+    let is_corner = |symbol: &str, upper: bool| {
+        if upper {
+            matches!(symbol, "╭" | "╮" | "+")
+        } else {
+            matches!(symbol, "╰" | "╯" | "+")
+        }
+    };
+    let mut left = tx;
+    while left > 0 && !is_corner(buf[(left, top)].symbol(), true) {
+        left -= 1;
+    }
+    assert!(is_corner(buf[(left, top)].symbol(), true), "no left corner");
+    let mut right = tx;
+    while right + 1 < buf.area.width && !is_corner(buf[(right, top)].symbol(), true) {
+        right += 1;
+    }
+    assert!(
+        is_corner(buf[(right, top)].symbol(), true),
+        "no right corner for {title:?}:\n{}",
+        text(buf)
+    );
+    let mut bottom = top + 1;
+    while bottom < buf.area.height && !is_corner(buf[(left, bottom)].symbol(), false) {
+        bottom += 1;
+    }
+    assert!(
+        is_corner(buf[(left, bottom)].symbol(), false),
+        "no bottom corner for {title:?}:\n{}",
+        text(buf)
+    );
+    (left, top, right - left + 1, bottom - top + 1)
+}
+
+/// Rows of a panel's inner area that contain nothing but spaces.
+fn blank_inner_rows(buf: &Buffer, title: &str) -> u16 {
+    let (left, top, width, height) = panel_rect(buf, title);
+    let mut blanks = 0;
+    for y in top + 1..top + height - 1 {
+        let inner: String = row_text(buf, y)
+            .chars()
+            .skip(left as usize + 1)
+            .take(width.saturating_sub(2) as usize)
+            .collect();
+        if inner.trim().is_empty() {
+            blanks += 1;
+        }
+    }
+    blanks
+}
+
 fn quota(provider: &str, window_minutes: u32, left: f64) -> QuotaRow {
     QuotaRow {
         provider: provider.into(),
@@ -264,9 +317,16 @@ fn hostile_text_inert() {
     assert!(!all.contains("pwn"), "OSC payload reached the screen");
     let cjk = all.chars().filter(|c| *c == '毒').count();
     assert!(
-        cjk > 0 && cjk < 500,
+        cjk > 0 && cjk < 1_000,
         "hostile text not clipped to its panels: {cjk} cells"
     );
+    for y in 0..buf.area.height {
+        let per_row = row_text(&buf, y).chars().filter(|c| *c == '毒').count();
+        assert!(
+            per_row <= buf.area.width as usize,
+            "row {y} overflowed the screen with {per_row} cells"
+        );
+    }
     for y in buf.area.height.saturating_sub(2)..buf.area.height {
         let line = row_text(&buf, y);
         assert!(!line.contains('毒'), "hostile text leaked into the bars");
@@ -595,4 +655,63 @@ fn terminals_gets_remaining_width() {
         );
     }
     assert!(!tokens.contains(&"status"), "long header left: {header:?}");
+}
+
+/// Eleven agents, no inbox: the panels follow their content and Messages absorbs the rest.
+fn many_terminals_no_inbox() -> GlobalData {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    for i in 0..12 {
+        snap.quota.push(quota(&format!("provider-{i}"), 300, 80.0));
+    }
+    for i in 0..11 {
+        snap.terminals
+            .push(terminal(&format!("t{i}"), &format!("worker-{i}")));
+    }
+    d
+}
+
+#[test]
+fn wide_overview_fits_content_and_inbox_is_three_rows() {
+    let d = many_terminals_no_inbox();
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    for size in [(140, 40), (200, 50)] {
+        let buf = render(size, &state, &d, false);
+        let (_, _, _, inbox_h) = panel_rect(&buf, "Inbox (0)");
+        assert_eq!(inbox_h, 3, "empty Inbox at {size:?}:\n{}", text(&buf));
+        let (_, _, _, terms_h) = panel_rect(&buf, "Terminals");
+        assert_eq!(terms_h, 14, "header + 11 rows + 2 borders at {size:?}");
+        let (_, _, _, messages_h) = panel_rect(&buf, "Messages");
+        assert!(
+            messages_h > 8,
+            "Messages must take the surplus instead of a fixed 8 rows: {messages_h}"
+        );
+        for title in ["Quota", "Terminals", "Inbox"] {
+            let blanks = blank_inner_rows(&buf, title);
+            assert!(
+                blanks <= 1,
+                "{title} has {blanks} blank inner rows at {size:?}:\n{}",
+                text(&buf)
+            );
+        }
+    }
+}
+
+#[test]
+fn narrow_overview_stacks_content_fitted_panels() {
+    let mut d = many_terminals_no_inbox();
+    d.view = vec![Section::Inbox, Section::Terminals];
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((100, 40), &state, &d, false);
+    let (_, _, _, inbox_h) = panel_rect(&buf, "Inbox (0)");
+    let (_, _, _, terms_h) = panel_rect(&buf, "Terminals");
+    assert_eq!(inbox_h, 3, "{}", text(&buf));
+    assert_eq!(terms_h, 14, "{}", text(&buf));
+    for title in ["Inbox", "Terminals"] {
+        assert!(
+            blank_inner_rows(&buf, title) <= 1,
+            "{title} has blank rows:\n{}",
+            text(&buf)
+        );
+    }
 }

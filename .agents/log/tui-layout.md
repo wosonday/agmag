@@ -58,3 +58,9 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - RED: `no_panels_overlap_at_tiny_heights` (same matrix) — at 100×6 a 1-row `Terminals` panel drawn at `y = 1` overlapped the 3-row Messages panel at `y = 1..4`.
 - CODE: `draw_stacked` now reduces a height all the way to 0 when the area cannot fit the minimum (previously `saturating_sub(1)` stopped at 1); zero-height sections are skipped entirely — not drawn and not pushed to the hit map — so the remaining panels stay packed and non-overlapping.
 - GREEN: overlap matrix passes with the bounds matrix; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+
+### Item 4 — message rows use the real wrapped height
+
+- RED: `message_row_rects_follow_wrapped_height`: at width 100 a 250-cell message wraps to header + 3 text rows, but the Message(0) rect was the hard-coded 2 rows, so the Message(1) rect did not cover its drawn text.
+- CODE: `wrapped_line_rows` counts rows with ratatui's wrap rule (greedy word packing, trimmed leading whitespace, long words broken at the row width) using grapheme widths. `draw_messages` records one rect per message from the summed header/text row counts, clipped to the visible/scrolled window.
+- GREEN: new test passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.

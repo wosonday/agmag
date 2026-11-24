@@ -11,6 +11,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Table, TableState,
     Wrap,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
@@ -1104,6 +1105,55 @@ fn party_labels(snap: &Snapshot) -> HashMap<String, String> {
     labels
 }
 
+/// Rows one `Line` needs when a `Paragraph` wraps it at `width` with `Wrap { trim: true }`.
+/// Ratatui packs words greedily, trims whitespace at the start of a new row and breaks words
+/// longer than the row; counting by the same rule keeps message hit rows on the drawn text.
+fn wrapped_line_rows(line: &Line<'_>, width: u16) -> usize {
+    let width = width as usize;
+    if width == 0 {
+        return 0;
+    }
+    let symbols: Vec<(&str, usize)> = line
+        .spans
+        .iter()
+        .flat_map(|span| span.content.graphemes(true).map(move |g| (g, g.width())))
+        .collect();
+    let is_space = |i: usize| symbols[i].0.chars().all(char::is_whitespace);
+    let mut rows = 1usize;
+    let mut used = 0usize;
+    let mut i = 0usize;
+    while i < symbols.len() {
+        if is_space(i) {
+            if used + symbols[i].1 > width {
+                rows += 1;
+                used = 0; // `trim: true` drops leading whitespace of the new row
+            } else {
+                used += symbols[i].1;
+            }
+            i += 1;
+            continue;
+        }
+        let mut word_width = 0usize;
+        while i < symbols.len() && !is_space(i) {
+            word_width += symbols[i].1;
+            i += 1;
+        }
+        if used > 0 && used + word_width > width {
+            rows += 1;
+            used = 0;
+        }
+        // A word wider than a row is broken across rows, like ratatui's word wrapper.
+        let mut remaining = word_width;
+        while remaining > width - used {
+            remaining -= width - used;
+            rows += 1;
+            used = 0;
+        }
+        used += remaining;
+    }
+    rows
+}
+
 fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
     let block = panel(
         format!(" {} ", section_title(Section::Messages)),
@@ -1133,6 +1183,7 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
             .unwrap_or_else(|| sanitize_one_line(address))
     };
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut message_rows: Vec<usize> = Vec::new();
     // Wide panels have room for one line per message (`from → to KIND age  text`), so the pinned
     // six rows show more of the conversation; narrow ones keep the header/text split.
     let one_line = inner.width >= 100;
@@ -1158,34 +1209,41 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
                 Style::new(),
             ));
             lines.push(line);
+            message_rows.push(1);
         } else {
+            let text = Line::from(Span::styled(sanitize_one_line(&message.text), Style::new()));
+            message_rows.push(
+                wrapped_line_rows(&header, inner.width)
+                    .saturating_add(wrapped_line_rows(&text, inner.width))
+                    .max(1),
+            );
             lines.push(header);
-            lines.push(Line::from(Span::styled(
-                sanitize_one_line(&message.text),
-                Style::new(),
-            )));
+            lines.push(text);
         }
     }
     let scroll = state.scroll.get(&Section::Messages).copied().unwrap_or(0);
-    // One row per message when wide, two in the narrow header/text form. Wrapped lines can add
-    // more, so this is a best-effort map of where each message starts.
-    let per_message = if one_line { 1usize } else { 2 };
-    for (i, _) in snap.messages.iter().enumerate() {
-        let Some(y_offset) = (i * per_message).checked_sub(scroll as usize) else {
-            continue;
-        };
-        if y_offset >= inner.height as usize {
-            break;
+    let scroll_rows = scroll as usize;
+    let view_rows = inner.height as usize;
+    let mut top = 0usize;
+    for (i, rows) in message_rows.iter().enumerate() {
+        let bottom = top + rows;
+        if bottom > scroll_rows {
+            let visible_top = top.saturating_sub(scroll_rows);
+            if visible_top >= view_rows {
+                break; // later messages are even further down
+            }
+            let visible_bottom = bottom.min(scroll_rows + view_rows);
+            state.push_row(
+                Rect {
+                    x: inner.x,
+                    y: inner.y + visible_top as u16,
+                    width: inner.width,
+                    height: (visible_bottom - visible_top) as u16,
+                },
+                RowTarget::Message(i),
+            );
         }
-        state.push_row(
-            Rect {
-                x: inner.x,
-                y: inner.y + y_offset as u16,
-                width: inner.width,
-                height: (per_message as u16).min(inner.height - y_offset as u16),
-            },
-            RowTarget::Message(i),
-        );
+        top = bottom;
     }
     let paragraph = Paragraph::new(lines).scroll((scroll, 0));
     let paragraph = if one_line {

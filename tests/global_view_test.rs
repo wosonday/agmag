@@ -1064,3 +1064,55 @@ fn top_pair_floor_is_one_panel_and_cap_does_not_squeeze_messages() {
         text(&buf)
     );
 }
+
+#[test]
+fn message_row_rects_follow_wrapped_height() {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    snap.messages.push(MessageRow {
+        id: 1,
+        ts_ms: NOW,
+        from: "t1".into(),
+        to: "t2".into(),
+        kind: "BÁO CÁO".into(),
+        text: "x".repeat(250),
+        ..MessageRow::default()
+    });
+    snap.messages.push(MessageRow {
+        id: 2,
+        ts_ms: NOW,
+        from: "t1".into(),
+        to: "t2".into(),
+        kind: "BÁO CÁO".into(),
+        text: "second-message".into(),
+        ..MessageRow::default()
+    });
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((100, 30), &state, &d, false);
+    let map = state.hit_map();
+    let r0 = map
+        .rows
+        .iter()
+        .find(|(_, target)| matches!(target, RowTarget::Message(0)))
+        .expect("message 0 row")
+        .0;
+    let r1 = map
+        .rows
+        .iter()
+        .find(|(_, target)| matches!(target, RowTarget::Message(1)))
+        .expect("message 1 row")
+        .0;
+    assert!(
+        r0.height >= 3,
+        "a 250-cell message wraps into header + 3 text rows, got {r0:?}:\n{}",
+        text(&buf)
+    );
+    assert_eq!(r1.y, r0.y + r0.height, "rows must be stacked without gaps");
+    let (x, y) = find(&buf, "second-message");
+    assert_eq!(
+        hit(&map, x, y),
+        Some(Hit::Row(RowTarget::Message(1))),
+        "message 1 rect is not where its text was drawn:\n{}",
+        text(&buf)
+    );
+}

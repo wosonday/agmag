@@ -803,6 +803,33 @@ mod tests {
         }
     }
 
+    /// Idle projects are hidden from the `cd` listing but `cd <name>` must still open them.
+    #[test]
+    fn cd_name_still_opens_an_idle_project() {
+        let (tmp, store) = shop_store();
+        let ghost_dir = tmp.path().join("ghost");
+        std::fs::create_dir_all(&ghost_dir).expect("ghost dir");
+        store
+            .upsert_terminal(&TerminalRow {
+                address: "t2".into(),
+                name: Some("ghost".into()),
+                cwd: Some(ghost_dir.to_str().expect("utf-8 path").into()),
+                state: "exited".into(),
+                created_ms: 2,
+                ..Default::default()
+            })
+            .expect("terminal");
+        let cfg = Config::builtin();
+        let hc = FakeHc::default();
+        let who = user();
+        let mut st = CmdState::new(&store);
+        let d = run("cd ghost", &mut st, &store, &cfg, &hc, &who, Front::App);
+        match d.outcome {
+            Outcome::OpenBoard(key) => assert_eq!(key.name, "ghost"),
+            other => panic!("expected OpenBoard, got {other:?}"),
+        }
+    }
+
     #[test]
     fn cd_t_plain_scopes_app_warns() {
         let (_tmp, store) = shop_store();

@@ -45,6 +45,8 @@ fn agent(address: &str, depth: usize, last_sibling: bool) -> AgentView {
         tokens: None,
         spark: None,
         stage: None,
+        task: None,
+        role: None,
     }
 }
 

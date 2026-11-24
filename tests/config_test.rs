@@ -320,6 +320,36 @@ fn old_policy_without_interactive_keys_keeps_defaults() {
     assert_eq!(p.ctx_thresholds(Some("opencode")), (50.0, 70.0));
 }
 
+#[test]
+fn delegated_actions_reject_empty_and_hard_prohibited_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("providers.toml");
+    for (entry, needle) in [
+        ("", "empty"),
+        ("  ", "empty"),
+        ("push", "push"),
+        (" merge ", "merge"),
+        ("grant_extension", "grant_extension"),
+    ] {
+        std::fs::write(
+            &path,
+            format!("[policy]\ndelegated_actions = [\"{entry}\"]\n"),
+        )
+        .unwrap();
+        let err = Config::load(&path).expect_err(entry);
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Invalid [policy]"), "{entry:?}: {msg}");
+        assert!(msg.contains(needle), "{entry:?}: {msg}");
+    }
+    std::fs::write(
+        &path,
+        "[policy]\ndelegated_actions = [\"continue_review\", \"spawn_worker\"]\n",
+    )
+    .unwrap();
+    let cfg = Config::load(&path).unwrap();
+    assert_eq!(cfg.policy.delegated_actions.len(), 2);
+}
+
 /// Ngưỡng phải hữu hạn, trong (0, 100] và warn ≤ rotate; nếu không daemon sẽ tạo rồi hủy vòng xoay mỗi tick.
 #[test]
 fn invalid_ctx_thresholds_are_rejected() {

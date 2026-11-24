@@ -4,7 +4,7 @@
 
 use anyhow::{Result, bail};
 
-use crate::config::Config;
+use crate::config::{Config, HARD_PROHIBITED_ACTIONS};
 use crate::hc::{Hc, RunSpec, terminal_row_from};
 use crate::launch::LaunchSpec;
 use crate::store::{MessageRow, Store, TerminalRow};
@@ -30,19 +30,6 @@ impl ApprovalDecision {
 }
 
 /// Hành động luôn cần người dù whitelist toàn cục hay grant còn hiệu lực có ghi.
-pub const HARD_PROHIBITED_ACTIONS: [&str; 10] = [
-    "merge",
-    "push",
-    "deploy",
-    "enable_extra_usage",
-    "raise_quota",
-    "change_billing",
-    "kill_claude",
-    "kill_codex",
-    "change_harness",
-    "grant_extension",
-];
-
 pub fn is_hard_prohibited(action: &str) -> bool {
     HARD_PROHIBITED_ACTIONS.contains(&action)
 }

@@ -105,6 +105,20 @@ pub struct Config {
     pub opencode_models: Option<crate::opencode_models::ModelCatalog>,
 }
 
+/// Hành động luôn cần người duyệt, dù `[policy].delegated_actions` hay grant còn hiệu lực có ghi.
+pub const HARD_PROHIBITED_ACTIONS: [&str; 10] = [
+    "merge",
+    "push",
+    "deploy",
+    "enable_extra_usage",
+    "raise_quota",
+    "change_billing",
+    "kill_claude",
+    "kill_codex",
+    "change_harness",
+    "grant_extension",
+];
+
 /// Ngưỡng và hạn mức cho policy (ngân sách, cảnh báo ngữ cảnh, xoay vòng thợ).
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(default, deny_unknown_fields)]
@@ -179,6 +193,16 @@ impl Policy {
     /// Each threshold must be finite and in (0, 100], and warn ≤ rotate in each pair. Otherwise the daemon
     /// would start a rotation at `rotate` and cancel it below `warn` on every tick, or never act at all.
     pub fn validate(&self) -> Result<()> {
+        for entry in &self.delegated_actions {
+            if entry.trim().is_empty() {
+                anyhow::bail!("delegated_actions entries must not be empty (got {entry:?})");
+            }
+            if HARD_PROHIBITED_ACTIONS.contains(&entry.trim()) {
+                anyhow::bail!(
+                    "delegated_actions: '{entry}' is hard-prohibited and can never be delegated"
+                );
+            }
+        }
         for (warn_key, warn, rotate_key, rotate) in [
             ("ctx_warn", self.ctx_warn, "ctx_rotate", self.ctx_rotate),
             (

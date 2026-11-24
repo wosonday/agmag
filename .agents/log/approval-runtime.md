@@ -80,3 +80,16 @@
 - Xanh: `cargo test --test mcp_test approval` 1 passed; `tool_list_is_exactly` 1 passed;
   `no_tool_call_ever_kills` 1 passed; `cargo fmt --check` sạch.
 - Commit: `feat(mcp): add agm_approval_check read-only tool`.
+
+### Step 5: validate `[policy].delegated_actions`, một hằng dùng chung (RED → GREEN)
+- tests/config_test.rs: thêm `delegated_actions_reject_empty_and_hard_prohibited_entries` (entry `""`, `"  "`,
+  `push`, `" merge "`, `grant_extension` → `Config::load` lỗi `Invalid [policy]` và câu lỗi nêu entry;
+  hai action hợp lệ vẫn nạp được).
+- Đỏ: entry rỗng/hard-prohibited được chấp nhận.
+- src/config.rs: chuyển `HARD_PROHIBITED_ACTIONS` (10 mục) sang đây; `Policy::validate` từ chối entry
+  rỗng/chỉ khoảng trắng và entry (sau trim) nằm trong danh sách cấm.
+- src/actions.rs: dùng `crate::config::HARD_PROHIBITED_ACTIONS` (một nguồn duy nhất) qua
+  `is_hard_prohibited`/`decide`.
+- Xanh: `cargo test --test config_test delegated_actions` 1 passed; `invalid_ctx` 1 passed;
+  `cargo test --test actions_test approval_rule` 9 passed; `cargo fmt --check` sạch.
+- Commit: `feat(config): reject bad delegated_actions entries`.

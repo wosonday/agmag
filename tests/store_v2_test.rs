@@ -188,6 +188,72 @@ fn migrates_v2_to_v3_idempotently() -> anyhow::Result<()> {
 }
 
 #[test]
+fn migrates_v4_to_v5_and_keeps_v4_data() -> anyhow::Result<()> {
+    use agmag::store::ApprovalGrant;
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("agm.db");
+    {
+        let c = rusqlite::Connection::open(&path)?;
+        c.execute_batch(include_str!("../src/store/schema.sql"))?;
+        c.execute_batch(include_str!("../src/store/schema_v2.sql"))?;
+        c.execute_batch(include_str!("../src/store/schema_v3.sql"))?;
+        // v4 = v3 + cột `effort` trên sessions (xem Store::initialize).
+        c.execute_batch(
+            "ALTER TABLE sessions ADD COLUMN effort TEXT;
+             PRAGMA user_version = 4;
+             INSERT INTO sessions(source, path, effort) VALUES ('codex', 'v4-kept.jsonl', 'high');",
+        )?;
+        let has_grants: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approval_grants')",
+            [],
+            |r| r.get(0),
+        )?;
+        assert!(!has_grants, "schema v4 không được có approval_grants");
+    }
+    let store = Store::open(&path)?;
+    let v: i64 = store
+        .conn()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    assert_eq!(v, 5);
+    let has_table: bool = store.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approval_grants')",
+        [],
+        |r| r.get(0),
+    )?;
+    let has_index: bool = store.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'approval_grants_lookup')",
+        [],
+        |r| r.get(0),
+    )?;
+    assert!(has_table && has_index, "v5 phải có bảng và index approval");
+    let (kept_path, effort): (String, String) =
+        store
+            .conn()
+            .query_row("SELECT path, effort FROM sessions", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+    assert_eq!(kept_path, "v4-kept.jsonl");
+    assert_eq!(effort, "high");
+    let id = store.add_approval_grant(&ApprovalGrant {
+        lane: Some("lane-a".into()),
+        task: Some("task-a".into()),
+        action: "spawn_worker".into(),
+        approved_by: "user".into(),
+        approved_ms: 10,
+        reason: "after migration".into(),
+        ..Default::default()
+    })?;
+    assert_eq!(
+        store
+            .approval_grant("lane-a", "task-a", "spawn_worker", 100)?
+            .map(|g| g.id),
+        Some(id)
+    );
+    Ok(())
+}
+
+#[test]
 fn terminal_roundtrip_and_status() -> anyhow::Result<()> {
     let store = Store::open_in_memory()?;
     let mut t = term("t7");

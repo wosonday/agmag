@@ -195,3 +195,13 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
 - EOL: `cargo fmt` đã đổi main.rs sang LF, đã chuyển ngược về CRLF ngay trước commit; `git ls-files --eol`
   hiện `i/crlf w/crlf`, diff chỉ còn các dòng sửa thật.
 - Commit: `fix(approval): propagate emit failures in approval commands`.
+
+### Item 9 — test migration trực tiếp v4 → v5 (test-only)
+- Review chỉ ra **thiếu test** (không phải lỗi mã): các test cũ chỉ dựng schema v1/v2 rồi nhảy thẳng tới v5.
+- tests/store_v2_test.rs thêm `migrates_v4_to_v5_and_keeps_v4_data`: dựng schema.sql + schema_v2.sql + schema_v3.sql,
+  thêm cột `effort`, ghi 1 hàng sessions rồi đặt `user_version = 4`; khẳng định chưa có `approval_grants`;
+  mở bằng `Store::open` → version 5, có bảng `approval_grants` + index `approval_grants_lookup`, giữ nguyên dữ liệu
+  v4, và ghi/đọc grant sau migrate được. Chạy test → pass ngay (đường migrate v4→v5 vốn đúng); không sửa mã sản
+  xuất, test là regression guard được yêu cầu.
+- `cargo test --test store_v2_test` 14 passed; `cargo fmt --check` sạch; EOL không đổi.
+- Commit: `fix(approval): add direct v4 to v5 migration test`.

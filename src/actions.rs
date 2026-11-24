@@ -11,6 +11,107 @@ use crate::store::{MessageRow, Store};
 
 pub const KINDS: [&str; 7] = ["GIAO", "BÁO CÁO", "LỖI", "HỎI", "CHẶN", "ĐẠT", "CHƯA ĐẠT"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Allowed,
+    RequiresHuman,
+    HardProhibited,
+}
+
+/// Evaluate a delegated approval grant without bypassing caller and scope checks.
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_delegated_approval(
+    action: &str,
+    grant_lane: Option<&str>,
+    grant_task: Option<&str>,
+    global_actions: &[&str],
+    task_actions: &[&str],
+    lane: Option<&str>,
+    task: Option<&str>,
+    grant_active: bool,
+) -> ApprovalDecision {
+    const HARD_PROHIBITED: &[&str] = &[
+        "merge",
+        "push",
+        "deploy",
+        "enable_extra_usage",
+        "raise_quota",
+        "change_billing",
+        "kill_claude",
+        "kill_codex",
+        "change_harness",
+        "grant_extension",
+    ];
+
+    if HARD_PROHIBITED.contains(&action) {
+        return ApprovalDecision::HardProhibited;
+    }
+    if !grant_active {
+        return ApprovalDecision::RequiresHuman;
+    }
+    if grant_lane.is_some() && grant_lane != lane {
+        return ApprovalDecision::RequiresHuman;
+    }
+    if grant_task.is_some() && grant_task != task {
+        return ApprovalDecision::RequiresHuman;
+    }
+    if global_actions.contains(&action)
+        && (task_actions.is_empty() || task_actions.contains(&action))
+    {
+        ApprovalDecision::Allowed
+    } else {
+        ApprovalDecision::RequiresHuman
+    }
+}
+
+pub fn runtime_approval_decision(
+    store: &Store,
+    cfg: &Config,
+    action: &str,
+    lane: Option<&str>,
+    task: Option<&str>,
+    now: i64,
+) -> ApprovalDecision {
+    const TASK_ONLY_GRANTS: &[&str] = &["continue_review", "spawn_worker", "update_branch"];
+
+    if !TASK_ONLY_GRANTS.contains(&action) {
+        return evaluate_delegated_approval(action, lane, task, &[], &[], lane, task, false);
+    }
+    if lane.is_none() || task.is_none() {
+        return evaluate_delegated_approval(
+            action,
+            lane,
+            task,
+            &cfg.policy
+                .delegated_actions
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            &[],
+            lane,
+            task,
+            true,
+        );
+    }
+    let lane = lane.unwrap();
+    let task = task.unwrap();
+    let grant = store.approval_grant(lane, task, action, now).ok().flatten();
+    evaluate_delegated_approval(
+        action,
+        grant.as_ref().and_then(|g| g.lane.as_deref()),
+        grant.as_ref().and_then(|g| g.task.as_deref()),
+        &cfg.policy
+            .delegated_actions
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        &[],
+        Some(lane),
+        Some(task),
+        grant.is_some(),
+    )
+}
+
 /// English message types shown in `agm tui`, paired with the stored code (SQLite, forwarded text, `agm send --type`).
 pub const KINDS_EN: [(&str, &str); 7] = [
     ("ASSIGN", "GIAO"),

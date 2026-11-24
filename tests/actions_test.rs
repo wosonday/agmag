@@ -6,6 +6,77 @@ use agmag::store::{Store, TerminalRow};
 use anyhow::Result;
 use common::FakeHc;
 
+#[test]
+fn delegated_approval_evaluates_grant_scope_and_hard_blocks() {
+    use agmag::actions::{ApprovalDecision, evaluate_delegated_approval};
+
+    assert_eq!(
+        evaluate_delegated_approval(
+            "continue_review",
+            Some("lane-a"),
+            Some("task-a"),
+            &["continue_review"],
+            &["continue_review"],
+            Some("lane-a"),
+            Some("task-a"),
+            true,
+        ),
+        ApprovalDecision::Allowed
+    );
+    assert_eq!(
+        evaluate_delegated_approval(
+            "spawn_worker",
+            Some("lane-a"),
+            Some("task-a"),
+            &["continue_review"],
+            &[],
+            Some("lane-a"),
+            Some("task-a"),
+            true,
+        ),
+        ApprovalDecision::RequiresHuman
+    );
+    assert_eq!(
+        evaluate_delegated_approval(
+            "merge",
+            Some("lane-a"),
+            Some("task-a"),
+            &["merge"],
+            &["merge"],
+            Some("lane-a"),
+            Some("task-a"),
+            true,
+        ),
+        ApprovalDecision::HardProhibited
+    );
+    assert_eq!(
+        evaluate_delegated_approval(
+            "continue_review",
+            Some("lane-b"),
+            Some("task-a"),
+            &["continue_review"],
+            &[],
+            Some("lane-a"),
+            Some("task-a"),
+            true,
+        ),
+        ApprovalDecision::RequiresHuman
+    );
+    assert_eq!(
+        evaluate_delegated_approval(
+            "task_only_action",
+            Some("lane-a"),
+            Some("task-a"),
+            &["continue_review"],
+            &["task_only_action"],
+            Some("lane-a"),
+            Some("task-a"),
+            true,
+        ),
+        ApprovalDecision::RequiresHuman
+    );
+}
+
 fn term(store: &Store, addr: &str, app: &str, role: Option<&str>) {
     store
         .upsert_terminal(&TerminalRow {

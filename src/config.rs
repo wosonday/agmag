@@ -109,6 +109,9 @@ pub struct Config {
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
+    /// User-approved actions that agents may execute without a human prompt.
+    #[serde(default)]
+    pub delegated_actions: Vec<String>,
     /// Số thợ (nhãn agm.role=worker) sống cùng lúc tối đa.
     pub max_workers: u32,
     /// Tên terminal quản lý nhận cảnh báo; None = chỉ hộp thư người dùng.
@@ -140,6 +143,7 @@ impl Default for Policy {
     fn default() -> Self {
         Policy {
             max_workers: 3,
+            delegated_actions: Vec::new(),
             manager: None,
             ctx_warn: 50.0,
             ctx_rotate: 70.0,

@@ -18,7 +18,7 @@ fn opening_migrated_db_does_not_wait_for_write_lock() -> anyhow::Result<()> {
     let v: i64 = store
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
     let has_effort: bool = store.conn().query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')",
         [],
@@ -29,6 +29,45 @@ fn opening_migrated_db_does_not_wait_for_write_lock() -> anyhow::Result<()> {
     Ok(())
 }
 use agmag::store::{BudgetRow, MessageRow, Store, TerminalRow};
+
+#[test]
+fn delegated_grant_roundtrip_revoke_and_expiry() -> anyhow::Result<()> {
+    use agmag::store::ApprovalGrant;
+
+    let store = Store::open_in_memory()?;
+    let grant = ApprovalGrant {
+        id: 0,
+        lane: Some("lane-a".into()),
+        task: Some("task-a".into()),
+        action: "continue_review".into(),
+        approved_by: "user".into(),
+        approved_ms: 100,
+        expires_ms: Some(1000),
+        revoked_ms: None,
+        reason: "approved for task".into(),
+    };
+    store.upsert_approval_grant(&grant)?;
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "continue_review", 500)?
+            .is_some()
+    );
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "continue_review", 1001)?
+            .is_none()
+    );
+    let active = store.approval_grants(true, 500)?;
+    assert_eq!(active.len(), 1);
+    store.revoke_approval_grant("lane-a", "task-a", "continue_review", 600)?;
+    assert!(
+        store
+            .approval_grant("lane-a", "task-a", "continue_review", 500)?
+            .is_none()
+    );
+    assert!(store.approval_grants(true, 500)?.is_empty());
+    Ok(())
+}
 
 fn term(addr: &str) -> TerminalRow {
     TerminalRow {
@@ -55,7 +94,7 @@ fn migrates_v1_to_v2() -> anyhow::Result<()> {
     let v: i64 = store
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
     let has_effort: bool = store.conn().query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')",
         [],
@@ -83,7 +122,7 @@ fn migrates_v2_to_v3_idempotently() -> anyhow::Result<()> {
     let v: i64 = store
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    assert_eq!(v, 4);
+    assert_eq!(v, 5);
     let has_effort: bool = store.conn().query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'effort')",
         [],

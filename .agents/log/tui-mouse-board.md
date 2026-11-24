@@ -113,3 +113,10 @@
   one row. Test asserts each full line appears inside a single buffer row.
 - Normalized the appended test lines back to LF (`git ls-files --eol` clean, no `w/mixed`).
 - Status: green
+
+### Final gates (fix round 1)
+- `cargo fmt --check`: pass.
+- `cargo clippy --all-targets -- -D warnings`: pass.
+- `cargo test`: pass (full suite, 0 failed).
+- Touched files all `i/lf w/lf`; `src/board/global_view.rs` and `src/board/global.rs` untouched; no push/merge.
+- Status: green

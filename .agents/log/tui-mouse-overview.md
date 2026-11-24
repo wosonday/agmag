@@ -196,3 +196,6 @@ test-only items say so explicitly).
 - EOL: `src/board/*`, `tests/*`, READMEs and the log LF; `CHANGELOG.md` CRLF
   (`i/crlf w/crlf`); no `w/mixed`.
 
+
+### Fix round 1 final gates (recorded by CEO; worker was stopped by host memory pressure after item 7)
+- HEAD 882926d: cargo fmt --check clean; clippy --all-targets -D warnings clean; cargo test 779 passed, 0 failed (42 binaries).

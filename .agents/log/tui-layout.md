@@ -22,3 +22,10 @@ Task: `.agents/tasks/tui-layout.md` — T1 content-fitted overview, compact Term
 - CODE: `global.rs` now owns `is_plain_shell` (shell app set with no linked model/effort) and `ordered_terminals(snap)` — the single visual order (agents in original order, then plain shells). `sync`, `panel_up` and `panel_down` all use it, so selection stays by address while arrows follow the rows. `draw_terminals` uses the same order, hides every all-`-` column (with `task` only when it has data), dims shell rows with `theme.muted`, and titles the panel `Terminals (N agents · M shells)` (omitting zero parts). Name/model get their content width before `task` takes the remainder.
 - GREEN: all unit + render tests pass; corrected three mistaken test expectations (input order, agent/shell y-order) while red/green.
 - Gates: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` all clean.
+
+## Step 4 — hit map
+
+- RED: added `hit_map_prefers_borders_then_rows_then_panels` in `src/board/global.rs` and `hit_map_records_what_the_overview_drew` / `hit_map_is_rebuilt_every_frame` in `tests/global_view_test.rs`: unresolved imports and no `hit_map()` on `GlobalState`.
+- CODE: `global.rs` now defines `HitMap { panels, rows, borders }`, `RowTarget` (terminal/inbox/message/agent/project), `BorderId` (top-pair vertical, horizontal-by-section-index), `Hit` and the pure `hit(map, x, y)` with border → row → panel priority. `GlobalState` holds a `RefCell<HitMap>` with `hit_map()` / `clear_hit_map()` / `push_*`; `draw_global` clears and refills it every frame without changing any `app.rs` call site. Renderers record panel rects, the top-pair divider, horizontal boundaries, terminal/inbox table rows (with the table's scroll offset) and message-row rects. No mouse events are handled.
+- GREEN: unit + render hit-map tests pass, including a stale-row check after a second draw.
+- Gates: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` all clean.

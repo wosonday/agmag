@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use agmag::board::global::{Focus, GlobalData, GlobalState, Popup};
+use agmag::board::global::{
+    BorderId, Focus, GlobalData, GlobalState, Hit, HitMap, Popup, RowTarget, hit,
+};
 use agmag::board::global_view::draw_global;
 use agmag::board::theme::{ThemeName, theme};
 use agmag::config::Config;
@@ -795,6 +797,117 @@ fn terminals_agents_first_and_shells_dimmed() {
     let th = theme(ThemeName::CatppuccinMocha);
     assert_eq!(fg_of(&buf, "shell-one"), th.muted, "shell row not dimmed");
     assert_ne!(fg_of(&buf, "agent-one"), th.muted, "agent row was dimmed");
+}
+
+#[test]
+fn hit_map_records_what_the_overview_drew() {
+    let mut d = data(&Section::DEFAULT);
+    d.snap
+        .as_mut()
+        .unwrap()
+        .terminals
+        .push(terminal("t1", "worker-one"));
+    d.snap.as_mut().unwrap().inbox.push(InboxRow {
+        id: 7,
+        ts_ms: NOW,
+        ..InboxRow::default()
+    });
+    d.snap.as_mut().unwrap().messages.push(MessageRow {
+        id: 1,
+        ts_ms: NOW,
+        from: "t1".into(),
+        to: "t2".into(),
+        kind: "BÁO CÁO".into(),
+        text: "distinct-message-hit".into(),
+        ..MessageRow::default()
+    });
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render((140, 40), &state, &d, false);
+    let map = state.hit_map();
+
+    let (tx, ty) = find(&buf, "worker-one");
+    assert_eq!(
+        hit(&map, tx, ty),
+        Some(Hit::Row(RowTarget::Terminal("t1".into()))),
+        "terminal row not hit-testable:\n{}",
+        text(&buf)
+    );
+    let (ix, iy) = find(&buf, "#7");
+    assert_eq!(
+        hit(&map, ix, iy),
+        Some(Hit::Row(RowTarget::Inbox(7))),
+        "inbox row not hit-testable:\n{}",
+        text(&buf)
+    );
+    let (terms_left, terms_top, _, _) = panel_rect(&buf, "Terminals");
+    assert_eq!(
+        hit(&map, terms_left, terms_top),
+        Some(Hit::Border(BorderId::TopPairVertical)),
+        "top-pair divider not recorded"
+    );
+    let (_, inbox_top, _, _) = panel_rect(&buf, "Inbox (1)");
+    assert!(
+        matches!(
+            hit(&map, 5, inbox_top),
+            Some(Hit::Border(BorderId::Horizontal(_)))
+        ),
+        "horizontal boundary not recorded: {:?}",
+        hit(&map, 5, inbox_top)
+    );
+    let (msg_x, msg_y) = find(&buf, "distinct-message-hit");
+    assert_eq!(
+        hit(&map, msg_x, msg_y),
+        Some(Hit::Row(RowTarget::Message(0))),
+        "message row not hit-testable:\n{}",
+        text(&buf)
+    );
+    let (_, messages_top, _, _) = panel_rect(&buf, "Messages");
+    assert_eq!(
+        hit(&map, 5, messages_top + 5),
+        Some(Hit::Panel(Section::Messages)),
+        "messages panel not recorded"
+    );
+    let sections: Vec<Section> = map.panels.iter().map(|(_, s)| *s).collect();
+    assert_eq!(
+        sections,
+        vec![
+            Section::Quota,
+            Section::Terminals,
+            Section::Inbox,
+            Section::Messages
+        ]
+    );
+}
+
+#[test]
+fn hit_map_is_rebuilt_every_frame() {
+    let mut d = data(&[Section::Terminals]);
+    d.snap
+        .as_mut()
+        .unwrap()
+        .terminals
+        .push(terminal("t1", "worker-one"));
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let _ = render((140, 40), &state, &d, false);
+    assert!(state.hit_map().rows.iter().any(|(_, target)| matches!(
+        target,
+        RowTarget::Terminal(address) if address == "t1"
+    )));
+
+    d.snap.as_mut().unwrap().terminals = vec![terminal("t2", "worker-two")];
+    let _ = render((140, 40), &state, &d, false);
+    let map: HitMap = state.hit_map();
+    assert!(map.rows.iter().any(|(_, target)| matches!(
+        target,
+        RowTarget::Terminal(address) if address == "t2"
+    )));
+    assert!(
+        !map.rows.iter().any(|(_, target)| matches!(
+            target,
+            RowTarget::Terminal(address) if address == "t1"
+        )),
+        "stale row survived the redraw"
+    );
 }
 
 #[test]

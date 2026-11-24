@@ -16,8 +16,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
 use super::global::{
-    CmdLine, Focus, GlobalData, GlobalState, Popup, is_plain_shell, ordered_terminals,
-    visible_sections,
+    BorderId, CmdLine, Focus, GlobalData, GlobalState, Popup, RowTarget, is_plain_shell,
+    ordered_terminals, visible_sections,
 };
 use super::theme::Theme;
 use crate::actions::kind_to_english;
@@ -43,6 +43,7 @@ pub fn draw_global(
     theme: &Theme,
     ascii: bool,
 ) {
+    state.clear_hit_map();
     let area = frame.area();
     if area.width == 0 || area.height == 0 {
         return;
@@ -56,6 +57,16 @@ pub fn draw_global(
     let (sections, messages, layout) = split_messages(main, data);
     draw_sections(frame, sections, &layout, state, data, ctx);
     draw_messages(frame, messages, state, data, ctx);
+    state.push_panel(messages, Section::Messages);
+    state.push_border(
+        Rect {
+            x: messages.x,
+            y: messages.y,
+            width: messages.width,
+            height: 1,
+        },
+        BorderId::Horizontal(visible_sections(&data.view).len().saturating_sub(1)),
+    );
     if let Some(output) = &data.output {
         draw_output(frame, sections, output, state.output_scroll, ctx);
     }
@@ -350,6 +361,19 @@ fn draw_sections(
             .direction(Direction::Horizontal)
             .constraints(constraints)
             .split(pair);
+        for (col, sec) in cols.iter().zip(chosen.iter().take(2)) {
+            state.push_panel(*col, *sec);
+        }
+        // Both panels' border columns are draggable, not just the gap between them.
+        state.push_border(
+            Rect {
+                x: cols[0].right().saturating_sub(1),
+                y: pair.y,
+                width: 2.min(pair.width),
+                height: pair.height,
+            },
+            BorderId::TopPairVertical,
+        );
         draw_section(frame, cols[0], chosen[0], state, data, ctx);
         draw_section(frame, cols[1], chosen[1], state, data, ctx);
         if chosen.len() > 2 {
@@ -359,19 +383,30 @@ fn draw_sections(
                 width: area.width,
                 height: area.height.saturating_sub(pair.height),
             };
-            draw_stacked(frame, rest, &chosen[2..], &layout.stacked, state, data, ctx);
+            draw_stacked(
+                frame,
+                rest,
+                &chosen[2..],
+                2,
+                &layout.stacked,
+                state,
+                data,
+                ctx,
+            );
         }
     } else {
-        draw_stacked(frame, area, &chosen, &layout.stacked, state, data, ctx);
+        draw_stacked(frame, area, &chosen, 0, &layout.stacked, state, data, ctx);
     }
 }
 
 /// One section per fitted height. The heights were computed for the whole frame, so rounding is
 /// absorbed by the last panel instead of leaving gaps between sections.
+#[allow(clippy::too_many_arguments)]
 fn draw_stacked(
     frame: &mut Frame,
     area: Rect,
     sections: &[Section],
+    base_index: usize,
     heights: &[u16],
     state: &GlobalState,
     data: &GlobalData,
@@ -401,20 +436,26 @@ fn draw_stacked(
         }
     }
     let mut y = area.y;
-    for (sec, height) in sections.iter().zip(&heights) {
-        draw_section(
-            frame,
-            Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: *height,
-            },
-            *sec,
-            state,
-            data,
-            ctx,
-        );
+    for (i, (sec, height)) in sections.iter().zip(&heights).enumerate() {
+        let rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: *height,
+        };
+        state.push_panel(rect, *sec);
+        if i > 0 || base_index > 0 {
+            state.push_border(
+                Rect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: 1,
+                },
+                BorderId::Horizontal(base_index + i),
+            );
+        }
+        draw_section(frame, rect, *sec, state, data, ctx);
         y = y.saturating_add(*height);
     }
 }
@@ -600,6 +641,36 @@ fn terminals_title(agents: usize, shells: usize) -> String {
     }
 }
 
+/// Rect of each row a `Table` actually shows, following ratatui's offset for the selected row.
+/// Index 0 is the data row at the top of the inner area (the header occupies the first line).
+fn visible_table_rows(
+    inner: Rect,
+    row_count: usize,
+    selected: Option<usize>,
+) -> Vec<(usize, Rect)> {
+    let view = inner.height.saturating_sub(1) as usize;
+    if view == 0 || row_count == 0 {
+        return Vec::new();
+    }
+    let offset = selected
+        .map(|sel| sel.saturating_add(1).saturating_sub(view))
+        .unwrap_or(0)
+        .min(row_count.saturating_sub(view));
+    (offset..row_count.min(offset.saturating_add(view)))
+        .map(|i| {
+            (
+                i,
+                Rect {
+                    x: inner.x,
+                    y: inner.y + 1 + (i - offset) as u16,
+                    width: inner.width,
+                    height: 1,
+                },
+            )
+        })
+        .collect()
+}
+
 fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalData, ctx: Ctx) {
     // One ordering for the rows, the title counts and the ↑↓ navigation (in `global.rs`).
     let ordered = data
@@ -745,6 +816,9 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         .sel_terminal
         .as_deref()
         .and_then(|address| ordered.iter().position(|t| t.address == address));
+    for (i, rect) in visible_table_rows(inner, ordered.len(), selected) {
+        state.push_row(rect, RowTarget::Terminal(ordered[i].address.clone()));
+    }
     let mut table_state = TableState::default().with_selected(selected);
     let table = Table::new(rows, constraints)
         .header(header)
@@ -985,6 +1059,9 @@ fn draw_inbox(frame: &mut Frame, area: Rect, state: &GlobalState, data: &GlobalD
     let selected = state
         .sel_inbox
         .and_then(|id| snap.inbox.iter().position(|item| item.id == id));
+    for (i, rect) in visible_table_rows(inner, snap.inbox.len(), selected) {
+        state.push_row(rect, RowTarget::Inbox(snap.inbox[i].id));
+    }
     let mut table_state = TableState::default().with_selected(selected);
     let table = Table::new(rows, constraints)
         .header(header)
@@ -1075,6 +1152,26 @@ fn draw_messages(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
         }
     }
     let scroll = state.scroll.get(&Section::Messages).copied().unwrap_or(0);
+    // One row per message when wide, two in the narrow header/text form. Wrapped lines can add
+    // more, so this is a best-effort map of where each message starts.
+    let per_message = if one_line { 1usize } else { 2 };
+    for (i, _) in snap.messages.iter().enumerate() {
+        let Some(y_offset) = (i * per_message).checked_sub(scroll as usize) else {
+            continue;
+        };
+        if y_offset >= inner.height as usize {
+            break;
+        }
+        state.push_row(
+            Rect {
+                x: inner.x,
+                y: inner.y + y_offset as u16,
+                width: inner.width,
+                height: (per_message as u16).min(inner.height - y_offset as u16),
+            },
+            RowTarget::Message(i),
+        );
+    }
     let paragraph = Paragraph::new(lines).scroll((scroll, 0));
     let paragraph = if one_line {
         paragraph

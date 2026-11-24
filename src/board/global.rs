@@ -1,8 +1,10 @@
 //! Global screen state of the full-screen `agm tui`: focus, command line, popup, selections.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::layout::Rect;
 
 use super::cmd::NoteKind;
 use super::theme::ThemeName;
@@ -168,6 +170,71 @@ pub enum Popup {
     Confirm { prompt: String, input: String },
 }
 
+/// What a drawn row points at. The board (T2) uses the Agent/Project variants; the overview
+/// uses Terminal/Inbox/Message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowTarget {
+    Terminal(String),
+    Inbox(i64),
+    Message(usize),
+    Agent(String),
+    Project(String),
+}
+
+/// A draggable boundary recorded by the renderer (mouse handling comes in T3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderId {
+    /// Divider between the two top panels on wide screens.
+    TopPairVertical,
+    /// Boundary above the section with this index in `visible_sections(&data.view)`.
+    Horizontal(usize),
+}
+
+/// What the last frame drew where. Rebuilt on every draw and kept in `GlobalState` so the app
+/// loop can hit-test after drawing without re-deriving the layout.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HitMap {
+    pub panels: Vec<(Rect, Section)>,
+    pub rows: Vec<(Rect, RowTarget)>,
+    pub borders: Vec<(Rect, BorderId)>,
+}
+
+impl HitMap {
+    pub fn clear(&mut self) {
+        self.panels.clear();
+        self.rows.clear();
+        self.borders.clear();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Hit {
+    Panel(Section),
+    Row(RowTarget),
+    Border(BorderId),
+}
+
+/// Pure hit testing over a recorded map: the narrowest target wins (border, then row, then panel).
+/// Rect edges are exclusive, like ratatui's own `Rect::contains`.
+pub fn hit(map: &HitMap, x: u16, y: u16) -> Option<Hit> {
+    let inside = |rect: &Rect| {
+        x >= rect.x
+            && y >= rect.y
+            && x < rect.x.saturating_add(rect.width)
+            && y < rect.y.saturating_add(rect.height)
+    };
+    if let Some((_, id)) = map.borders.iter().find(|(rect, _)| inside(rect)) {
+        return Some(Hit::Border(*id));
+    }
+    if let Some((_, target)) = map.rows.iter().find(|(rect, _)| inside(rect)) {
+        return Some(Hit::Row(target.clone()));
+    }
+    if let Some((_, section)) = map.panels.iter().find(|(rect, _)| inside(rect)) {
+        return Some(Hit::Panel(*section));
+    }
+    None
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GEffect {
     None,
@@ -207,6 +274,8 @@ pub struct GlobalState {
     prev_terminal_idx: Option<usize>,
     /// Index of `sel_inbox` in the last snapshot, so a removed row keeps its neighbour.
     prev_inbox_idx: Option<usize>,
+    /// Rebuilt by `draw_global` every frame; read by the app loop after drawing.
+    hit_map: RefCell<HitMap>,
 }
 
 impl GlobalState {
@@ -223,7 +292,29 @@ impl GlobalState {
             note: None,
             prev_terminal_idx: None,
             prev_inbox_idx: None,
+            hit_map: RefCell::new(HitMap::default()),
         }
+    }
+
+    /// A snapshot of what the last draw put on screen.
+    pub fn hit_map(&self) -> HitMap {
+        self.hit_map.borrow().clone()
+    }
+
+    pub(crate) fn clear_hit_map(&self) {
+        self.hit_map.borrow_mut().clear();
+    }
+
+    pub(crate) fn push_panel(&self, rect: Rect, section: Section) {
+        self.hit_map.borrow_mut().panels.push((rect, section));
+    }
+
+    pub(crate) fn push_row(&self, rect: Rect, target: RowTarget) {
+        self.hit_map.borrow_mut().rows.push((rect, target));
+    }
+
+    pub(crate) fn push_border(&self, rect: Rect, id: BorderId) {
+        self.hit_map.borrow_mut().borders.push((rect, id));
     }
 
     pub fn on_key(&mut self, key: KeyEvent, data: &GlobalData) -> GEffect {
@@ -744,6 +835,30 @@ mod tests {
             output: None,
             now_ms: 0,
         }
+    }
+
+    #[test]
+    fn hit_map_prefers_borders_then_rows_then_panels() {
+        let panel = Rect::new(0, 0, 20, 10);
+        let row = Rect::new(1, 1, 18, 1);
+        let border = Rect::new(19, 0, 1, 10);
+        let map = HitMap {
+            panels: vec![(panel, Section::Terminals)],
+            rows: vec![(row, RowTarget::Terminal("t1".into()))],
+            borders: vec![(border, BorderId::TopPairVertical)],
+        };
+        assert_eq!(hit(&map, 5, 5), Some(Hit::Panel(Section::Terminals)));
+        assert_eq!(
+            hit(&map, 5, 1),
+            Some(Hit::Row(RowTarget::Terminal("t1".into())))
+        );
+        assert_eq!(
+            hit(&map, 19, 1),
+            Some(Hit::Border(BorderId::TopPairVertical))
+        );
+        assert_eq!(hit(&map, 20, 1), None, "the right edge is outside");
+        assert_eq!(hit(&map, 0, 10), None, "the bottom edge is outside");
+        assert_eq!(hit(&HitMap::default(), 0, 0), None);
     }
 
     #[test]

@@ -161,6 +161,46 @@ fn muted_line(text: impl Into<String>, ctx: Ctx) -> Line<'static> {
     Line::from(Span::styled(text.into(), Style::new().fg(ctx.theme.muted)))
 }
 
+/// Fit the desired row counts into `total`.
+///
+/// Surplus goes to the single flexible section (`flex`); a deficit is taken from the largest
+/// section first so small panels keep their content, and no section is ever shrunk below `min`.
+/// The result sums to `total` whenever `total >= desired.len() * min` (or is empty for no input).
+pub fn fit_heights(desired: &[u16], flex: usize, total: u16, min: u16) -> Vec<u16> {
+    if desired.is_empty() {
+        return Vec::new();
+    }
+    let mut heights: Vec<u16> = desired.iter().map(|&d| d.max(min)).collect();
+    let sum: u32 = heights.iter().map(|&h| h as u32).sum();
+    let total = total as u32;
+
+    if sum <= total {
+        // Everyone got what they wanted: the leftover belongs to the flexible section.
+        if let Some(slot) = heights.get_mut(flex) {
+            let room = u32::from(u16::MAX) - u32::from(*slot);
+            *slot += (total - sum).min(room) as u16;
+        }
+        return heights;
+    }
+
+    let mut deficit = sum - total;
+    while deficit > 0 {
+        // Lowest index wins ties, so the result is deterministic.
+        let mut largest = None;
+        for (i, &h) in heights.iter().enumerate() {
+            if h > min && largest.is_none_or(|(j, _)| h > heights[j]) {
+                largest = Some((i, h));
+            }
+        }
+        let Some((i, _)) = largest else {
+            break; // everything is at `min`; that floor wins over the requested total
+        };
+        heights[i] -= 1;
+        deficit -= 1;
+    }
+    heights
+}
+
 fn section_title(sec: Section) -> &'static str {
     match sec {
         Section::Quota => "Quota",
@@ -1132,4 +1172,52 @@ fn draw_popup(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> O
         .saturating_add(input_width)
         .min(inner.right().saturating_sub(1));
     Some(Position::new(x, inner.y.saturating_add(2)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_heights;
+
+    #[test]
+    fn fit_heights_empty_input_is_empty() {
+        assert!(fit_heights(&[], 0, 20, 3).is_empty());
+        assert!(fit_heights(&[], 9, 0, 3).is_empty());
+    }
+
+    #[test]
+    fn fit_heights_surplus_goes_to_flex() {
+        assert_eq!(fit_heights(&[3, 5, 4], 1, 20, 3), vec![3, 13, 4]);
+        assert_eq!(fit_heights(&[4, 4], 0, 10, 3), vec![6, 4]);
+    }
+
+    #[test]
+    fn fit_heights_deficit_shrinks_largest_first() {
+        let got = fit_heights(&[20, 4, 4], 0, 15, 3);
+        assert_eq!(got, vec![7, 4, 4], "only the largest section shrinks");
+        assert_eq!(got.iter().sum::<u16>(), 15);
+
+        let got = fit_heights(&[10, 10, 3], 0, 15, 3);
+        assert_eq!(got, vec![6, 6, 3], "ties share the deficit evenly");
+        assert_eq!(got.iter().sum::<u16>(), 15);
+    }
+
+    #[test]
+    fn fit_heights_never_below_min() {
+        let got = fit_heights(&[20, 2, 2], 0, 4, 3);
+        assert!(got.iter().all(|&h| h >= 3), "below min: {got:?}");
+        assert_eq!(got, vec![3, 3, 3], "min wins when total is too small");
+
+        let got = fit_heights(&[20, 2, 2], 0, 12, 3);
+        assert_eq!(got, vec![6, 3, 3]);
+    }
+
+    #[test]
+    fn fit_heights_sums_to_total() {
+        for total in [12u16, 20, 38, 50] {
+            let got = fit_heights(&[3, 14, 3, 4], 3, total, 3);
+            assert_eq!(got.iter().sum::<u16>(), total, "total {total}: {got:?}");
+            assert!(got.iter().all(|&h| h >= 3), "below min: {got:?}");
+        }
+        assert_eq!(fit_heights(&[3, 14, 3, 4], 3, 38, 3), vec![3, 14, 3, 18]);
+    }
 }

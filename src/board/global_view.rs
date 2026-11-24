@@ -15,12 +15,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::ansi::ansi_to_text;
 use super::cmd::NoteKind;
-use super::global::{Focus, GlobalData, GlobalState, Popup, visible_sections};
+use super::global::{CmdLine, Focus, GlobalData, GlobalState, Popup, visible_sections};
 use super::theme::Theme;
 use crate::actions::kind_to_english;
-use crate::dashboard::{
-    Section, Snapshot, TermView, render_section_body, sanitize_one_line, where_label,
-};
+use crate::dashboard::{Section, Snapshot, TermView, render_section_body, sanitize_one_line};
 use crate::project_render::age_label;
 use crate::report::QuotaRow;
 
@@ -203,9 +201,22 @@ fn draw_sections(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glob
             width: area.width,
             height: pair_h,
         };
+        let constraints = if chosen[0] == Section::Quota {
+            [
+                Constraint::Length(quota_panel_width(data, ctx, pair.width)),
+                Constraint::Min(0),
+            ]
+        } else if chosen[1] == Section::Quota {
+            [
+                Constraint::Min(0),
+                Constraint::Length(quota_panel_width(data, ctx, pair.width)),
+            ]
+        } else {
+            [Constraint::Percentage(50), Constraint::Percentage(50)]
+        };
         let cols = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints(constraints)
             .split(pair);
         draw_section(frame, cols[0], chosen[0], state, data, ctx);
         draw_section(frame, cols[1], chosen[1], state, data, ctx);
@@ -302,6 +313,22 @@ fn left_color(left: f64, theme: &Theme) -> Color {
     } else {
         theme.ok
     }
+}
+
+fn quota_panel_width(data: &GlobalData, ctx: Ctx, max_width: u16) -> u16 {
+    let title_w = " Quota ".width() + 2;
+    let row_w = data
+        .snap
+        .as_ref()
+        .map(|snap| {
+            snap.quota
+                .iter()
+                .map(|q| quota_line(q, snap.now_s, ctx).width() + 2)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+    (row_w.max(title_w) as u16).min(max_width)
 }
 
 fn draw_quota(frame: &mut Frame, area: Rect, data: &GlobalData, ctx: Ctx) {
@@ -427,23 +454,16 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     let terms = &snap.terminals;
     // Size columns from content: a long name must not squeeze app/model out, and each column has
     // a cap so one hostile value cannot eat the row.
-    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 6, 20);
+    let name_w = content_width(terms.iter().map(|t| display_name(t).width()), 4, 20);
     let app_w = content_width(terms.iter().map(|t| dash_value(&t.app).width()), 3, 12);
     let model_w = content_width(terms.iter().map(|t| model_label(t).width()), 5, 22);
     let status_w = content_width(
         terms.iter().map(|t| status_label(&t.status, ctx).0.width()),
-        6,
+        2,
         14,
     );
-    let tokens_w = content_width(terms.iter().map(|t| tokens_label(t.tokens).width()), 6, 6);
-    let last_w = content_width(terms.iter().map(|t| last_msg_label(t, ctx).width()), 5, 10);
-    let place_w = content_width(
-        terms
-            .iter()
-            .map(|t| dash_value(&where_label(&t.place, &t.cwd)).width()),
-        6,
-        14,
-    );
+    let tokens_w = content_width(terms.iter().map(|t| tokens_label(t.tokens).width()), 3, 6);
+    let last_w = content_width(terms.iter().map(|t| last_msg_label(t, ctx).width()), 4, 10);
 
     const HIGHLIGHT_W: usize = 2; // `▸ ` / `> `
     const TASK_MIN: usize = 6;
@@ -451,11 +471,10 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
     let optional = [
         ("app", app_w),
         ("model", model_w),
-        ("status", status_w),
+        ("st", status_w),
         ("ctx", 9),
-        ("tokens", tokens_w),
+        ("tok", tokens_w),
         ("last", last_w),
-        ("place", place_w),
     ];
     for (header, col_width) in optional {
         let mut trial: Vec<u16> = columns.iter().map(|(_, w)| *w).collect();
@@ -469,11 +488,10 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
 
     let show_app = columns.iter().any(|(h, _)| *h == "app");
     let show_model = columns.iter().any(|(h, _)| *h == "model");
-    let show_status = columns.iter().any(|(h, _)| *h == "status");
+    let show_status = columns.iter().any(|(h, _)| *h == "st");
     let show_ctx = columns.iter().any(|(h, _)| *h == "ctx");
-    let show_tokens = columns.iter().any(|(h, _)| *h == "tokens");
+    let show_tokens = columns.iter().any(|(h, _)| *h == "tok");
     let show_last = columns.iter().any(|(h, _)| *h == "last");
-    let show_place = columns.iter().any(|(h, _)| *h == "place");
 
     let mut rows: Vec<Row<'static>> = Vec::new();
     for t in &snap.terminals {
@@ -496,9 +514,6 @@ fn draw_terminals(frame: &mut Frame, area: Rect, state: &GlobalState, data: &Glo
         }
         if show_last {
             cells.push(Cell::from(last_msg_label(t, ctx)));
-        }
-        if show_place {
-            cells.push(Cell::from(dash_value(&where_label(&t.place, &t.cwd))));
         }
         // `task` is the last column (it takes the remaining width), same order as `columns`.
         cells.push(Cell::from(dash_value(&t.task)));
@@ -884,6 +899,28 @@ fn draw_bridged(
     frame.render_widget(Paragraph::new(text).scroll((scroll, 0)), inner);
 }
 
+/// `Outcome::Shown` text over the lower half of the content area.
+pub(crate) fn draw_output_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    text: &str,
+    scroll: u16,
+    theme: &Theme,
+    ascii: bool,
+) {
+    draw_output(
+        frame,
+        area,
+        text,
+        scroll,
+        Ctx {
+            theme,
+            ascii,
+            now_ms: 0,
+        },
+    );
+}
+
 /// `Outcome::Shown` text over the lower half of the section area, above Messages.
 fn draw_output(frame: &mut Frame, area: Rect, text: &str, scroll: u16, ctx: Ctx) {
     if area.width < 4 || area.height < 3 {
@@ -912,8 +949,14 @@ fn draw_output(frame: &mut Frame, area: Rect, text: &str, scroll: u16, ctx: Ctx)
     );
 }
 
-/// Command bar; returns the cursor position when the command line has focus.
-fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> Option<Position> {
+/// Command bar; returns the cursor position when focused.
+pub(crate) fn draw_cmdline_bar(
+    frame: &mut Frame,
+    area: Rect,
+    cmd: &CmdLine,
+    focused: bool,
+    theme: &Theme,
+) -> Option<Position> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
@@ -924,8 +967,8 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     if available == 0 {
         return None;
     }
-    let text = sanitize_one_line(&state.cmd.text);
-    let cursor_chars = state.cmd.cursor.min(text.chars().count());
+    let text = sanitize_one_line(&cmd.text);
+    let cursor_chars = cmd.cursor.min(text.chars().count());
     let cursor_cells = cells_before(&text, cursor_chars);
     // Scroll only when the cursor would leave the field; `available > 0` is guaranteed above.
     let scroll = if cursor_cells >= available {
@@ -937,14 +980,12 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
     let line = Line::from(vec![
         Span::styled(
             PROMPT,
-            Style::new()
-                .fg(ctx.theme.title)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(theme.title).add_modifier(Modifier::BOLD),
         ),
         Span::styled(visible, Style::new()),
     ]);
     frame.render_widget(Paragraph::new(line), area);
-    if !matches!(state.focus, Focus::CmdLine) {
+    if !focused {
         return None;
     }
     let x = area
@@ -953,6 +994,17 @@ fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) ->
         .saturating_add((cursor_cells.saturating_sub(scroll)).min(u16::MAX as usize) as u16)
         .min(area.right().saturating_sub(1));
     Some(Position::new(x, area.y))
+}
+
+/// Command bar; returns the cursor position when the command line has focus.
+fn draw_cmdline(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> Option<Position> {
+    draw_cmdline_bar(
+        frame,
+        area,
+        &state.cmd,
+        matches!(state.focus, Focus::CmdLine),
+        ctx.theme,
+    )
 }
 
 fn cells_before(text: &str, chars: usize) -> usize {
@@ -981,25 +1033,57 @@ fn visible_slice(text: &str, skip: usize, max: usize) -> String {
     out
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) {
+pub(crate) fn draw_footer_bar(
+    frame: &mut Frame,
+    area: Rect,
+    note: Option<&(NoteKind, String)>,
+    help: &str,
+    theme: &Theme,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let (text, style) = match &state.note {
+    let (text, style) = match note {
         Some((kind, text)) => (
             sanitize_one_line(text),
             Style::new().fg(match kind {
-                NoteKind::Ok => ctx.theme.ok,
-                NoteKind::Warn => ctx.theme.warn,
-                NoteKind::Err => ctx.theme.error,
+                NoteKind::Ok => theme.ok,
+                NoteKind::Warn => theme.warn,
+                NoteKind::Err => theme.error,
             }),
         ),
-        None => (
-            if ctx.ascii { HELP_ASCII } else { HELP }.to_string(),
-            Style::new().fg(ctx.theme.muted),
-        ),
+        None => (help.to_string(), Style::new().fg(theme.muted)),
     };
     frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) {
+    draw_footer_bar(
+        frame,
+        area,
+        state.note.as_ref(),
+        if ctx.ascii { HELP_ASCII } else { HELP },
+        ctx.theme,
+    );
+}
+
+pub(crate) fn draw_confirm_popup(
+    frame: &mut Frame,
+    area: Rect,
+    state: &GlobalState,
+    theme: &Theme,
+    ascii: bool,
+) -> Option<Position> {
+    draw_popup(
+        frame,
+        area,
+        state,
+        Ctx {
+            theme,
+            ascii,
+            now_ms: 0,
+        },
+    )
 }
 
 fn draw_popup(frame: &mut Frame, area: Rect, state: &GlobalState, ctx: Ctx) -> Option<Position> {

@@ -38,7 +38,17 @@ pub fn layout_mode(width: u16, height: u16) -> LayoutMode {
 }
 
 pub fn draw(frame: &mut Frame, state: &BoardState, data: &BoardData, theme: &Theme, ascii: bool) {
-    let area = frame.area();
+    draw_in(frame, frame.area(), state, data, theme, ascii);
+}
+
+pub fn draw_in(
+    frame: &mut Frame,
+    area: Rect,
+    state: &BoardState,
+    data: &BoardData,
+    theme: &Theme,
+    ascii: bool,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }

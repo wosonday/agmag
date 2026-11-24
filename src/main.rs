@@ -836,18 +836,7 @@ fn run(cli: Cli) -> Result<()> {
                     )
                 },
             );
-            store.log_action(
-                &ops::hc_terminal().unwrap_or_else(|| "agent".into()),
-                "approval_check",
-                &format!(
-                    "{}/{}:{action}",
-                    lane.as_deref().unwrap_or(""),
-                    task.as_deref().unwrap_or("")
-                ),
-                &format!("{} ({})", decision.decision.as_str(), decision.source),
-                decision.decision == agmag::actions::ApprovalDecision::Allowed,
-                now,
-            )?;
+            // `check` là lệnh chỉ đọc: không ghi bảng actions (kể cả khi bị từ chối).
             if decision.decision != agmag::actions::ApprovalDecision::Allowed {
                 return Err(agmag::actions::ApprovalRefused {
                     decision: decision.decision,

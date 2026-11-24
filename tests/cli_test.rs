@@ -1063,6 +1063,7 @@ fn approval_check_global_whitelist_exits_0() {
 fn approval_check_active_grant_exits_0_and_writes_nothing() {
     let tmp = sandbox(None);
     assert!(agm(tmp.path(), &["policy", "status"]).status.success());
+    let actions_before = approval_action_count(tmp.path());
     let id = {
         let store =
             agmag::store::Store::open(&tmp.path().join("home/agm.db")).expect("open agm.db");
@@ -1103,6 +1104,26 @@ fn approval_check_active_grant_exits_0_and_writes_nothing() {
     assert_eq!(v["source"], format!("grant:{id}"));
     let store = agmag::store::Store::open(&tmp.path().join("home/agm.db")).unwrap();
     assert_eq!(store.approval_grants(false, 0).unwrap().len(), 1);
+    assert_eq!(approval_action_count(tmp.path()), actions_before);
+}
+
+fn approval_action_count(tmp: &Path) -> i64 {
+    let store = agmag::store::Store::open(&tmp.join("home/agm.db")).unwrap();
+    store
+        .conn()
+        .query_row("SELECT COUNT(*) FROM actions", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn approval_check_refusals_write_no_action_log() {
+    let tmp = sandbox(None);
+    let before = approval_action_count(tmp.path());
+    let out = agm(tmp.path(), &["approval", "check", "PUSH", "--json"]);
+    assert_eq!(out.status.code(), Some(6));
+    let out = agm(tmp.path(), &["approval", "check", "spawn_worker", "--json"]);
+    assert_eq!(out.status.code(), Some(5));
+    assert_eq!(approval_action_count(tmp.path()), before);
 }
 
 #[test]

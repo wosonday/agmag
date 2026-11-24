@@ -170,3 +170,11 @@ State before: HEAD `01003cf`, branch `feat/approval-runtime`, worktree sạch; r
   `cargo test --test store_v2_test` 13 passed; `cargo test --test mcp_test approval` 1 passed;
   `cargo fmt --check` sạch. EOL không đổi.
 - Commit: `fix(approval): supersede old grants and validate absolute expiry`.
+
+### Item 6 — `approval check` thực sự chỉ đọc (RED → GREEN)
+- RED: tests/cli_test.rs thêm helper `approval_action_count`, test `approval_check_refusals_write_no_action_log`
+  (hard-prohibited + requires_human không được ghi `actions`) và lớn mạnh `approval_check_active_grant_exits_0_and_writes_nothing`
+  (đếm `actions` trước/sau). Chạy → đỏ `left: 2, right: 0` (mỗi lần check ghi 1 dòng).
+- GREEN: src/main.rs bỏ hoàn toàn `store.log_action(...)` trong nhánh `ApprovalCmd::Check`, thêm ghi chú read-only.
+- `cargo test --test cli_test approval_check` 8 passed; `cargo fmt --check` sạch; EOL main.rs vẫn CRLF.
+- Commit: `fix(approval): make approval check truly read-only`.

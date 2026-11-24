@@ -181,3 +181,18 @@ test-only items say so explicitly).
      and the double-click prefill; the matching test comment in `global.rs` is fixed too.
      CHANGELOG stayed CRLF (`i/crlf w/crlf`).
 
+### Fix round 1 gates (recorded)
+
+- `cargo fmt --check` -> exit 0.
+- `cargo clippy --all-targets -- -D warnings` -> exit 0 (`Finished dev profile`).
+- `cargo test` -> exit 0, **779 passed, 0 failed, 0 ignored** across 42 binaries (round-1
+  baseline 773; +6 new tests). Per binary: lib 138 (was 134), main 20, actions 57, agy_quota 8,
+  ask 3, board_flows 4, board_runtime 7, board_view 44, branches 41, cli 39, codex_quota 5,
+  config 20, correlate 9, daemon 22, dashboard 29, git 4, global_view 47 (was 45), hook 5,
+  ingest 12, launch 7, mcp 30, model 4, opencode_models 8, opencode_quota 5, opencode 8,
+  parse_agy 7, parse_claude 11, parse_codex 11, policy 13, project_render 14, project_store 4,
+  project 25, project_tree 2, report 18, rotation 39, safety 12, spawn_fallback 9, store 12,
+  store_v2 14, sysmon 11, tui_app 1, doctests 0.
+- EOL: `src/board/*`, `tests/*`, READMEs and the log LF; `CHANGELOG.md` CRLF
+  (`i/crlf w/crlf`); no `w/mixed`.
+

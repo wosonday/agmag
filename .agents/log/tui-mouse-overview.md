@@ -152,4 +152,8 @@ test-only items say so explicitly).
    `visible_sections(&data.view)` and the shared `WIDE_MIN_COLS` mode, and using the same
    `(height - MESSAGES_MIN) < MIN_SECTION_H * groups` floor). Also asserts the frame is byte-identical
    and `layout` stays empty.
+3. `layout reset` closes the Output overlay and tolerates extra spaces — new test
+   `layout_reset_with_extra_spaces_closes_the_output_overlay` (red: the spaced command reached the
+   dispatcher and `output_scroll` stayed 9; green with `split_whitespace().eq(["layout",
+   "reset"])` plus `data.output = None; state.output_scroll = 0`).
 

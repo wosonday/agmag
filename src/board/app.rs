@@ -395,8 +395,12 @@ fn handle_global_key(
         GEffect::Run(line) => {
             // `layout reset` belongs to the overview itself (T3): it clears the drag overrides
             // and saves the empty layout, without reaching the shared command dispatcher.
-            if line.trim() == "layout reset" {
+            if line.split_whitespace().eq(["layout", "reset"]) {
                 state.layout.clear();
+                // Like every other command, reset closes the Output panel instead of leaving the
+                // help/result text covering the screen.
+                data.output = None;
+                state.output_scroll = 0;
                 state.note = Some(match store.set_setting(LAYOUT_SETTING_KEY, "") {
                     Ok(()) => (NoteKind::Ok, "layout reset".into()),
                     Err(e) => (NoteKind::Err, format!("error: {e:#}")),
@@ -937,6 +941,60 @@ mod tests {
             "{:?}",
             state.note
         );
+    }
+
+    #[test]
+    fn layout_reset_with_extra_spaces_closes_the_output_overlay() {
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        state.layout.set_top_pair_width(0.5);
+        store
+            .set_setting(LAYOUT_SETTING_KEY, &state.layout.to_string())
+            .unwrap();
+        let mut data = GlobalData {
+            output: Some("overview help".into()),
+            ..GlobalData::default()
+        };
+        state.output_scroll = 9;
+        let mut recorded = Vec::new();
+        let mut fake_dispatch = |line: &str| {
+            recorded.push(line.to_string());
+            dispatched(Outcome::None, vec![])
+        };
+
+        for c in "  layout   reset  ".chars() {
+            handle_global_key(
+                key_ev(KeyCode::Char(c)),
+                &store,
+                &mut state,
+                &mut data,
+                &mut fake_dispatch,
+            );
+        }
+        let action = handle_global_key(
+            key_ev(KeyCode::Enter),
+            &store,
+            &mut state,
+            &mut data,
+            &mut fake_dispatch,
+        );
+
+        assert!(matches!(action, AppAction::Stay));
+        assert!(
+            recorded.is_empty(),
+            "spaced `layout reset` reached the dispatcher: {recorded:?}"
+        );
+        assert!(state.layout.is_empty());
+        assert_eq!(
+            store.setting(LAYOUT_SETTING_KEY).unwrap().as_deref(),
+            Some(""),
+            "the cleared layout must be persisted"
+        );
+        assert_eq!(
+            data.output, None,
+            "layout reset must close the Output panel"
+        );
+        assert_eq!(state.output_scroll, 0);
     }
 
     #[test]

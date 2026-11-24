@@ -2,7 +2,7 @@
 
 ## Branch results
 
-- `feat/delegated-approval` (f35045a / approved tip `08fc676`): superseded
+- `feat/delegated-approval` (approved tip `08fc676`): superseded
   - `git cherry -v main feat/delegated-approval` reports `ab9fe0a` as equivalent to `main` (`- ab9fe0a...`).
   - `main` contains the delegated approval implementation: schema v5 (`src/store/schema_v5.sql`), `ApprovalGrant` storage, `agm approval`, and the related actions/tests.
   - `main` contains the `08fc676` context values in `docs/CONTEXT-ROTATION.md` and in the runtime defaults: `interactive_ctx_warn = 40` and `interactive_ctx_rotate = 50`.

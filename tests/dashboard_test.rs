@@ -1169,3 +1169,29 @@ fn render_opencode_go_quota_labels_limited_and_stale_fit_60_110() -> anyhow::Res
     }
     Ok(())
 }
+
+/// The snapshot carries enough messages to fill a tall Messages panel in the app, while `--plain`
+/// still prints only the newest few.
+#[test]
+fn snapshot_loads_more_messages_than_plain_prints() -> anyhow::Result<()> {
+    let store = Store::open_in_memory()?;
+    for i in 0..8_i64 {
+        store.add_message(&agmag::store::MessageRow {
+            ts_ms: 1_000 + i,
+            from: "ceo".into(),
+            to: "t1".into(),
+            kind: "GIAO".into(),
+            text: format!("note-{i}"),
+            status: "delivered".into(),
+            ..Default::default()
+        })?;
+    }
+    let snap = snapshot(&store, &Config::builtin(), 1_000_000)?;
+    assert_eq!(snap.messages.len(), 8);
+    let plain = render(&snap, 120);
+    let shown = (0..8)
+        .filter(|i| plain.contains(&format!("note-{i}")))
+        .count();
+    assert_eq!(shown, agmag::dashboard::PLAIN_MESSAGES, "{plain}");
+    Ok(())
+}

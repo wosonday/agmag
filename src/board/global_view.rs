@@ -435,9 +435,11 @@ fn draw_stacked(
             *last = last.saturating_add(area.height - sum);
         }
     } else if sum > area.height {
+        // A section that cannot get its minimum is dropped entirely, never squeezed to a
+        // one-row sliver that overlaps its neighbour or the Messages panel below.
         let mut excess = sum - area.height;
         for height in heights.iter_mut().rev() {
-            let take = height.saturating_sub(1).min(excess);
+            let take = (*height).min(excess);
             *height -= take;
             excess -= take;
             if excess == 0 {
@@ -447,6 +449,9 @@ fn draw_stacked(
     }
     let mut y = area.y;
     for (i, (sec, height)) in sections.iter().zip(&heights).enumerate() {
+        if *height == 0 {
+            continue; // dropped: neither drawn nor recorded in the hit map
+        }
         let rect = Rect {
             x: area.x,
             y,

@@ -936,6 +936,39 @@ fn rect_inside(outer: ratatui::layout::Rect, inner: ratatui::layout::Rect) -> bo
         && inner.y.saturating_add(inner.height) <= outer.y.saturating_add(outer.height)
 }
 
+fn rects_overlap(a: ratatui::layout::Rect, b: ratatui::layout::Rect) -> bool {
+    a.width > 0
+        && b.width > 0
+        && a.height > 0
+        && b.height > 0
+        && a.x < b.x.saturating_add(b.width)
+        && b.x < a.x.saturating_add(a.width)
+        && a.y < b.y.saturating_add(b.height)
+        && b.y < a.y.saturating_add(a.height)
+}
+
+fn dense_overview_data() -> GlobalData {
+    let mut d = data(&Section::DEFAULT);
+    let snap = d.snap.as_mut().unwrap();
+    snap.quota.push(quota("claude", 300, 80.0));
+    snap.terminals.push(terminal("t1", "worker-1"));
+    snap.inbox.push(InboxRow {
+        id: 1,
+        ts_ms: NOW,
+        ..InboxRow::default()
+    });
+    snap.messages.push(MessageRow {
+        id: 1,
+        ts_ms: NOW,
+        from: "t1".into(),
+        to: "t2".into(),
+        kind: "BÁO CÁO".into(),
+        text: "a message".into(),
+        ..MessageRow::default()
+    });
+    d
+}
+
 fn assert_everything_inside_main(size: (u16, u16), d: &GlobalData) {
     let state = GlobalState::new(ThemeName::CatppuccinMocha);
     let buf = render(size, &state, d, false);
@@ -958,29 +991,40 @@ fn assert_everything_inside_main(size: (u16, u16), d: &GlobalData) {
 
 #[test]
 fn every_rect_stays_inside_main_at_tiny_heights() {
-    let mut d = data(&Section::DEFAULT);
-    let snap = d.snap.as_mut().unwrap();
-    snap.quota.push(quota("claude", 300, 80.0));
-    snap.terminals.push(terminal("t1", "worker-1"));
-    snap.inbox.push(InboxRow {
-        id: 1,
-        ts_ms: NOW,
-        ..InboxRow::default()
-    });
-    snap.messages.push(MessageRow {
-        id: 1,
-        ts_ms: NOW,
-        from: "t1".into(),
-        to: "t2".into(),
-        kind: "BÁO CÁO".into(),
-        text: "a message".into(),
-        ..MessageRow::default()
-    });
+    let d = dense_overview_data();
     for height in 1..=8 {
         assert_everything_inside_main((100, height), &d);
     }
     for height in 3..=10 {
         assert_everything_inside_main((140, height), &d);
+    }
+}
+
+fn assert_no_panel_overlap(size: (u16, u16), d: &GlobalData) {
+    let state = GlobalState::new(ThemeName::CatppuccinMocha);
+    let buf = render(size, &state, d, false);
+    let map = state.hit_map();
+    for i in 0..map.panels.len() {
+        for j in i + 1..map.panels.len() {
+            assert!(
+                !rects_overlap(map.panels[i].0, map.panels[j].0),
+                "panels {:?} and {:?} overlap at {size:?}:\n{}",
+                map.panels[i],
+                map.panels[j],
+                text(&buf)
+            );
+        }
+    }
+}
+
+#[test]
+fn no_panels_overlap_at_tiny_heights() {
+    let d = dense_overview_data();
+    for height in 1..=8 {
+        assert_no_panel_overlap((100, height), &d);
+    }
+    for height in 3..=10 {
+        assert_no_panel_overlap((140, height), &d);
     }
 }
 

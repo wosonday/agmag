@@ -52,3 +52,9 @@ Review: `.agents/reviews/tui-layout-1.md` (CHƯA ĐẠT). TDD per item (RED → 
 - RED: `every_rect_stays_inside_main_at_tiny_heights` in `tests/global_view_test.rs` over the requested matrix (100×1…8, 140×3…10): a `Panel(Terminals)` rect and `BorderId::Horizontal` rect reached `y = 3` while `main.bottom() = 2` at 100×4.
 - CODE: `split_messages` clamps `layout.messages` to `main.height` before deriving `sections_h`; `draw_global` only records the Messages panel/border when its height is non-zero; the top-pair divider strip is clamped to `pair.right()`.
 - GREEN: matrix test passes; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.
+
+### Item 3 — drop stacked sections that do not fit
+
+- RED: `no_panels_overlap_at_tiny_heights` (same matrix) — at 100×6 a 1-row `Terminals` panel drawn at `y = 1` overlapped the 3-row Messages panel at `y = 1..4`.
+- CODE: `draw_stacked` now reduces a height all the way to 0 when the area cannot fit the minimum (previously `saturating_sub(1)` stopped at 1); zero-height sections are skipped entirely — not drawn and not pushed to the hit map — so the remaining panels stay packed and non-overlapping.
+- GREEN: overlap matrix passes with the bounds matrix; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` clean.

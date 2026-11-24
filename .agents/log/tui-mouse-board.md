@@ -53,3 +53,16 @@
 - Test drives the REAL map from `view::draw_in` (TestBackend 140x40): double-click on a background inbox row
   while PickProject is open leaves mode PickProject, no Reply, no selection/focus change.
 - Status: green
+
+### Item 2 - Redraw only when a mouse event changed something
+- `BoardState::on_mouse` now returns `MouseOutcome { effect, changed }`; scroll/click handlers report whether
+  visible state (focus, selection, mode, msg_scroll, project) actually moved. Ignored kinds (`Moved`, `Up`,
+  `Drag`, right/middle), clicks outside targets, clicks on the already-selected target and scrolls at an end of
+  a list report `changed == false`.
+- `BoardScreen::on_mouse` returns `bool` (redraw) and still reloads the conversation when the agent changes.
+- Standalone loop (`mod.rs`) draws only when `on_mouse` says so; app loop got `Next::Skip`; the overview now
+  routes through `handle_mouse` → `Skip` (T3 owns it); `handle_board_mouse` maps "no change" to `Skip`.
+- Red: existing call sites/test assertions failed to compile against the new return; new test
+  `mouse_reports_whether_it_changed_anything` (plus `board_screen_mouse_only_redraws_on_change` and
+  `mouse_events_that_change_nothing_skip_the_redraw`) pins the skipped events.
+- Status: green

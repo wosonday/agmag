@@ -145,6 +145,39 @@ pub enum Effect {
     Quit,
 }
 
+/// What one mouse event did: the effect to apply, and whether anything visible changed (so the
+/// caller must redraw). Ignored events (`Moved`, `Up`, `Drag`, a popup being open, ...) are not a
+/// change and must not force a redraw.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MouseOutcome {
+    pub effect: Effect,
+    pub changed: bool,
+}
+
+impl MouseOutcome {
+    fn ignored() -> Self {
+        Self {
+            effect: Effect::None,
+            changed: false,
+        }
+    }
+
+    /// Nothing to apply, but the board's visible state moved (or not).
+    fn from_change(changed: bool) -> Self {
+        Self {
+            effect: Effect::None,
+            changed,
+        }
+    }
+
+    fn changed(effect: Effect) -> Self {
+        Self {
+            effect,
+            changed: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BoardState {
     pub panel: Panel,
@@ -195,10 +228,10 @@ impl BoardState {
         map: &BoardHitMap,
         data: &BoardData,
         now_ms: i64,
-    ) -> Effect {
+    ) -> MouseOutcome {
         // Ignore all mouse events while any popup/confirm/prompt mode is open.
         if !matches!(self.mode, Mode::Normal | Mode::PickProject { .. }) {
-            return Effect::None;
+            return MouseOutcome::ignored();
         }
         // Act only on Down/Drag/Up(Left) and Scroll; ignore others.
         match mouse.kind {
@@ -207,29 +240,33 @@ impl BoardState {
             | MouseEventKind::Up(MouseButton::Left)
             | MouseEventKind::ScrollUp
             | MouseEventKind::ScrollDown => {}
-            _ => return Effect::None,
+            _ => return MouseOutcome::ignored(),
         }
 
         let Some(target) = hit(map, mouse.column, mouse.row) else {
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
                 self.last_click = None;
             }
-            return Effect::None;
+            return MouseOutcome::ignored();
         };
 
         match mouse.kind {
-            MouseEventKind::ScrollUp => self.on_scroll(&target, -1, data),
-            MouseEventKind::ScrollDown => self.on_scroll(&target, 1, data),
-            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(target, data, now_ms),
-            // Drag/Up(Left): no action, but don't count as stale for unrelated reasons.
-            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
-                Effect::None
+            MouseEventKind::ScrollUp => {
+                MouseOutcome::from_change(self.on_scroll(&target, -1, data))
             }
-            _ => Effect::None,
+            MouseEventKind::ScrollDown => {
+                MouseOutcome::from_change(self.on_scroll(&target, 1, data))
+            }
+            MouseEventKind::Down(MouseButton::Left) => self.on_left_down(target, data, now_ms),
+            // Drag/Up(Left): no action, but don't count them as a change either.
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
+                MouseOutcome::ignored()
+            }
+            _ => MouseOutcome::ignored(),
         }
     }
 
-    fn on_scroll(&mut self, target: &HitTarget, delta: i32, data: &BoardData) -> Effect {
+    fn on_scroll(&mut self, target: &HitTarget, delta: i32, data: &BoardData) -> bool {
         let panel = match target {
             HitTarget::Panel(p) => *p,
             HitTarget::ProjectRow(_) | HitTarget::PickerRow(_) => Panel::Projects,
@@ -240,34 +277,47 @@ impl BoardState {
             Panel::Projects => {
                 if let Mode::PickProject { idx } = &mut self.mode {
                     let max = data.projects.len().saturating_sub(1);
+                    let before = *idx;
                     if delta < 0 {
                         *idx = idx.saturating_sub(1);
                     } else if *idx < max {
                         *idx += 1;
                     }
+                    *idx != before
                 } else {
                     let max = data.projects.len().saturating_sub(1);
+                    let before = self.sel_project;
                     if delta < 0 {
                         self.sel_project = self.sel_project.saturating_sub(1);
                     } else if self.sel_project < max {
                         self.sel_project += 1;
                     }
+                    self.sel_project != before
                 }
             }
-            Panel::Orchestration => self.move_agent(delta, data),
+            Panel::Orchestration => {
+                let before = self.sel_agent.clone();
+                self.move_agent(delta, data);
+                self.sel_agent != before
+            }
             Panel::Detail => {
+                let before = self.msg_scroll;
                 if delta < 0 {
                     self.msg_scroll = self.msg_scroll.saturating_sub(1);
                 } else {
                     self.msg_scroll = self.msg_scroll.saturating_add(1);
                 }
+                self.msg_scroll != before
             }
-            Panel::Inbox => self.move_inbox(delta, data),
+            Panel::Inbox => {
+                let before = self.sel_inbox;
+                self.move_inbox(delta, data);
+                self.sel_inbox != before
+            }
         }
-        Effect::None
     }
 
-    fn on_left_down(&mut self, target: HitTarget, data: &BoardData, now_ms: i64) -> Effect {
+    fn on_left_down(&mut self, target: HitTarget, data: &BoardData, now_ms: i64) -> MouseOutcome {
         let is_double = self.last_click.as_ref().is_some_and(|(prev, ts)| {
             *prev == target && now_ms.saturating_sub(*ts) <= Self::DOUBLE_CLICK_MS
         });
@@ -279,32 +329,40 @@ impl BoardState {
 
         match target {
             HitTarget::Panel(panel) => {
+                let changed = self.panel != panel;
                 self.panel = panel;
-                Effect::None
+                MouseOutcome::from_change(changed)
             }
             HitTarget::ProjectRow(idx) | HitTarget::PickerRow(idx) => {
-                self.sel_project = idx.min(data.projects.len().saturating_sub(1));
+                let sel = idx.min(data.projects.len().saturating_sub(1));
+                let changed = self.sel_project != sel;
+                self.sel_project = sel;
                 if let Mode::PickProject { idx: ref mut pidx } = self.mode {
+                    let changed = changed || *pidx != self.sel_project;
                     *pidx = self.sel_project;
+                    MouseOutcome::from_change(changed)
                 } else {
+                    let changed = changed || self.panel != Panel::Projects;
                     self.panel = Panel::Projects;
+                    MouseOutcome::from_change(changed)
                 }
-                Effect::None
             }
             HitTarget::AgentCard(address) => {
+                let before = (self.panel, self.sel_agent.clone());
                 self.panel = Panel::Orchestration;
                 self.select_agent(&address, data);
-                Effect::None
+                MouseOutcome::from_change(before != (self.panel, self.sel_agent.clone()))
             }
             HitTarget::InboxRow(id) => {
+                let before = (self.panel, self.sel_inbox);
                 self.panel = Panel::Inbox;
                 self.select_inbox(id, data);
-                Effect::None
+                MouseOutcome::from_change(before != (self.panel, self.sel_inbox))
             }
         }
     }
 
-    fn on_double_click(&mut self, target: HitTarget, data: &BoardData) -> Effect {
+    fn on_double_click(&mut self, target: HitTarget, data: &BoardData) -> MouseOutcome {
         // A double-click consumes the click pair.
         self.last_click = None;
         match target {
@@ -314,9 +372,9 @@ impl BoardState {
                     let key = p.key.clone();
                     self.mode = Mode::Normal;
                     self.enter_project(key.clone());
-                    return Effect::SwitchProject(key);
+                    return MouseOutcome::changed(Effect::SwitchProject(key));
                 }
-                Effect::None
+                MouseOutcome::ignored()
             }
             HitTarget::InboxRow(id) => {
                 self.panel = Panel::Inbox;
@@ -326,9 +384,9 @@ impl BoardState {
                     id,
                     input: String::new(),
                 };
-                Effect::None
+                MouseOutcome::changed(Effect::None)
             }
-            _ => Effect::None,
+            _ => MouseOutcome::ignored(),
         }
     }
 
@@ -1382,7 +1440,7 @@ mod tests {
             &d,
             1,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         assert_eq!(s.panel, Panel::Detail);
 
         let e = s.on_mouse(
@@ -1391,7 +1449,7 @@ mod tests {
             &d,
             2,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         assert_eq!(s.panel, Panel::Orchestration);
         assert_eq!(s.sel_agent.as_deref(), Some("t2"));
 
@@ -1401,7 +1459,7 @@ mod tests {
             &d,
             3,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         assert_eq!(s.panel, Panel::Inbox);
         assert_eq!(s.sel_inbox, Some(11));
     }
@@ -1444,14 +1502,14 @@ mod tests {
             &d,
             100,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         let e = s.on_mouse(
             mouse(MouseEventKind::Down(MouseButton::Left), 2, 1),
             &map,
             &d,
             300,
         );
-        assert_eq!(e, Effect::SwitchProject(pk("shop")));
+        assert_eq!(e.effect, Effect::SwitchProject(pk("shop")));
         assert_eq!(s.project, Some(pk("shop")));
 
         let (mut s, d) = state_with_data();
@@ -1462,14 +1520,14 @@ mod tests {
             &d,
             100,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         let e = s.on_mouse(
             mouse(MouseEventKind::Down(MouseButton::Left), 6, 5),
             &map,
             &d,
             400,
         );
-        assert_eq!(e, Effect::SwitchProject(pk("agmag")));
+        assert_eq!(e.effect, Effect::SwitchProject(pk("agmag")));
         assert_eq!(s.mode, Mode::Normal);
 
         let (mut s, d) = state_with_data();
@@ -1479,14 +1537,14 @@ mod tests {
             &d,
             100,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         let e = s.on_mouse(
             mouse(MouseEventKind::Down(MouseButton::Left), 2, 11),
             &map,
             &d,
             450,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         assert_eq!(
             s.mode,
             Mode::Reply {
@@ -1507,7 +1565,7 @@ mod tests {
             &d,
             1,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         assert_eq!(s.mode, Mode::ConfirmDone { id: 10 });
 
         s.mode = Mode::Normal;
@@ -1517,10 +1575,10 @@ mod tests {
             &d,
             2,
         );
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
         assert_eq!(s.sel_agent.as_deref(), Some("t1"));
         let e = s.on_mouse(mouse(MouseEventKind::Moved, 2, 2), &map, &d, 3);
-        assert_eq!(e, Effect::None);
+        assert_eq!(e.effect, Effect::None);
     }
 
     #[test]
@@ -1559,7 +1617,7 @@ mod tests {
                     t += 10;
                     let e = s.on_mouse(mouse(kind, c, r), &map, &d, t);
                     assert!(
-                        matches!(e, Effect::None | Effect::SwitchProject(_)),
+                        matches!(e.effect, Effect::None | Effect::SwitchProject(_)),
                         "mouse produced unsafe effect: {e:?}"
                     );
                     assert!(
@@ -1570,5 +1628,92 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn mouse_reports_whether_it_changed_anything() {
+        let (mut s, d) = state_with_data();
+        let map = hit_map();
+
+        // Ignored event kinds never force a redraw, whatever they point at.
+        for (kind, col, row) in [
+            (MouseEventKind::Moved, 2, 2),
+            (MouseEventKind::Up(MouseButton::Left), 2, 2),
+            (MouseEventKind::Drag(MouseButton::Left), 2, 2),
+            (MouseEventKind::Down(MouseButton::Right), 2, 2),
+            (MouseEventKind::Down(MouseButton::Middle), 2, 11),
+            (MouseEventKind::Up(MouseButton::Right), 2, 11),
+        ] {
+            let out = s.on_mouse(mouse(kind, col, row), &map, &d, 1);
+            assert_eq!(out.effect, Effect::None, "{kind:?}");
+            assert!(!out.changed, "{kind:?} forced a redraw");
+        }
+
+        // A click outside every target changes nothing either.
+        assert!(
+            !s.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 99, 99),
+                &map,
+                &d,
+                2
+            )
+            .changed
+        );
+
+        // Popup modes ignore the mouse.
+        s.mode = Mode::Help;
+        assert!(
+            !s.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 2, 2),
+                &map,
+                &d,
+                3
+            )
+            .changed
+        );
+        s.mode = Mode::Normal;
+
+        // Clicking what is already focused/selected is not a change...
+        s.panel = Panel::Orchestration;
+        s.sel_agent = Some("t1".into());
+        s.sync(&d);
+        assert!(
+            !s.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 2, 2),
+                &map,
+                &d,
+                10
+            )
+            .changed,
+            "clicking the selected card forced a redraw"
+        );
+        // ... but clicking another target is.
+        let out = s.on_mouse(
+            mouse(MouseEventKind::Down(MouseButton::Left), 2, 5),
+            &map,
+            &d,
+            20,
+        );
+        assert!(out.changed);
+        assert_eq!(s.sel_agent.as_deref(), Some("t2"));
+
+        // A scroll that cannot move (already at the top) changes nothing; one that moves does.
+        assert!(
+            !s.on_mouse(mouse(MouseEventKind::ScrollUp, 25, 2), &map, &d, 30)
+                .changed,
+            "scrolling past the top forced a redraw"
+        );
+        assert!(
+            s.on_mouse(mouse(MouseEventKind::ScrollDown, 25, 2), &map, &d, 40)
+                .changed
+        );
+
+        // Scrolling past the end of the agent list changes nothing.
+        s.sel_agent = Some("t3".into());
+        s.sync(&d);
+        assert!(
+            !s.on_mouse(mouse(MouseEventKind::ScrollDown, 2, 2), &map, &d, 50)
+                .changed
+        );
     }
 }

@@ -443,22 +443,25 @@ impl BoardScreen {
         BoardKeyResult::Stay
     }
 
+    /// Applies one mouse event; returns whether the caller must redraw. Ignored events (moves,
+    /// releases, drags, right/middle buttons, an open popup) return `false` so nothing flickers.
     pub(crate) fn on_mouse(
         &mut self,
         mouse: event::MouseEvent,
         store: &Store,
         hc: &dyn Hc,
         now_ms: i64,
-    ) {
+    ) -> bool {
         self.needs_refresh = false;
         let prev_agent = self.state.sel_agent.clone();
-        let effect = self
+        let outcome = self
             .state
             .on_mouse(mouse, &self.hit_map, &self.data, now_ms);
-        if let Effect::SwitchProject(key) = &effect {
+        if let Effect::SwitchProject(key) = &outcome.effect {
             self.state.project = Some(key.clone());
         }
-        match effect {
+        let mut redraw = outcome.changed;
+        match outcome.effect {
             Effect::None => {
                 if self.state.sel_agent != prev_agent
                     && let Err(e) = reload_conversation(store, &self.state, &mut self.data)
@@ -468,13 +471,18 @@ impl BoardScreen {
                         text: format!("error: {e:#}"),
                     });
                 }
+                // The conversation belongs to the selected agent, so a changed selection must
+                // repaint even when the click itself touched only the hit map.
+                redraw |= self.state.sel_agent != prev_agent;
             }
             Effect::Quit => {}
             other => {
                 apply_effect(store, hc, other, &mut self.state, now_ms);
                 self.needs_refresh = true;
+                redraw = true;
             }
         }
+        redraw
     }
 }
 
@@ -516,11 +524,13 @@ fn run_loop(
                     }
                 },
                 Event::Mouse(mouse) => {
-                    screen.on_mouse(mouse, store, hc, clock_ms());
+                    let redraw = screen.on_mouse(mouse, store, hc, clock_ms());
                     if screen.needs_refresh() {
                         break;
                     }
-                    draw_board(&mut terminal, screen, ascii)?;
+                    if redraw {
+                        draw_board(&mut terminal, screen, ascii)?;
+                    }
                 }
                 Event::Resize(_, _) => draw_board(&mut terminal, screen, ascii)?,
                 _ => {}
@@ -702,6 +712,67 @@ mod tests {
             task: None,
             role: None,
         }
+    }
+
+    #[test]
+    fn board_screen_mouse_only_redraws_on_change() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }
+        }
+
+        let store = Store::open_in_memory().unwrap();
+        let mut screen = BoardScreen::new(
+            Some(ProjectKey {
+                root: "/repo/agmag".into(),
+                name: "agmag".into(),
+            }),
+            theme::ThemeName::default(),
+        );
+        screen.hit_map = view::BoardHitMap {
+            panels: vec![(
+                ratatui::layout::Rect::new(0, 0, 20, 10),
+                state::Panel::Detail,
+            )],
+            ..view::BoardHitMap::default()
+        };
+        let hc = NoHc;
+
+        // Moves, releases, drags and non-left buttons must not repaint the screen.
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+        ] {
+            assert!(
+                !screen.on_mouse(mouse(kind, 1, 1), &store, &hc, 1),
+                "{kind:?} forced a redraw"
+            );
+        }
+
+        // A click on another panel moves the focus, so it does.
+        assert!(
+            screen.on_mouse(
+                mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &store,
+                &hc,
+                10
+            ),
+            "a focus-changing click must redraw"
+        );
+        assert_eq!(screen.state.panel, state::Panel::Detail);
+
+        // A scroll at the top of the conversation changes nothing; scrolling down does.
+        assert!(!screen.on_mouse(mouse(MouseEventKind::ScrollUp, 1, 1), &store, &hc, 20));
+        assert!(screen.on_mouse(mouse(MouseEventKind::ScrollDown, 1, 1), &store, &hc, 30));
     }
 
     #[test]

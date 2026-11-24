@@ -81,6 +81,8 @@ enum AppAction {
 /// What the loop does after a key: redraw at once, refresh first, or switch screens / leave.
 enum Next {
     Redraw,
+    /// The event changed nothing visible: keep the current frame, no redraw.
+    Skip,
     Restart,
     /// Back to the global screen, adopting the board's (possibly changed) theme.
     Global(theme::ThemeName),
@@ -183,6 +185,7 @@ pub fn run_app(
                             }
                         };
                         match next {
+                            Next::Skip => {}
                             Next::Quit => return Ok(()),
                             Next::Redraw => {
                                 draw(
@@ -220,21 +223,17 @@ pub fn run_app(
                         }
                     }
                     Event::Mouse(mouse) => {
-                        let next = if let Screen::Board(board) = &mut screen {
-                            handle_board_mouse(
-                                mouse,
-                                board,
-                                store,
-                                hc,
-                                &mut state,
-                                &mut board_cmd_focus,
-                                super::clock_ms(),
-                            )
-                        } else {
-                            // T3 will handle overview mouse; ignore for now.
-                            Next::Redraw
-                        };
+                        let next = handle_mouse(
+                            mouse,
+                            &mut screen,
+                            store,
+                            hc,
+                            &mut state,
+                            &mut board_cmd_focus,
+                            super::clock_ms(),
+                        );
                         match next {
+                            Next::Skip => {}
                             Next::Quit => return Ok(()),
                             Next::Redraw => {
                                 draw(
@@ -627,6 +626,24 @@ fn run_board_dispatch(
     }
 }
 
+/// Routes one mouse event: T3 owns the overview's mouse, and ignoring it must not force a redraw.
+fn handle_mouse(
+    mouse: event::MouseEvent,
+    screen: &mut Screen,
+    store: &Store,
+    hc: &dyn Hc,
+    state: &mut GlobalState,
+    board_cmd_focus: &mut bool,
+    now_ms: i64,
+) -> Next {
+    match screen {
+        Screen::Board(board) => {
+            handle_board_mouse(mouse, board, store, hc, state, board_cmd_focus, now_ms)
+        }
+        Screen::Global => Next::Skip,
+    }
+}
+
 fn handle_board_mouse(
     mouse: event::MouseEvent,
     board: &mut Box<BoardScreen>,
@@ -637,13 +654,15 @@ fn handle_board_mouse(
     now_ms: i64,
 ) -> Next {
     if state.popup.is_some() || *board_cmd_focus {
-        return Next::Redraw;
+        return Next::Skip;
     }
-    board.on_mouse(mouse, store, hc, now_ms);
+    let redraw = board.on_mouse(mouse, store, hc, now_ms);
     if board.needs_refresh() {
         Next::Restart
-    } else {
+    } else if redraw {
         Next::Redraw
+    } else {
+        Next::Skip
     }
 }
 
@@ -979,6 +998,84 @@ mod tests {
             crate::board::view::hit(&board.hit_map, 1, 1).is_none(),
             "a click under the Output panel still reached the board"
         );
+    }
+
+    fn mouse_ev(kind: event::MouseEventKind, column: u16, row: u16) -> event::MouseEvent {
+        event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn mouse_events_that_change_nothing_skip_the_redraw() {
+        use event::{MouseButton, MouseEventKind};
+
+        let store = Store::open_in_memory().unwrap();
+        let mut state = GlobalState::new(theme::ThemeName::CatppuccinMocha);
+        let mut cmd_focus = false;
+
+        // The overview's mouse belongs to T3: ignoring it must not repaint the frame.
+        let mut screen = Screen::Global;
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Moved, 1, 1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &mut cmd_focus,
+                0
+            ),
+            Next::Skip
+        ));
+
+        // On the board, events the state ignores do not repaint either.
+        let mut board = fake_board_screen();
+        board.hit_map = crate::board::state::BoardHitMap {
+            panels: vec![(Rect::new(0, 0, 20, 10), crate::board::state::Panel::Detail)],
+            ..Default::default()
+        };
+        let mut screen = Screen::Board(board);
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+        ] {
+            assert!(
+                matches!(
+                    handle_mouse(
+                        mouse_ev(kind, 1, 1),
+                        &mut screen,
+                        &store,
+                        &FakeHc,
+                        &mut state,
+                        &mut cmd_focus,
+                        0
+                    ),
+                    Next::Skip
+                ),
+                "{kind:?} forced a redraw"
+            );
+        }
+
+        // A click that moves the focus does repaint.
+        assert!(matches!(
+            handle_mouse(
+                mouse_ev(MouseEventKind::Down(MouseButton::Left), 1, 1),
+                &mut screen,
+                &store,
+                &FakeHc,
+                &mut state,
+                &mut cmd_focus,
+                10
+            ),
+            Next::Redraw
+        ));
     }
 
     fn press(
